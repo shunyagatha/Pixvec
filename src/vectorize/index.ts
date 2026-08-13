@@ -36,6 +36,13 @@ export {
 } from './trace.js';
 
 export {
+  applyThreshold,
+  otsuThreshold,
+  type ThresholdOptions,
+  type ThresholdResult,
+} from './threshold.js';
+
+export {
   quantize,
   quantizeAlpha,
   NearestColor,
