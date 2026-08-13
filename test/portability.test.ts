@@ -18,6 +18,7 @@ const CORE_MODULES = [
   'types.ts',
   'color.ts',
   'crop.ts',
+  'diff.ts',
   'image.ts',
   'background.ts',
   'preprocess.ts',

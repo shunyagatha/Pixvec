@@ -27,6 +27,7 @@ import { startMcpServer } from './mcp/server.js';
 import { optimizeSvg } from './svg/optimize.js';
 import { svgSprite } from './emit/sprite.js';
 import { smartCrop, cropImage } from './crop.js';
+import { diffImages } from './diff.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -693,6 +694,60 @@ async function runVerify(a: string, b: string, o: VerifyCliOptions): Promise<voi
   if (o.failUnder !== undefined && report.ssim < o.failUnder) {
     process.stderr.write(
       `${red('fail')} mean SSIM ${report.ssim.toFixed(6)} is below --fail-under ${o.failUnder}\n`,
+    );
+    process.exit(2);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// diff
+// ---------------------------------------------------------------------------
+
+async function runDiff(
+  a: string,
+  b: string,
+  o: { output: string; threshold: number; width?: number; failOver?: number; json?: boolean },
+): Promise<void> {
+  const [bytesA, bytesB] = await Promise.all([readInput(a), readInput(b)]);
+  const loadedA = await loadAnyAsRaster(bytesA, a, { baseDir: baseDirFor(a), width: o.width });
+  const loadedB = await loadAnyAsRaster(bytesB, b, {
+    baseDir: baseDirFor(b),
+    width: o.width ?? (loadedA.kind === 'raster' ? loadedA.image.width : undefined),
+  });
+
+  if (
+    loadedA.image.width !== loadedB.image.width ||
+    loadedA.image.height !== loadedB.image.height
+  ) {
+    fail(
+      `Size mismatch: ${loadedA.image.width}×${loadedA.image.height} vs ` +
+        `${loadedB.image.width}×${loadedB.image.height}. Use --width to render both at one size.`,
+    );
+  }
+
+  const result = diffImages(loadedA.image, loadedB.image, { threshold: o.threshold });
+  const quality = compareImages(loadedA.image, loadedB.image);
+  const encoded = await encodeRaster(result.image, { format: formatFromExtension(extname(o.output)) ?? 'png' });
+  await writeOutput(o.output, encoded);
+
+  const pct = (result.changedFraction * 100).toFixed(3);
+  if (o.json) {
+    emitJson({
+      reference: a, candidate: b, output: o.output,
+      changedPixels: result.changedPixels, totalPixels: result.totalPixels,
+      changedFraction: result.changedFraction,
+      maxDeltaE: result.maxDeltaE, meanDeltaE: result.meanDeltaE,
+      ssim: quality.ssim, psnr: quality.psnr,
+    });
+  } else {
+    info(`${bold(basename(a))} ${dim('vs')} ${bold(basename(b))}  ${dim(`${result.totalPixels} px`)}`);
+    info(`  ${result.changedPixels === 0 ? green('✓ identical within threshold') : `${red(`${result.changedPixels} changed`)} ${dim(`(${pct}%)`)}`}`);
+    info(`  ${dim(`ΔE max ${result.maxDeltaE.toFixed(2)}  mean ${result.meanDeltaE.toFixed(3)}  ·  SSIM ${quality.ssim.toFixed(6)}  ·  heatmap → ${basename(o.output)}`)}`);
+  }
+
+  if (o.failOver !== undefined && result.changedFraction > o.failOver) {
+    process.stderr.write(
+      `${red('fail')} changed fraction ${result.changedFraction.toFixed(6)} exceeds --fail-over ${o.failOver}\n`,
     );
     process.exit(2);
   }
@@ -1708,6 +1763,18 @@ program
   .option('--fail-under <ssim>', 'exit non-zero if SSIM falls below this', floatArg('--fail-under', 0, 1))
   .option('--json', 'machine-readable output')
   .action(runVerify);
+
+program
+  .command('diff')
+  .description('Paint a perceptual (CIEDE2000) difference heatmap between two images, for visual regression')
+  .argument('<reference>')
+  .argument('<candidate>')
+  .option('-o, --output <file>', 'heatmap output path (default diff.png)', 'diff.png')
+  .option('-t, --threshold <de>', 'CIEDE2000 above which a pixel counts as changed', floatArg('--threshold', 0, 100), 2)
+  .option('-w, --width <px>', 'render both at this width first', intArg('--width', 1, 100000))
+  .option('--fail-over <fraction>', 'exit non-zero if the changed fraction exceeds this (0-1)', floatArg('--fail-over', 0, 1))
+  .option('--json', 'machine-readable output')
+  .action(runDiff);
 
 program
   .command('extract')

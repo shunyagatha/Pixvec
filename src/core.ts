@@ -79,6 +79,9 @@ export {
 // --- Quality metrics -------------------------------------------------------
 export { compareImages, ssimPlane, type CompareOptions } from './metrics/index.js';
 
+// --- Perceptual visual-regression diff (pure) ------------------------------
+export { diffImages, type DiffOptions, type DiffResult } from './diff.js';
+
 // --- SVG construction ------------------------------------------------------
 export { PathBuilder, num } from './svg/path.js';
 export { SvgDoc, fillAttrs, escapeText, escapeAttr, type SvgDocOptions } from './svg/build.js';
@@ -260,4 +263,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.18.1';
+export const VERSION = '1.19.0';

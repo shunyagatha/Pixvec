@@ -417,6 +417,7 @@ pixvec optimize icon.svg -o icon.min.svg   # render-preserving SVG minify
 pixvec sprite icons/*.svg -o sprite.svg    # pack many icons into one <symbol> sheet
 pixvec animate loading.gif -o loading.svg  # animated GIF/APNG → one CSS-animated SVG
 pixvec verify a.png b.svg          # measure any two images
+pixvec diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
 pixvec batch 'src/**/*.png' -o out/ --to svg
 pixvec mcp                         # MCP server: expose pixvec as tools to AI agents/IDEs
 ```
@@ -451,7 +452,7 @@ The **asset pipelines** close the loop to what web devs deploy: `pixvec favicon`
 
 `pixvec edit` wraps sharp's pipeline behind one command, in a fixed, sensible order (geometry → tone → colour → morphology → compositing → finish): `--resize`/`--fit`, `--rotate`, `--flip`/`--flop`, `--crop`, `--trim`; `--blur`, `--sharpen`, `--median`, `--clahe <WxH>`, `--gamma`, `--normalize`; `--grayscale`, `--negate`, `--sepia`, `--tint <color>`, `--threshold <0-255>`, `--brightness`/`--saturation`/`--hue`/`--lightness`; `--dilate`/`--erode`; `--unflatten`; `-b, --background` to flatten. Arbitrary affine warps, edge padding (`extend`), per-channel `linear` levels, custom `convolve` kernels, 3×3 `recomb`, and multi-image `composite` are available on the `pixvec/ops` library entry point. It is Node-only (needs sharp) and ships as its own subpath so browser and edge bundles never pull it in.
 
-`pixvec verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines.
+`pixvec verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines. Where `verify` gives you the number, **`pixvec diff before.png after.png`** shows you *where*: a pixelmatch-style heatmap with the base faded to a pale backdrop and every pixel that moved beyond a **CIEDE2000** threshold flagged in red — perceptual, so a one-bit rounding wobble doesn't light up the frame while a real hue shift is caught. `--fail-over 0.01` gates CI on the changed-pixel fraction, and `diffImages()` is pure (`pixvec/core`), so the same heatmap renders client-side in the playground or a browser test runner.
 
 ## Library
 
