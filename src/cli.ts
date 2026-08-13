@@ -8,10 +8,12 @@ import {
 } from './api.js';
 import { parseCssColor } from './color.js';
 import { decodeRaster, looksLikeSvg } from './io/decode.js';
-import { formatFromExtension } from './io/encode.js';
+import { encodeRaster, formatFromExtension } from './io/encode.js';
 import { baseDirFor, rasterizeSvg } from './io/rasterize.js';
 import { compareImages } from './metrics/index.js';
 import { extractEmbedded } from './vectorize/embed.js';
+import { bytesEqual } from './io/formats/bytes.js';
+import { removeBackground, type RemoveBackgroundOptions } from './background.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -125,7 +127,7 @@ async function readInput(path: string): Promise<Buffer> {
   }
 }
 
-async function writeOutput(path: string, data: string | Buffer): Promise<void> {
+async function writeOutput(path: string, data: string | Uint8Array): Promise<void> {
   await mkdir(dirname(resolve(path)), { recursive: true });
   await writeFile(path, data);
 }
@@ -134,6 +136,33 @@ function defaultOutput(input: string, ext: string): string {
   const dir = dirname(input);
   const stem = basename(input, extname(input));
   return join(dir, `${stem}${ext}`);
+}
+
+interface TransparencyCliOptions {
+  transparent?: boolean | string;
+  bgTolerance?: number;
+  bgEverywhere?: boolean;
+  feather?: boolean;
+}
+
+/**
+ * Build background-removal options from the CLI flags, or null when the user
+ * did not ask for transparency.
+ */
+function transparencyOptions(o: TransparencyCliOptions): RemoveBackgroundOptions | null {
+  if (!o.transparent) return null;
+  let color: Rgba | undefined;
+  if (typeof o.transparent === 'string') {
+    const parsed = parseCssColor(o.transparent);
+    if (!parsed) fail(`Unrecognised colour for --transparent: ${o.transparent}`);
+    color = parsed;
+  }
+  return {
+    color,
+    tolerance: o.bgTolerance,
+    edgesOnly: !o.bgEverywhere,
+    feather: o.feather,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +189,10 @@ interface VectorizeCliOptions {
   lossless?: boolean;
   prefer?: string;
   maxGeometryRatio?: number;
+  transparent?: boolean | string;
+  bgTolerance?: number;
+  bgEverywhere?: boolean;
+  feather?: boolean;
   verify?: boolean;
   embedStrategy: string;
   xlink?: boolean;
@@ -175,8 +208,28 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
     fail(`${input} is already an SVG. Did you mean \`pixvec rasterize\`?`);
   }
 
-  const source = await loadRaster(bytes);
+  let source = await loadRaster(bytes);
   const outPath = o.output ?? defaultOutput(input, '.svg');
+
+  // Knock out the background before vectorising, so the tracer never sees it
+  // as a region worth describing.
+  const transparency = transparencyOptions(o);
+  if (transparency) {
+    const removed = removeBackground(source.image, transparency);
+    // The original bytes no longer describe these pixels, so embed mode must
+    // re-encode rather than preserve them.
+    source = {
+      image: removed.image,
+      meta: { ...source.meta, hasAlpha: true, format: source.meta.format },
+      bytes: await encodeRaster(removed.image, { format: 'png' }),
+    };
+    info(
+      `  ${dim('·')} Removed background ` +
+        `${removed.detected ? '(detected) ' : ''}` +
+        `rgb(${removed.color.r},${removed.color.g},${removed.color.b}) — ` +
+        `${removed.removed} pixel(s) now transparent`,
+    );
+  }
 
   const result = await vectorize(source, {
     mode: (o.lossless ? 'lossless' : o.mode) as never,
@@ -260,6 +313,10 @@ interface RasterizeCliOptions {
   imageRendering: string;
   fontDir?: string[];
   defaultFont?: string;
+  transparent?: boolean | string;
+  bgTolerance?: number;
+  bgEverywhere?: boolean;
+  feather?: boolean;
   verify?: boolean;
   json?: boolean;
 }
@@ -312,6 +369,30 @@ async function runRasterize(input: string, o: RasterizeCliOptions): Promise<void
     },
     o.verify || o.lossless,
   );
+
+  // Applied after rendering, so it works on any SVG rather than only ones with
+  // a literal background rectangle.
+  const transparency = transparencyOptions(o);
+  if (transparency) {
+    const removed = removeBackground(
+      (await rasterizeSvg(bytes, {
+        baseDir: baseDirFor(input), width: o.width, height: o.height, scale: o.scale,
+      })).image,
+      transparency,
+    );
+    outcome.buffer = await encodeRaster(removed.image, {
+      format: format as RasterFormat,
+      quality: o.quality,
+      lossless: o.lossless,
+      effort: o.effort,
+    });
+    info(
+      removed.removed === 0
+        ? `  ${dim('·')} Nothing to remove — the background is already transparent`
+        : `  ${dim('·')} Removed background rgb(${removed.color.r},${removed.color.g},` +
+            `${removed.color.b}) — ${removed.removed} pixel(s) now transparent`,
+    );
+  }
 
   await writeOutput(outPath, outcome.buffer);
 
@@ -507,7 +588,7 @@ async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
   let matchesSource: boolean | undefined;
   if (o.against) {
     const original = await readInput(o.against);
-    matchesSource = original.equals(payload.bytes);
+    matchesSource = bytesEqual(original, payload.bytes);
   }
 
   if (o.json) {
@@ -716,6 +797,10 @@ program
     'how much larger real geometry may be than the alternative under --prefer auto',
     floatArg('--max-geometry-ratio', 1, 1000),
   )
+  .option('-t, --transparent [color]', 'make the background transparent; detects the colour when omitted')
+  .option('--bg-tolerance <n>', 'how far a pixel may sit from the background colour (Oklab distance)', floatArg('--bg-tolerance', 0, 1))
+  .option('--bg-everywhere', 'remove matching pixels anywhere, not just those reachable from the edge')
+  .option('--feather', 'fade the cut instead of a hard edge')
   .option('--verify', 'render the result and measure it against the input')
   .addOption(
     new Option('--embed-strategy <s>', 'payload handling for embed mode')
@@ -764,6 +849,10 @@ program
   )
   .option('--font-dir <dir...>', 'extra font directories')
   .option('--default-font <family>', 'fallback font family')
+  .option('-t, --transparent [color]', 'make the background transparent; detects the colour when omitted')
+  .option('--bg-tolerance <n>', 'how far a pixel may sit from the background colour (Oklab distance)', floatArg('--bg-tolerance', 0, 1))
+  .option('--bg-everywhere', 'remove matching pixels anywhere, not just those reachable from the edge')
+  .option('--feather', 'fade the cut instead of a hard edge')
   .option('--verify', 're-decode the encoded file and report what the encoder cost')
   .option('--json', 'machine-readable output on stdout')
   .action(runRasterize);

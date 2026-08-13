@@ -8,6 +8,10 @@ export { decodeBmp, isBmp } from './bmp.js';
 export { decodeIco, isIco, listIcoEntries, type IcoEntry } from './ico.js';
 export { decodePnm, isPnm } from './pnm.js';
 export { decodeTga, isTga } from './tga.js';
+export {
+  encodeBmp, encodePnm, encodeTga, encodeIco, encodeIcoDib,
+  type BmpEncodeOptions, type PnmEncodeOptions, type TgaEncodeOptions, type IcoEntryInput,
+} from './encoders.js';
 
 /**
  * Formats libvips does not build in, decoded here in pure TypeScript.
@@ -46,7 +50,7 @@ export interface FallbackResult {
    * 256×256 ICO entry almost always does. Those bytes come back here to be
    * handed to a real codec instead of being reimplemented badly.
    */
-  delegate?: { format: 'png' | 'jpeg'; bytes: Buffer };
+  delegate?: { format: 'png' | 'jpeg'; bytes: Uint8Array };
   /** Extra detail worth surfacing, such as the specific Netpbm variant. */
   detail?: string;
 }
@@ -58,7 +62,7 @@ export interface FallbackResult {
  * before a real codec has had its turn risks misreading some other format's
  * header as a plausible TGA. {@link decodeTgaFallback} handles it as a last resort.
  */
-export function sniffFallbackFormat(bytes: Buffer): SignatureFormat | null {
+export function sniffFallbackFormat(bytes: Uint8Array): SignatureFormat | null {
   if (isBmp(bytes)) return 'bmp';
   if (isIco(bytes)) return 'ico';
   if (isPnm(bytes)) return 'pnm';
@@ -66,7 +70,7 @@ export function sniffFallbackFormat(bytes: Buffer): SignatureFormat | null {
 }
 
 /** Decode one of the signature-identified formats, or return null. */
-export function decodeFallback(bytes: Buffer): FallbackResult | null {
+export function decodeFallback(bytes: Uint8Array): FallbackResult | null {
   const format = sniffFallbackFormat(bytes);
   if (!format) return null;
 
@@ -99,7 +103,7 @@ export function decodeFallback(bytes: Buffer): FallbackResult | null {
 }
 
 /** Last-resort TGA attempt, for use only after a real codec has declined. */
-export function decodeTgaFallback(bytes: Buffer): FallbackResult | null {
+export function decodeTgaFallback(bytes: Uint8Array): FallbackResult | null {
   if (!isTga(bytes)) return null;
   try {
     const { image, bitDepth } = decodeTga(bytes);

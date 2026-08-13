@@ -17,7 +17,7 @@ import { dirname, join, resolve } from 'node:path';
 import sharp from 'sharp';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const cli = join(root, 'dist', 'cli.js');
+const cli = join(root, 'dist', 'esm', 'cli.js');
 
 let failures = 0;
 

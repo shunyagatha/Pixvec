@@ -7,6 +7,7 @@ import { compareImages } from '../src/metrics/index.js';
 import { extractEmbedded } from '../src/vectorize/embed.js';
 import { vectorizeExact, vectorizeExactContours } from '../src/vectorize/exact.js';
 import { vectorizePixels } from '../src/vectorize/pixel.js';
+import { bytesEqual, fromBase64, toBase64 } from '../src/io/formats/bytes.js';
 import type { RasterImage } from '../src/types.js';
 import {
   alphaBlob, createImage, diagonalPinch, encode, flatArtwork, photoLike, pixelArt, setPixel,
@@ -181,7 +182,7 @@ describe('byte-identical round trip', () => {
     expect(payload).not.toBeNull();
     expect(payload!.isOriginal).toBe(true);
     expect(payload!.verified).toBe(true);
-    expect(payload!.bytes.equals(original)).toBe(true);
+    expect(bytesEqual(payload!.bytes, original)).toBe(true);
     expect(payload!.actualSha256).toBe(createHash('sha256').update(original).digest('hex'));
   });
 
@@ -229,6 +230,44 @@ describe('byte-identical round trip', () => {
     const payload = extractEmbedded(result.svg)!;
     expect(payload.mime).toBe('image/jpeg');
     expect(payload.extension).toBe('jpg');
-    expect(payload.bytes.equals(original)).toBe(true);
+    expect(bytesEqual(payload.bytes, original)).toBe(true);
+  });
+});
+
+/**
+ * Base64 is now load-bearing for the byte-identical guarantee: it is what puts
+ * the original file into the SVG and takes it back out. A portable
+ * implementation replaced `Buffer`'s so the core runs outside Node, so it needs
+ * to be exercised directly rather than only through the round trip.
+ */
+describe('portable base64', () => {
+  it('round-trips every byte value', () => {
+    const all = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) all[i] = i;
+    expect(bytesEqual(fromBase64(toBase64(all)), all)).toBe(true);
+  });
+
+  it('handles all three padding cases', () => {
+    for (let length = 0; length < 32; length++) {
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length; i++) bytes[i] = (i * 37 + 11) & 0xff;
+      const encoded = toBase64(bytes);
+      expect(encoded.length % 4).toBe(0);
+      expect(bytesEqual(fromBase64(encoded), bytes)).toBe(true);
+    }
+  });
+
+  it('agrees with Node\'s implementation', () => {
+    for (const length of [1, 2, 3, 7, 64, 255, 1000]) {
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length; i++) bytes[i] = (i * 97 + 3) & 0xff;
+      expect(toBase64(bytes)).toBe(Buffer.from(bytes).toString('base64'));
+    }
+  });
+
+  it('ignores whitespace, which is legal inside a data URI', () => {
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const spaced = toBase64(bytes).replace(/(.{4})/g, '$1\n  ');
+    expect(bytesEqual(fromBase64(spaced), bytes)).toBe(true);
   });
 });

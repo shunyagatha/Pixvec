@@ -1,6 +1,6 @@
 {
   "name": "pixvec",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Measurable raster <-> SVG conversion. Pixel-exact lossless vectorization, quality-targeted Bezier tracing, and exact SVG rasterization - with built-in PSNR/SSIM/CIEDE2000 verification. Reads PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM and TGA.",
   "keywords": [
     "svg",
@@ -39,16 +39,25 @@
   "engines": {
     "node": ">=18.17"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/esm/index.js"
+    },
+    "./core": {
+      "types": "./dist/esm/core.d.ts",
+      "import": "./dist/esm/core.js",
+      "require": "./dist/cjs/core.js",
+      "default": "./dist/esm/core.js"
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
-    "pixvec": "./dist/cli.js"
+    "pixvec": "./dist/esm/cli.js"
   },
   "files": [
     "dist",
@@ -56,28 +65,38 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:esm && npm run build:cjs && node scripts/postbuild.mjs",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
     "bench": "node scripts/bench.mjs",
     "cli": "node --enable-source-maps dist/cli.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "build:esm": "tsc -p tsconfig.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "compare": "node scripts/compare.mjs"
   },
   "dependencies": {
-    "@resvg/resvg-js": "^2.6.2",
     "commander": "^12.1.0",
-    "sharp": "^0.34.2",
     "tinyglobby": "^0.2.12"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "imagetracerjs": "^1.2.6",
+    "potrace": "^2.1.8",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
   "allowScripts": {
     "esbuild@0.21.5": true,
     "sharp@0.34.5": true
+  },
+  "module": "./dist/esm/index.js",
+  "sideEffects": false,
+  "optionalDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "sharp": "^0.34.2"
   }
 }

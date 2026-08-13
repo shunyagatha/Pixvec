@@ -13,7 +13,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { loadRaster, vectorize } from '../dist/api.js';
+import { loadRaster, vectorize } from '../dist/esm/api.js';
 
 const asJson = process.argv.includes('--json');
 

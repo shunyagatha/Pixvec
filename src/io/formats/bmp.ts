@@ -1,4 +1,5 @@
 import type { RasterImage } from '../../types.js';
+import { i32le, u16le, u32le } from './bytes.js';
 
 /**
  * BMP decoder.
@@ -29,10 +30,10 @@ export interface BmpResult {
   image: RasterImage;
   bitDepth: number;
   /** Set when the pixel data is a wholesale PNG or JPEG that a real codec must handle. */
-  delegate?: { format: 'png' | 'jpeg'; bytes: Buffer };
+  delegate?: { format: 'png' | 'jpeg'; bytes: Uint8Array };
 }
 
-export function isBmp(bytes: Buffer): boolean {
+export function isBmp(bytes: Uint8Array): boolean {
   return bytes.length >= 26 && bytes[0] === 0x42 && bytes[1] === 0x4d;
 }
 
@@ -44,7 +45,7 @@ export function isBmp(bytes: Buffer): boolean {
  *                  header, the stored height covers both the colour and mask
  *                  planes, and a 1-bit AND mask follows the pixels.
  */
-export function decodeBmp(bytes: Buffer, embedded = false): BmpResult {
+export function decodeBmp(bytes: Uint8Array, embedded = false): BmpResult {
   let dibOffset: number;
   let dataOffset: number;
 
@@ -54,10 +55,10 @@ export function decodeBmp(bytes: Buffer, embedded = false): BmpResult {
   } else {
     if (!isBmp(bytes)) throw new Error('Not a BMP file');
     dibOffset = 14;
-    dataOffset = bytes.readUInt32LE(10);
+    dataOffset = u32le(bytes, 10);
   }
 
-  const dibSize = bytes.readUInt32LE(dibOffset);
+  const dibSize = u32le(bytes, dibOffset);
 
   let width: number;
   let storedHeight: number;
@@ -67,15 +68,15 @@ export function decodeBmp(bytes: Buffer, embedded = false): BmpResult {
 
   if (dibSize === 12) {
     // BITMAPCOREHEADER: 16-bit dimensions, 3-byte palette entries.
-    width = bytes.readInt16LE(dibOffset + 4);
-    storedHeight = bytes.readInt16LE(dibOffset + 6);
-    bitCount = bytes.readUInt16LE(dibOffset + 10);
+    width = ((u16le(bytes, dibOffset + 4) << 16) >> 16);
+    storedHeight = ((u16le(bytes, dibOffset + 6) << 16) >> 16);
+    bitCount = u16le(bytes, dibOffset + 10);
   } else if (dibSize >= 40) {
-    width = bytes.readInt32LE(dibOffset + 4);
-    storedHeight = bytes.readInt32LE(dibOffset + 8);
-    bitCount = bytes.readUInt16LE(dibOffset + 14);
-    compression = bytes.readUInt32LE(dibOffset + 16);
-    paletteCount = bytes.readUInt32LE(dibOffset + 32);
+    width = i32le(bytes, dibOffset + 4);
+    storedHeight = i32le(bytes, dibOffset + 8);
+    bitCount = u16le(bytes, dibOffset + 14);
+    compression = u32le(bytes, dibOffset + 16);
+    paletteCount = u32le(bytes, dibOffset + 32);
   } else {
     throw new Error(`Unsupported BMP header size ${dibSize}`);
   }
@@ -107,19 +108,19 @@ export function decodeBmp(bytes: Buffer, embedded = false): BmpResult {
   if (compression === BI_BITFIELDS) {
     if (dibSize === 40) {
       masks = [
-        bytes.readUInt32LE(maskOffset),
-        bytes.readUInt32LE(maskOffset + 4),
-        bytes.readUInt32LE(maskOffset + 8),
+        u32le(bytes, maskOffset),
+        u32le(bytes, maskOffset + 4),
+        u32le(bytes, maskOffset + 8),
         0,
       ];
       maskOffset += 12;
     } else {
       // V4/V5 headers carry the masks inside the header itself.
       masks = [
-        bytes.readUInt32LE(dibOffset + 40),
-        bytes.readUInt32LE(dibOffset + 44),
-        bytes.readUInt32LE(dibOffset + 48),
-        dibSize >= 56 ? bytes.readUInt32LE(dibOffset + 52) : 0,
+        u32le(bytes, dibOffset + 40),
+        u32le(bytes, dibOffset + 44),
+        u32le(bytes, dibOffset + 48),
+        dibSize >= 56 ? u32le(bytes, dibOffset + 52) : 0,
       ];
     }
   }
@@ -152,7 +153,7 @@ export function decodeBmp(bytes: Buffer, embedded = false): BmpResult {
   return { image, bitDepth: bitCount };
 }
 
-function readPalette(bytes: Buffer, offset: number, count: number, entrySize: number): Uint8Array {
+function readPalette(bytes: Uint8Array, offset: number, count: number, entrySize: number): Uint8Array {
   const palette = new Uint8Array(count * 4);
   for (let i = 0; i < count; i++) {
     const o = offset + i * entrySize;
@@ -166,7 +167,7 @@ function readPalette(bytes: Buffer, offset: number, count: number, entrySize: nu
 }
 
 function decodePacked(
-  bytes: Buffer, dataOffset: number, image: RasterImage,
+  bytes: Uint8Array, dataOffset: number, image: RasterImage,
   bitCount: number, palette: Uint8Array | null,
   masks: [number, number, number, number] | null, topDown: boolean,
 ): void {
@@ -198,7 +199,7 @@ function decodePacked(
         case 16: {
           const o = rowStart + x * 2;
           if (o + 1 >= bytes.length) continue;
-          const v = bytes.readUInt16LE(o);
+          const v = u16le(bytes, o);
           if (masks && shifts) {
             r = scaleChannel(v, masks[0], shifts[0]);
             g = scaleChannel(v, masks[1], shifts[1]);
@@ -222,7 +223,7 @@ function decodePacked(
           const o = rowStart + x * 4;
           if (o + 3 >= bytes.length) continue;
           if (masks && shifts) {
-            const v = bytes.readUInt32LE(o);
+            const v = u32le(bytes, o);
             r = scaleChannel(v, masks[0], shifts[0]);
             g = scaleChannel(v, masks[1], shifts[1]);
             b = scaleChannel(v, masks[2], shifts[2]);
@@ -243,7 +244,7 @@ function decodePacked(
 
 /** Run-length encoded 8- and 4-bit BMPs, including the delta and literal escapes. */
 function decodeRle(
-  bytes: Buffer, dataOffset: number, image: RasterImage,
+  bytes: Uint8Array, dataOffset: number, image: RasterImage,
   palette: Uint8Array, is4Bit: boolean, topDown: boolean,
 ): void {
   const { width, height, data } = image;
@@ -307,7 +308,7 @@ function decodeRle(
  * A 32-bit icon usually carries a real alpha channel too, so the mask is only
  * consulted when there is no alpha information to trust.
  */
-function applyAndMask(bytes: Buffer, dataOffset: number, image: RasterImage, bitCount: number): void {
+function applyAndMask(bytes: Uint8Array, dataOffset: number, image: RasterImage, bitCount: number): void {
   const { width, height, data } = image;
 
   if (bitCount === 32 && hasAnyAlpha(image)) return;

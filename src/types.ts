@@ -38,7 +38,9 @@ export interface SourceMeta {
   orientation?: number;
 }
 
-export type RasterFormat = 'png' | 'jpeg' | 'webp' | 'avif' | 'tiff' | 'gif';
+export type RasterFormat =
+  | 'png' | 'jpeg' | 'webp' | 'avif' | 'tiff' | 'gif'
+  | 'bmp' | 'ico' | 'pnm' | 'tga';
 
 /** Alpha model used when comparing two images. */
 export type AlphaMode = 'premultiplied' | 'straight';

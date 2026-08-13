@@ -1,6 +1,6 @@
 # Pixvec
 
-**Measurable raster ⇄ SVG conversion.** Ten raster formats to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
+**Measurable raster ⇄ SVG conversion.** Eleven formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted.
 
 [![CI](https://github.com/shunyagatha/Pixvec/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/Pixvec/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -96,39 +96,51 @@ Anyone promising exact photo-to-curves vectorization is either embedding a bitma
 
 ## Install
 
-Not on npm yet. Install from source:
-
 ```bash
-git clone https://github.com/shunyagatha/Pixvec.git
-cd Pixvec
-npm install
-npm run build
-npm link          # puts `pixvec` on your PATH
+npm install -g pixvec        # the CLI
+npm install pixvec           # the library
 ```
 
-Or install straight from GitHub:
+Node.js 18.17+. The native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows.
 
-```bash
-npm install -g github:shunyagatha/Pixvec
+### Any project architecture
+
+| You are using | Import | Native deps |
+|---|---|:--:|
+| Node, ESM | `import { vectorize } from 'pixvec'` | yes |
+| Node, CommonJS | `const { vectorize } = require('pixvec')` | yes |
+| Browser / Deno / Bun / edge | `import { vectorizeExact } from 'pixvec/core'` | **none** |
+
+`pixvec/core` is the vectorisation and measurement engine with **zero dependencies and no Node built-ins**. It takes a plain `{ width, height, data }` — byte-for-byte the layout of the browser's `ImageData` — so canvas pixels go straight in:
+
+```js
+import { vectorizeExact } from 'pixvec/core';
+
+const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+const { svg } = vectorizeExact({ width, height, data });   // bit-exact, no codec needed
 ```
 
-Requires Node.js 18.17+. Native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows, so no compiler toolchain is needed.
+Install without the optional native packages (`npm install pixvec --omit=optional`) and core still works, at **2 MB instead of ~100 MB**. Reading image files, rendering SVG back to pixels, and the verified lossless guarantee all need real codecs, so those live in the main entry point.
+
+The BMP, ICO, PNM and TGA codecs are written from scratch in this package, so they work in core too — no libvips required to read or write any of them.
 
 ## Formats
 
 | | Read | Write |
-|---|---|---|
+|---|:--:|:--:|
 | **PNG** | ✅ | ✅ |
 | **JPEG** | ✅ | ✅ |
-| **WebP** | ✅ | ✅ (lossy + lossless) |
-| **AVIF** | ✅ | ✅ (lossy + lossless) |
+| **WebP** | ✅ | ✅ lossy + lossless |
+| **AVIF** | ✅ | ✅ lossy + lossless |
 | **TIFF** | ✅ | ✅ |
-| **GIF** | ✅ (first frame) | ✅ |
-| **BMP** | ✅ all depths, RLE, BITFIELDS | — |
-| **ICO / CUR** | ✅ picks the largest entry | — |
-| **PNM** (PBM/PGM/PPM) | ✅ P1–P6 | — |
-| **TGA** | ✅ incl. RLE and colour-mapped | — |
-| **SVG** | ✅ (as the rasterize input) | ✅ |
+| **GIF** | ✅ first frame | ✅ |
+| **BMP** | ✅ all depths, RLE, BITFIELDS | ✅ 24/32-bit |
+| **ICO / CUR** | ✅ largest entry | ✅ PNG or DIB payload |
+| **PNM** (PBM/PGM/PPM) | ✅ P1–P6 | ✅ P4/P5/P6 |
+| **TGA** | ✅ RLE, colour-mapped | ✅ RLE optional |
+| **SVG** | ✅ | ✅ |
+
+**The matrix is square: every format it reads, it writes.** That is 11 × 11 = **121 conversions**, and the test suite runs all of them on every commit — PNG→TGA, ICO→WebP, TGA→SVG, SVG→BMP, whatever you need.
 
 BMP, ICO, PNM and TGA are decoded in pure TypeScript — libvips is not built with them, and each is simple and stable enough to implement completely rather than adding another native dependency. All four are lossless formats, so the test suite asserts **bit-exact** decoding rather than approximate agreement.
 
@@ -162,6 +174,23 @@ pixvec verify original.png result.svg
 # Whole directories
 pixvec batch 'assets/**/*.png' -o dist/ --to svg
 ```
+
+## Transparent output
+
+`--transparent` removes a solid background and leaves real transparency behind:
+
+```bash
+pixvec vectorize logo.png --transparent             # detect the background colour
+pixvec vectorize logo.png --transparent '#ffffff'   # or name it
+pixvec rasterize icon.svg -o icon.png --transparent
+```
+
+Two details make this safe rather than destructive:
+
+- **It flood-fills from the edges.** Removing "every white pixel" also punches holes through the whites *inside* a logo — the glint in an eye, the counter of an `o`. Only colour reachable from the border is background. `--bg-everywhere` opts into the blunt global version.
+- **Tolerance is perceptual.** A JPEG's white is never exactly `#ffffff`, and an RGB threshold loose enough to catch it also eats pale yellows. `--bg-tolerance` is an Oklab distance, so "slightly off-white" and "a genuinely different colour" stay on opposite sides of the line. `--feather` softens the cut.
+
+Available in core too, so it works in a browser: `removeBackground(image, { tolerance: 0.02 })`.
 
 ## Accuracy, measured
 
@@ -231,6 +260,10 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 |---|---|
 | `-o, --output <file>` | Output path (default `<input>.svg`) |
 | `-l, --lossless` | guarantee a bit-exact result, or fail |
+| `-t, --transparent [color]` | remove the background; detects the colour when omitted |
+| `--bg-tolerance <n>` | how far a pixel may sit from the background colour (Oklab distance) |
+| `--bg-everywhere` | remove matching pixels anywhere, not only from the edges inward |
+| `--feather` | fade the cut instead of a hard edge |
 | `--prefer <what>` | `auto` (default), `geometry`, `size` — what lossless optimises for |
 | `--max-geometry-ratio <n>` | how much larger real geometry may be under `--prefer auto` (default 4) |
 | `-m, --mode <mode>` | `auto`, `lossless`, `pixel`, `trace`, `embed` |
@@ -321,6 +354,7 @@ Stated plainly, because you should know before you invest:
 - **Animation is not supported.** Multi-frame inputs use the first frame.
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
 - **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW do not decode.** See [Formats](#formats).
+- **`pixvec/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
 - **This has not been benchmarked against potrace, vtracer or Illustrator.** The accuracy numbers here are measured against the *input*, which is the meaningful comparison for lossless modes but says nothing about whether the tracer beats the alternatives. Treat "best" as unproven.
 
 ## Contributing

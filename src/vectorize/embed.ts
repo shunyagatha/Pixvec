@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { SvgDoc, escapeAttr } from '../svg/build.js';
+import { fromBase64, toBase64 } from '../io/formats/bytes.js';
 import type { RasterImage, SourceMeta } from '../types.js';
 
 /**
@@ -69,7 +70,7 @@ const MIME: Record<string, string> = {
 
 export async function vectorizeEmbed(
   img: RasterImage,
-  original: Buffer,
+  original: Uint8Array,
   meta: SourceMeta,
   opts: EmbedOptions = {},
 ): Promise<EmbedOutput> {
@@ -84,7 +85,7 @@ export async function vectorizeEmbed(
     (meta.orientation === undefined || meta.orientation <= 1) &&
     meta.frames <= 1;
 
-  const candidates: Array<{ mime: string; bytes: Buffer; preserved: boolean }> = [];
+  const candidates: Array<{ mime: string; bytes: Uint8Array; preserved: boolean }> = [];
 
   if (strategy === 'webp') {
     // Explicitly requested, so honour it — but say what it costs.
@@ -155,7 +156,7 @@ export async function vectorizeEmbed(
     ` data-pixvec-bytes="${chosen.bytes.length}"` +
     (chosen.preserved ? ' data-pixvec-original="true"' : '');
 
-  const dataUri = `data:${chosen.mime};base64,${chosen.bytes.toString('base64')}`;
+  const dataUri = `data:${chosen.mime};base64,${toBase64(chosen.bytes)}`;
   doc.add(
     `<image width="${img.width}" height="${img.height}"${rendering}${provenance} ` +
       `${hrefAttr}="${escapeAttr(dataUri)}"/>`,
@@ -179,7 +180,7 @@ export async function vectorizeEmbed(
 }
 
 export interface ExtractedPayload {
-  bytes: Buffer;
+  bytes: Uint8Array;
   mime: string;
   /** File extension implied by the media type, without a dot. */
   extension: string;
@@ -221,7 +222,7 @@ export function extractEmbedded(svg: string): ExtractedPayload | null {
 
   const mime = match[2].trim().toLowerCase();
   // Whitespace is legal inside a data URI and must go before decoding.
-  const bytes = Buffer.from(match[3].replace(/\s+/g, ''), 'base64');
+  const bytes = fromBase64(match[3]);
   const actualSha256 = createHash('sha256').update(bytes).digest('hex');
 
   const tag = match[0];

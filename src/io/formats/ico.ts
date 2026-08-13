@@ -1,4 +1,5 @@
 import type { RasterImage } from '../../types.js';
+import { bytesEqual, u16le, u32le } from './bytes.js';
 import { decodeBmp } from './bmp.js';
 
 /**
@@ -23,19 +24,19 @@ export interface IcoEntry {
   isPng: boolean;
 }
 
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export function isIco(bytes: Buffer): boolean {
+export function isIco(bytes: Uint8Array): boolean {
   if (bytes.length < 6) return false;
-  if (bytes.readUInt16LE(0) !== 0) return false;
-  const type = bytes.readUInt16LE(2);
+  if (u16le(bytes, 0) !== 0) return false;
+  const type = u16le(bytes, 2);
   if (type !== 1 && type !== 2) return false; // 1 = icon, 2 = cursor
-  const count = bytes.readUInt16LE(4);
+  const count = u16le(bytes, 4);
   return count > 0 && bytes.length >= 6 + count * 16;
 }
 
-export function listIcoEntries(bytes: Buffer): IcoEntry[] {
-  const count = bytes.readUInt16LE(4);
+export function listIcoEntries(bytes: Uint8Array): IcoEntry[] {
+  const count = u16le(bytes, 4);
   const entries: IcoEntry[] = [];
 
   for (let i = 0; i < count; i++) {
@@ -44,14 +45,14 @@ export function listIcoEntries(bytes: Buffer): IcoEntry[] {
     // A stored dimension of 0 means 256 — the field is a single byte.
     const width = bytes[o] === 0 ? 256 : bytes[o];
     const height = bytes[o + 1] === 0 ? 256 : bytes[o + 1];
-    const bitCount = bytes.readUInt16LE(o + 6);
-    const length = bytes.readUInt32LE(o + 8);
-    const offset = bytes.readUInt32LE(o + 12);
+    const bitCount = u16le(bytes, o + 6);
+    const length = u32le(bytes, o + 8);
+    const offset = u32le(bytes, o + 12);
     if (offset + length > bytes.length) continue;
 
     entries.push({
       width, height, bitCount, offset, length,
-      isPng: bytes.subarray(offset, offset + 8).equals(PNG_SIGNATURE),
+      isPng: bytesEqual(bytes.subarray(offset, offset + 8), PNG_SIGNATURE),
     });
   }
 
@@ -61,12 +62,12 @@ export function listIcoEntries(bytes: Buffer): IcoEntry[] {
 export interface IcoResult {
   image?: RasterImage;
   /** Set when the chosen entry is a PNG that a real codec must decode. */
-  delegate?: Buffer;
+  delegate?: Uint8Array;
   entry: IcoEntry;
   entries: IcoEntry[];
 }
 
-export function decodeIco(bytes: Buffer, index?: number): IcoResult {
+export function decodeIco(bytes: Uint8Array, index?: number): IcoResult {
   if (!isIco(bytes)) throw new Error('Not an ICO/CUR file');
 
   const entries = listIcoEntries(bytes);

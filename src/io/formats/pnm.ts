@@ -1,4 +1,5 @@
 import type { RasterImage } from '../../types.js';
+import { u16be } from './bytes.js';
 
 /**
  * Netpbm (PBM/PGM/PPM) decoder, covering both the ASCII and binary variants.
@@ -14,11 +15,11 @@ import type { RasterImage } from '../../types.js';
 
 type Variant = 1 | 2 | 3 | 4 | 5 | 6;
 
-export function isPnm(bytes: Buffer): boolean {
+export function isPnm(bytes: Uint8Array): boolean {
   return bytes.length > 2 && bytes[0] === 0x50 && bytes[1] >= 0x31 && bytes[1] <= 0x36;
 }
 
-export function decodePnm(bytes: Buffer): { image: RasterImage; bitDepth: number; variant: string } {
+export function decodePnm(bytes: Uint8Array): { image: RasterImage; bitDepth: number; variant: string } {
   if (!isPnm(bytes)) throw new Error('Not a Netpbm file');
 
   const variant = (bytes[1] - 0x30) as Variant;
@@ -77,7 +78,7 @@ export function decodePnm(bytes: Buffer): { image: RasterImage; bitDepth: number
 
   const channels = variant === 5 ? 1 : 3;
   const step = wide ? 2 : 1;
-  const read = (at: number): number => (wide ? (bytes.readUInt16BE(at)) : bytes[at] ?? 0);
+  const read = (at: number): number => (wide ? (u16be(bytes, at)) : bytes[at] ?? 0);
 
   for (let i = 0; i < width * height; i++) {
     const o = i * 4;
@@ -99,7 +100,7 @@ export function decodePnm(bytes: Buffer): { image: RasterImage; bitDepth: number
 
 /** Reads whitespace-separated integers, skipping `#` comments wherever they appear. */
 class HeaderReader {
-  constructor(private readonly bytes: Buffer, public offset: number) {}
+  constructor(private readonly bytes: Uint8Array, public offset: number) {}
 
   nextInt(): number {
     this.skipSeparators();

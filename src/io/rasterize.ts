@@ -49,10 +49,10 @@ const IMAGE_RENDERING = { optimizeQuality: 0, optimizeSpeed: 1 } as const;
  * encode/decode round trip without giving up exactness.
  */
 export async function rasterizeSvg(
-  svg: string | Buffer,
+  svg: string | Uint8Array,
   opts: RasterizeOptions = {},
 ): Promise<RasterizeResult> {
-  let source = typeof svg === 'string' ? svg : svg.toString('utf8');
+  let source = typeof svg === 'string' ? svg : new TextDecoder().decode(svg);
   const inlined: string[] = [];
 
   if (opts.inlineImages !== false && opts.baseDir) {

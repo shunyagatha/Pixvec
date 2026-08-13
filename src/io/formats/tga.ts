@@ -1,4 +1,5 @@
 import type { RasterImage } from '../../types.js';
+import { latin1, u16le } from './bytes.js';
 
 /**
  * Truevision TGA decoder.
@@ -21,19 +22,19 @@ const RLE_GRAYSCALE = 11;
 const FOOTER = 'TRUEVISION-XFILE.';
 
 /** Conservative sniff: trust the footer, otherwise demand a fully coherent header. */
-export function isTga(bytes: Buffer): boolean {
+export function isTga(bytes: Uint8Array): boolean {
   if (bytes.length < 18) return false;
 
   if (bytes.length >= 26) {
-    const footer = bytes.subarray(bytes.length - 18, bytes.length - 1).toString('latin1');
+    const footer = latin1(bytes, bytes.length - 18, bytes.length - 1);
     if (footer === FOOTER) return true;
   }
 
   const colorMapType = bytes[1];
   const imageType = bytes[2];
   const depth = bytes[16];
-  const width = bytes.readUInt16LE(12);
-  const height = bytes.readUInt16LE(14);
+  const width = u16le(bytes, 12);
+  const height = u16le(bytes, 14);
 
   if (colorMapType > 1) return false;
   if (![NO_IMAGE, COLOR_MAPPED, TRUE_COLOR, GRAYSCALE, RLE_COLOR_MAPPED, RLE_TRUE_COLOR, RLE_GRAYSCALE].includes(imageType)) return false;
@@ -45,24 +46,24 @@ export function isTga(bytes: Buffer): boolean {
   // The declared geometry must be able to fit in the file, allowing for RLE.
   const isRle = imageType >= RLE_COLOR_MAPPED;
   const idLength = bytes[0];
-  const mapLength = bytes.readUInt16LE(5);
+  const mapLength = u16le(bytes, 5);
   const mapEntrySize = bytes[7];
   const headerBytes = 18 + idLength + (colorMapType === 1 ? mapLength * Math.ceil(mapEntrySize / 8) : 0);
   const uncompressed = width * height * Math.ceil(depth / 8);
   return isRle ? bytes.length > headerBytes : bytes.length >= headerBytes + uncompressed;
 }
 
-export function decodeTga(bytes: Buffer): { image: RasterImage; bitDepth: number } {
+export function decodeTga(bytes: Uint8Array): { image: RasterImage; bitDepth: number } {
   if (bytes.length < 18) throw new Error('Truncated TGA header');
 
   const idLength = bytes[0];
   const colorMapType = bytes[1];
   const imageType = bytes[2];
-  const mapFirst = bytes.readUInt16LE(3);
-  const mapLength = bytes.readUInt16LE(5);
+  const mapFirst = u16le(bytes, 3);
+  const mapLength = u16le(bytes, 5);
   const mapEntrySize = bytes[7];
-  const width = bytes.readUInt16LE(12);
-  const height = bytes.readUInt16LE(14);
+  const width = u16le(bytes, 12);
+  const height = u16le(bytes, 14);
   const depth = bytes[16];
   const descriptor = bytes[17];
 
@@ -100,7 +101,7 @@ export function decodeTga(bytes: Buffer): { image: RasterImage; bitDepth: number
   const emit = (at: number, source: number): void => {
     const q = at * 4;
     if (isMapped) {
-      const index = depth === 8 ? bytes[source] : bytes.readUInt16LE(source);
+      const index = depth === 8 ? bytes[source] : u16le(bytes, source);
       const m = index * 4;
       pixels[q] = colorMap![m]; pixels[q + 1] = colorMap![m + 1];
       pixels[q + 2] = colorMap![m + 2]; pixels[q + 3] = colorMap![m + 3];
@@ -156,7 +157,7 @@ export function decodeTga(bytes: Buffer): { image: RasterImage; bitDepth: number
 }
 
 /** Read one BGR(A) pixel at the given depth, returning RGBA. */
-function readPixel(bytes: Buffer, offset: number, depth: number): [number, number, number, number] {
+function readPixel(bytes: Uint8Array, offset: number, depth: number): [number, number, number, number] {
   switch (depth) {
     case 8: {
       const v = bytes[offset] ?? 0;
@@ -164,7 +165,7 @@ function readPixel(bytes: Buffer, offset: number, depth: number): [number, numbe
     }
     case 15:
     case 16: {
-      const v = bytes.readUInt16LE(offset);
+      const v = u16le(bytes, offset);
       const r = (v >> 10) & 31, g = (v >> 5) & 31, b = v & 31;
       // Bit 15 is an attribute bit, honoured only at 16 bits per pixel.
       const a = depth === 16 && (v & 0x8000) === 0 ? 0 : 255;

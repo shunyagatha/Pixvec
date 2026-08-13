@@ -37,6 +37,6 @@ jobs:
       - name: Smoke-test the CLI
         shell: bash
         run: |
-          node dist/cli.js --version
-          node dist/cli.js --help > /dev/null
+          node dist/esm/cli.js --version
+          node dist/esm/cli.js --help > /dev/null
           node scripts/smoke.mjs

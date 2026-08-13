@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import type { RasterFormat, RasterImage, Rgba } from '../types.js';
+import { encodeBmp, encodeIco, encodeIcoDib, encodePnm, encodeTga } from './formats/encoders.js';
 
 export interface EncodeOptions {
   format: RasterFormat;
@@ -17,13 +18,48 @@ export interface EncodeOptions {
 
 const OPAQUE_WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 
+/** Wrap raw RGBA for sharp without copying when it is already a Buffer. */
+function rawBuffer(img: RasterImage): Buffer {
+  return Buffer.from(img.data.buffer, img.data.byteOffset, img.data.byteLength);
+}
+
 /** Formats that cannot carry an alpha channel and therefore need flattening. */
 const NO_ALPHA: ReadonlySet<RasterFormat> = new Set<RasterFormat>(['jpeg']);
 
 export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promise<Buffer> {
   const { format, quality = 90, lossless = false, effort, background = OPAQUE_WHITE, density } = opts;
 
-  let pipeline = sharp(Buffer.from(img.data.buffer, img.data.byteOffset, img.data.byteLength), {
+  // Formats libvips cannot write are handled by this package's own encoders,
+  // so the conversion matrix is square: anything readable is also writable.
+  switch (format) {
+    case 'bmp':
+      return Buffer.from(encodeBmp(img, { background }));
+    case 'pnm':
+      return Buffer.from(encodePnm(img, { background }));
+    case 'tga':
+      // RLE is a clear win on the flat artwork that reaches TGA in practice,
+      // and the encoder falls back to raw packets rather than inflating noise.
+      return Buffer.from(encodeTga(img, { background, rle: true }));
+    case 'ico': {
+      // PNG payloads are what every icon above 48px uses, and libvips is right
+      // here, so use it rather than the larger uncompressed DIB.
+      const png = await sharp(rawBuffer(img), {
+        raw: { width: img.width, height: img.height, channels: 4 },
+      }).png({ compressionLevel: 9 }).toBuffer();
+      const usePng = img.width > 48 || img.height > 48 || png.length < encodeIcoDib(img).length;
+      return Buffer.from(
+        encodeIco([{
+          width: img.width,
+          height: img.height,
+          payload: usePng ? png : encodeIcoDib(img),
+        }]),
+      );
+    }
+    default:
+      break;
+  }
+
+  let pipeline = sharp(rawBuffer(img), {
     raw: { width: img.width, height: img.height, channels: 4 },
   });
 
@@ -83,6 +119,19 @@ const EXT_TO_FORMAT: Record<string, RasterFormat> = {
   tif: 'tiff',
   tiff: 'tiff',
   gif: 'gif',
+  bmp: 'bmp',
+  dib: 'bmp',
+  ico: 'ico',
+  cur: 'ico',
+  pnm: 'pnm',
+  ppm: 'pnm',
+  pgm: 'pnm',
+  pbm: 'pnm',
+  tga: 'tga',
+  targa: 'tga',
+  icb: 'tga',
+  vda: 'tga',
+  vst: 'tga',
 };
 
 /** Map a file extension (with or without a dot) to an encoder, if we have one. */

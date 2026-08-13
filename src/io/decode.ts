@@ -18,16 +18,24 @@ export interface Decoded {
   image: RasterImage;
   meta: SourceMeta;
   /** The original encoded bytes, kept for lossless embedding. */
-  bytes: Buffer;
+  bytes: Uint8Array;
 }
 
 const SVG_SNIFF = /^\s*(?:<\?xml[^>]*\?>\s*|<!--[\s\S]*?-->\s*|<!DOCTYPE[^>]*>\s*)*<svg[\s>]/i;
 
 /** Cheap content sniff: is this buffer an SVG document rather than a raster? */
-export function looksLikeSvg(bytes: Buffer): boolean {
+export function looksLikeSvg(bytes: Uint8Array): boolean {
   // Only the head matters, and SVG is text — decode a slice, not the whole file.
-  const head = bytes.subarray(0, 2048).toString('utf8');
+  // `TextDecoder` rather than `Buffer.toString` so the check works in any runtime.
+  const head = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, 2048));
   return SVG_SNIFF.test(head);
+}
+
+/** sharp needs a `Buffer`; wrap without copying when the input already is one. */
+function asBuffer(bytes: Uint8Array): Buffer {
+  return Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 /**
@@ -45,7 +53,7 @@ export function looksLikeSvg(bytes: Buffer): boolean {
  *   original bytes through untouched.
  */
 export async function decodeRaster(
-  input: string | Buffer,
+  input: string | Uint8Array,
   opts: DecodeOptions = {},
 ): Promise<Decoded> {
   const bytes = typeof input === 'string' ? await readFile(input) : input;
@@ -64,7 +72,7 @@ export async function decodeRaster(
   const fallback = decodeFallback(bytes);
   if (fallback) return finishFallback(fallback, bytes, opts);
 
-  const base = () => sharp(bytes, { limitInputPixels, unlimited: true, animated: false });
+  const base = () => sharp(asBuffer(bytes), { limitInputPixels, unlimited: true, animated: false });
 
   let raw: sharp.Metadata;
   try {
@@ -127,7 +135,7 @@ export async function decodeRaster(
  */
 async function finishFallback(
   result: FallbackResult,
-  original: Buffer,
+  original: Uint8Array,
   opts: DecodeOptions,
 ): Promise<Decoded> {
   if (result.delegate) {
