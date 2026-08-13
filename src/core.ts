@@ -140,6 +140,12 @@ export {
 export { traceComponents, type Loop, type TurnPolicy } from './vectorize/contour.js';
 
 export {
+  centerlineTrace,
+  type CenterlineOptions,
+  type CenterlineOutput,
+} from './vectorize/centerline.js';
+
+export {
   fitLoop,
   type FitOptions,
   type FittedPath,
@@ -234,4 +240,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.8.0';
+export const VERSION = '1.9.0';
