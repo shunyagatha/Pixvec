@@ -224,6 +224,10 @@ interface VectorizeCliOptions {
   threshold?: number | 'auto';
   blackOnWhite?: boolean;
   strokeWidth?: number;
+  turnPolicy?: string;
+  fillStrategy?: string;
+  rightAngle?: boolean;
+  rightAngleThreshold?: number;
   precision?: number;
   background: boolean;
   targetSsim?: number;
@@ -305,6 +309,10 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       threshold: o.threshold,
       blackOnWhite: o.blackOnWhite,
       strokeWidth: o.strokeWidth,
+      turnPolicy: o.turnPolicy as never,
+      fillStrategy: o.fillStrategy as never,
+      rightAngleEnhance: o.rightAngle,
+      rightAngleThreshold: o.rightAngleThreshold,
       precision: o.precision,
       background: o.background,
     },
@@ -722,16 +730,33 @@ interface EditCliOptions {
   trim?: boolean;
   blur?: number;
   sharpen?: number;
+  median?: number;
+  clahe?: { width?: number; height?: number };
+  gamma?: number;
   grayscale?: boolean;
   negate?: boolean;
+  sepia?: boolean;
   normalize?: boolean;
+  threshold?: number;
+  tint?: Rgba;
+  dilate?: number;
+  erode?: number;
   brightness?: number;
   saturation?: number;
   hue?: number;
+  lightness?: number;
+  unflatten?: boolean;
   background?: Rgba;
   quality: number;
   json?: boolean;
 }
+
+/** The standard sepia channel mix, applied via a 3×3 recombination. */
+const SEPIA_MATRIX: [[number, number, number], [number, number, number], [number, number, number]] = [
+  [0.393, 0.769, 0.189],
+  [0.349, 0.686, 0.168],
+  [0.272, 0.534, 0.131],
+];
 
 async function runEdit(input: string, o: EditCliOptions): Promise<void> {
   const bytes = await readInput(input);
@@ -739,6 +764,11 @@ async function runEdit(input: string, o: EditCliOptions): Promise<void> {
     fail(`${input} is an SVG. \`edit\` works on raster images; rasterize it first.`);
   }
   const source = await loadRaster(bytes);
+
+  const clahe = o.clahe?.width && o.clahe?.height
+    ? { width: o.clahe.width, height: o.clahe.height }
+    : undefined;
+  if (o.clahe && !clahe) fail('--clahe needs both dimensions, e.g. 8x8.');
 
   const chain: OpsChain = {
     resize: o.resize ? { ...o.resize, fit: o.fit as never } : undefined,
@@ -749,12 +779,21 @@ async function runEdit(input: string, o: EditCliOptions): Promise<void> {
     trim: o.trim,
     blur: o.blur,
     sharpen: o.sharpen,
+    median: o.median,
+    clahe,
+    gamma: o.gamma,
     grayscale: o.grayscale,
     negate: o.negate,
+    recomb: o.sepia ? SEPIA_MATRIX : undefined,
     normalize: o.normalize,
-    modulate: (o.brightness || o.saturation || o.hue)
-      ? { brightness: o.brightness, saturation: o.saturation, hue: o.hue }
+    threshold: o.threshold,
+    tint: o.tint,
+    dilate: o.dilate,
+    erode: o.erode,
+    modulate: (o.brightness || o.saturation || o.hue || o.lightness)
+      ? { brightness: o.brightness, saturation: o.saturation, hue: o.hue, lightness: o.lightness }
       : undefined,
+    unflatten: o.unflatten,
     flatten: o.background,
   };
 
@@ -936,6 +975,16 @@ program
   .option('--threshold <cutoff>', 'reduce to two colours by luminance: a 0-255 number or "auto" (Otsu)', thresholdArg)
   .option('--black-on-white <bool>', 'with --threshold: dark pixels are the shape (default true)', boolArg)
   .option('--stroke-width <n>', 'stroke each path in its fill colour to hide seams between regions', floatArg('--stroke-width', 0, 100))
+  .addOption(
+    new Option('--turn-policy <policy>', 'how to resolve diagonal self-touches (checkerboard saddles)')
+      .choices(['left', 'right', 'black', 'white', 'minority', 'majority']),
+  )
+  .addOption(
+    new Option('--fill-strategy <how>', 'how each palette colour is picked from its cluster')
+      .choices(['mean', 'dominant', 'median']),
+  )
+  .option('--right-angle', 'snap near-axis right-angle corners to exact 90° (crisper UI/pixel art)')
+  .option('--right-angle-threshold <deg>', 'degrees of slack for --right-angle', floatArg('--right-angle-threshold', 0, 45))
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))
@@ -1030,12 +1079,22 @@ program
   .option('--trim', 'auto-crop a uniform border')
   .option('--blur <sigma>', 'Gaussian blur', floatArg('--blur', 0.3, 100))
   .option('--sharpen <sigma>', 'unsharp mask', floatArg('--sharpen', 0.3, 100))
+  .option('--median <size>', 'median filter — denoise without softening edges', intArg('--median', 1, 1000))
+  .option('--clahe <WxH>', 'contrast-limited adaptive histogram equalisation, e.g. 8x8', sizeArg)
+  .option('--gamma <g>', 'gamma correction, 1.0-3.0', floatArg('--gamma', 1, 3))
   .option('--grayscale', 'desaturate to greyscale')
   .option('--negate', 'photographic negative')
+  .option('--sepia', 'sepia tone (a 3×3 channel recombination)')
   .option('--normalize', 'stretch contrast to the full range')
+  .option('--threshold <n>', 'binarise at this luminance, 0-255', intArg('--threshold', 0, 255))
+  .option('--tint <color>', 'tint toward a colour, preserving alpha', colorArg)
+  .option('--dilate <px>', 'grow foreground (morphological dilation)', intArg('--dilate', 1, 100))
+  .option('--erode <px>', 'shrink foreground (morphological erosion)', intArg('--erode', 1, 100))
   .option('--brightness <factor>', 'brightness multiplier (1 = unchanged)', floatArg('--brightness', 0, 10))
   .option('--saturation <factor>', 'saturation multiplier (1 = unchanged)', floatArg('--saturation', 0, 10))
   .option('--hue <deg>', 'hue rotation in degrees', floatArg('--hue', -360, 360))
+  .option('--lightness <n>', 'additive lightness', floatArg('--lightness', -100, 100))
+  .option('--unflatten', 'make pure-white pixels transparent')
   .option('-b, --background <color>', 'flatten transparency onto this colour', colorArg)
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
   .option('--json', 'machine-readable output on stdout')

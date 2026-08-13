@@ -48,6 +48,7 @@ export {
   NearestColor,
   type Palette,
   type QuantizeOptions,
+  type FillStrategy,
 } from './quantize.js';
 
 export {
@@ -56,7 +57,7 @@ export {
   type ComponentMap,
 } from './components.js';
 
-export { traceComponents, type Loop } from './contour.js';
+export { traceComponents, type Loop, type TurnPolicy } from './contour.js';
 
 export {
   fitLoop,

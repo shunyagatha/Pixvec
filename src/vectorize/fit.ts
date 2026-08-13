@@ -34,6 +34,16 @@ export interface FitOptions {
   optimize?: boolean;
   /** Error budget for a merge. Defaults to `fitError`. */
   optimizeError?: number;
+  /**
+   * Snap near-axis right-angle corners to an exact 90° and pin them as hard
+   * corners, so rectangular features (UI, screenshots, pixel art) stay crisp
+   * instead of being rounded or skewed by the fit. This is imagetracerjs's
+   * `rightangleenhance`, generalised from its exact-only test to a tolerance so
+   * it also rectifies corners that quantisation left a degree or two off.
+   */
+  rightAngleEnhance?: boolean;
+  /** Degrees of slack allowed from true axis/right angle for {@link rightAngleEnhance}. Default 12. */
+  rightAngleThreshold?: number;
 }
 
 export type Segment =
@@ -85,6 +95,12 @@ export function fitLoop(pts: Int32Array, opts: FitOptions): FittedPath | null {
   }
   if (anchors.length < 3) return null;
 
+  // Rectify near-axis right angles before anything downstream reads the anchor
+  // positions, so both the polygon and the curve paths see the crisp corner.
+  const forcedCorners = opts.rightAngleEnhance
+    ? enhanceRightAngles(px, py, anchors, opts.rightAngleThreshold ?? 12)
+    : undefined;
+
   if (opts.polygonOnly) {
     const segments: Segment[] = [];
     for (let i = 1; i < anchors.length; i++) {
@@ -94,7 +110,7 @@ export function fitLoop(pts: Int32Array, opts: FitOptions): FittedPath | null {
     return { start: { x: px[anchors[0]], y: py[anchors[0]] }, segments };
   }
 
-  const breaks = findBreakpoints(px, py, n, anchors, opts.cornerAngle);
+  const breaks = findBreakpoints(px, py, n, anchors, opts.cornerAngle, forcedCorners);
   const segments: Segment[] = [];
 
   for (let b = 0; b < breaks.length; b++) {
@@ -219,9 +235,68 @@ interface Breakpoint {
   corner: boolean;
 }
 
+/**
+ * Rectify near-axis right angles in the simplified outline.
+ *
+ * imagetracerjs preserves a corner only when it is *exactly* axis-aligned
+ * (integer runs sharing a coordinate). That misses the common case: after
+ * quantisation and simplification a rectangle's corner is often a degree or two
+ * off true, so the exact test never fires and the fit rounds it. Here a corner
+ * qualifies when its turn is within `thresholdDeg` of 90° *and* both of its
+ * edges are within `thresholdDeg` of an axis; the shared vertex is then moved to
+ * the exact intersection of the two axis-aligned lines through its neighbours —
+ * `(next.x, prev.y)` or `(prev.x, next.y)` — which snaps the angle to 90°
+ * without disturbing the neighbouring anchors.
+ *
+ * Mutates `px`/`py` in place (both are private to the current loop) and returns
+ * the anchor indices to pin as hard corners.
+ */
+function enhanceRightAngles(
+  px: Float64Array, py: Float64Array, anchors: number[], thresholdDeg: number,
+): Set<number> {
+  const forced = new Set<number>();
+  const m = anchors.length;
+  if (m < 3) return forced;
+
+  const slack = Math.sin(Math.max(0, thresholdDeg) * (Math.PI / 180));
+
+  for (let i = 0; i < m; i++) {
+    const prev = anchors[(i - 1 + m) % m];
+    const cur = anchors[i];
+    const next = anchors[(i + 1) % m];
+
+    const inDx = px[cur] - px[prev], inDy = py[cur] - py[prev];
+    const outDx = px[next] - px[cur], outDy = py[next] - py[cur];
+    const inLen = Math.hypot(inDx, inDy), outLen = Math.hypot(outDx, outDy);
+    if (inLen === 0 || outLen === 0) continue;
+
+    // Near a right angle: the two directions are near-perpendicular, so their
+    // normalised dot product is near zero.
+    if (Math.abs((inDx * outDx + inDy * outDy) / (inLen * outLen)) > slack) continue;
+
+    const inHoriz = Math.abs(inDy) / inLen <= slack;
+    const inVert = Math.abs(inDx) / inLen <= slack;
+    const outHoriz = Math.abs(outDy) / outLen <= slack;
+    const outVert = Math.abs(outDx) / outLen <= slack;
+
+    if (inHoriz && outVert) {
+      py[cur] = py[prev]; // incoming leg becomes exactly horizontal
+      px[cur] = px[next]; // outgoing leg becomes exactly vertical
+      forced.add(cur);
+    } else if (inVert && outHoriz) {
+      px[cur] = px[prev];
+      py[cur] = py[next];
+      forced.add(cur);
+    }
+  }
+
+  return forced;
+}
+
 function findBreakpoints(
   px: Float64Array, py: Float64Array, n: number,
   anchors: number[], cornerAngleDeg: number,
+  forced?: Set<number>,
 ): Breakpoint[] {
   // `cos` below compares successive edge *directions*: 1 means straight on, 0 a
   // right angle, -1 doubling back. A turn is sharp once it exceeds
@@ -241,7 +316,11 @@ function findBreakpoints(
     if (la === 0 || lb === 0) continue;
 
     const cos = (ax * bx + ay * by) / (la * lb);
-    if (cos < threshold) corners.push({ index: cur, corner: true });
+    // A right-angle-enhanced corner is pinned sharp even if the fit's own angle
+    // test would have let it pass as a gentle bend.
+    if (cos < threshold || (forced !== undefined && forced.has(cur))) {
+      corners.push({ index: cur, corner: true });
+    }
   }
 
   if (corners.length >= 2) return corners;

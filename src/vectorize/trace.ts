@@ -4,9 +4,9 @@ import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
 import type { RasterImage, Rgba } from '../types.js';
 import { connectedComponents, despeckle, type ComponentMap } from './components.js';
-import { traceComponents } from './contour.js';
+import { traceComponents, type TurnPolicy } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
-import { NearestColor, quantize, quantizeAlpha } from './quantize.js';
+import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 
 /**
@@ -51,6 +51,12 @@ export interface TraceOptions {
   /** Lloyd relaxation passes during palette construction. */
   refineIterations?: number;
   /**
+   * How each palette colour is picked from its cluster — potrace's `fillStrategy`.
+   * `mean` (default) averages and then perceptually polishes; `dominant` takes
+   * the most common colour; `median` the per-channel median. See {@link FillStrategy}.
+   */
+  fillStrategy?: FillStrategy;
+  /**
    * Selective blur radius applied before quantisation. Removes sensor noise and
    * JPEG grain that would otherwise fragment a flat region into speckle
    * contours, while preserving edges. 0 (default) skips it.
@@ -66,6 +72,21 @@ export interface TraceOptions {
   threshold?: number | 'auto';
   /** With {@link threshold}: dark pixels are the shape on a light ground. Default true. */
   blackOnWhite?: boolean;
+  /**
+   * How to resolve a diagonal self-touch between two cells of the same region —
+   * potrace's `turnPolicy`. `left` (default) always keeps the arms apart, which
+   * is what most images want; `right` always joins them; `majority`/`minority`
+   * decide from the surrounding pixels. Only matters at checkerboard saddles.
+   */
+  turnPolicy?: TurnPolicy;
+  /**
+   * Snap near-axis right-angle corners to an exact 90° so rectangular features —
+   * screenshots, UI, pixel art — stay crisp. imagetracerjs's `rightangleenhance`,
+   * generalised to a tolerance. Off by default. See {@link rightAngleThreshold}.
+   */
+  rightAngleEnhance?: boolean;
+  /** Degrees of slack for {@link rightAngleEnhance}. Default 12. */
+  rightAngleThreshold?: number;
   /**
    * Stroke every path in its own fill colour, at this width in pixels.
    *
@@ -109,6 +130,7 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  turnPolicy: 'left',
 } as const;
 
 /**
@@ -156,7 +178,10 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
 
   // --- Quantise colour and alpha independently. ---
   const alphaLevels = quantizeAlpha(img, Math.max(1, o.alphaLevels));
-  const palette = quantize(img, o.colors, { refineIterations: o.refineIterations });
+  const palette = quantize(img, o.colors, {
+    refineIterations: o.refineIterations,
+    fillStrategy: o.fillStrategy,
+  });
   const nearest = new NearestColor(palette, n);
 
   const levelCount = alphaLevels.length;
@@ -188,7 +213,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     }
   }
 
-  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count);
+  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
 
   // --- Group components by class so one path serves each colour. ---
   const classArea = new Map<number, number>();
@@ -229,6 +254,8 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     polygonOnly: o.polygonOnly,
     optimize: o.optimize,
     optimizeError: o.optimizeError,
+    rightAngleEnhance: o.rightAngleEnhance,
+    rightAngleThreshold: o.rightAngleThreshold,
   };
 
   // A same-colour stroke of a pixel or so overpaints the hairline seam that can

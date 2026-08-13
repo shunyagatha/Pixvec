@@ -123,6 +123,7 @@ export {
   NearestColor,
   type Palette,
   type QuantizeOptions,
+  type FillStrategy,
 } from './vectorize/quantize.js';
 
 export {
@@ -131,7 +132,7 @@ export {
   type ComponentMap,
 } from './vectorize/components.js';
 
-export { traceComponents, type Loop } from './vectorize/contour.js';
+export { traceComponents, type Loop, type TurnPolicy } from './vectorize/contour.js';
 
 export {
   fitLoop,
@@ -198,4 +199,4 @@ export {
 } from './codecs.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.3.3';
+export const VERSION = '1.4.0';

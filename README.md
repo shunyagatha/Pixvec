@@ -267,6 +267,8 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 
 Two caveats, so the table is not read as more than it is. potrace is *bilevel by design*; its colour rows use `posterize`, which is a bolt-on, and reporting them without saying so would be a rigged fight. And these are synthetic fixtures, chosen so anyone can reproduce them without licensing someone's photographs — no substitute for trying your own images.
 
+**On tuning knobs, not just accuracy.** Beyond the numbers, pixvec now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` seam hiding, and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); and sharp's editing pipeline behind `pixvec edit` and the `pixvec/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — pixvec's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
+
 ## Metrics
 
 `--verify` reports the standard full-reference measures, computed the way their literature defines them so the values are comparable against other tools:
@@ -334,6 +336,10 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--blur <1-5>` | Selective, edge-preserving blur before quantising — removes grain without softening edges |
 | `--blur-delta <n>` | Edge-preservation threshold for `--blur` (default 20) |
 | `--stroke-width <n>` | Stroke each path in its own fill colour to hide seams between regions |
+| `--turn-policy <p>` | Resolve diagonal self-touches: `left` (default), `right`, `black`, `white`, `minority`, `majority` (potrace's `turnPolicy`) |
+| `--fill-strategy <how>` | How each palette colour is chosen from its cluster: `mean` (default), `dominant`, `median` (potrace's `fillStrategy`) |
+| `--right-angle` | Snap near-axis right-angle corners to exact 90° — crisper UI, screenshots, pixel art (imagetracerjs's `rightangleenhance`) |
+| `--right-angle-threshold <deg>` | Degrees of slack for `--right-angle` (default 12) |
 | `--no-optimize` | Do not merge adjacent curves that a single curve fits |
 | `--opt-tolerance <n>` | Error budget for a curve merge |
 | `--refine-iterations <n>` | Lloyd relaxation passes during palette construction |
@@ -372,6 +378,8 @@ pixvec verify a.png b.svg          # measure any two images
 pixvec info file.png               # inspect and recommend a strategy
 pixvec batch 'src/**/*.png' -o out/ --to svg
 ```
+
+`pixvec edit` wraps sharp's pipeline behind one command, in a fixed, sensible order (geometry → tone → colour → morphology → compositing → finish): `--resize`/`--fit`, `--rotate`, `--flip`/`--flop`, `--crop`, `--trim`; `--blur`, `--sharpen`, `--median`, `--clahe <WxH>`, `--gamma`, `--normalize`; `--grayscale`, `--negate`, `--sepia`, `--tint <color>`, `--threshold <0-255>`, `--brightness`/`--saturation`/`--hue`/`--lightness`; `--dilate`/`--erode`; `--unflatten`; `-b, --background` to flatten. Arbitrary affine warps, edge padding (`extend`), per-channel `linear` levels, custom `convolve` kernels, 3×3 `recomb`, and multi-image `composite` are available on the `pixvec/ops` library entry point. It is Node-only (needs sharp) and ships as its own subpath so browser and edge bundles never pull it in.
 
 `pixvec verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines.
 

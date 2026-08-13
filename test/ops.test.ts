@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { editImage, hasOps } from '../src/ops.js';
-import { flatArtwork, pixelArt } from './fixtures.js';
+import { encode, flatArtwork, pixelArt } from './fixtures.js';
 import type { RasterImage } from '../src/types.js';
 
 /**
@@ -98,6 +98,71 @@ describe('editImage', () => {
   });
 });
 
+/**
+ * The wider operation surface added for parity with sharp. Each of these funnels
+ * through the same raw-RGBA round trip, so the shared risk they are checked for
+ * is a step that collapses sharp's band count (as `.grayscale()` and the default
+ * `.threshold()` both do) and breaks the four-channel contract.
+ */
+describe('editImage — extended operations', () => {
+  it.each([
+    ['median', { median: 3 }],
+    ['gamma', { gamma: 2.2 }],
+    ['linear', { linear: { a: 1.1, b: -8 } }],
+    ['clahe', { clahe: { width: 4, height: 4 } }],
+    ['convolve', { convolve: { width: 3, height: 3, kernel: [0, 0, 0, 0, 1, 0, 0, 0, 0] } }],
+    ['tint', { tint: { r: 255, g: 220, b: 180, a: 255 } }],
+    ['recomb (sepia)', {
+      recomb: [
+        [0.393, 0.769, 0.189],
+        [0.349, 0.686, 0.168],
+        [0.272, 0.534, 0.131],
+      ] as [[number, number, number], [number, number, number], [number, number, number]],
+    }],
+    ['threshold', { threshold: 128 }],
+    ['dilate', { dilate: 1 }],
+    ['erode', { erode: 1 }],
+  ])('keeps four channels through %s', async (_name, chain) => {
+    const out = await editImage(flatArtwork(24, 18), chain);
+    expect(isFourChannel(out)).toBe(true);
+    expect([out.width, out.height]).toEqual([24, 18]);
+  });
+
+  it('extends the frame outward', async () => {
+    const out = await editImage(flatArtwork(24, 18), {
+      extend: { top: 2, left: 3, bottom: 4, right: 5 },
+    });
+    expect([out.width, out.height]).toEqual([24 + 3 + 5, 18 + 2 + 4]);
+    expect(isFourChannel(out)).toBe(true);
+  });
+
+  it('applies an affine scale', async () => {
+    const out = await editImage(flatArtwork(24, 18), { affine: { matrix: [2, 0, 0, 2] } });
+    expect([out.width, out.height]).toEqual([48, 36]);
+  });
+
+  it('unflattens pure white to transparent', async () => {
+    const before = pixelArt(3); // contains fully-white pixels
+    const out = await editImage(before, { unflatten: true });
+    const transparent = (img: RasterImage): number => {
+      let n = 0;
+      for (let i = 0; i < img.width * img.height; i++) if (img.data[i * 4 + 3] === 0) n++;
+      return n;
+    };
+    // The white cells are now transparent on top of the already-transparent border.
+    expect(transparent(out)).toBeGreaterThan(transparent(before));
+  });
+
+  it('composites an overlay onto the base', async () => {
+    const encoded = new Uint8Array(await encode(flatArtwork(6, 6), 'png'));
+    const out = await editImage(flatArtwork(24, 18), {
+      composite: [{ input: encoded, gravity: 'northwest' }],
+    });
+    expect([out.width, out.height]).toEqual([24, 18]);
+    expect(isFourChannel(out)).toBe(true);
+  });
+});
+
 describe('hasOps', () => {
   it('is false for an empty chain', () => {
     expect(hasOps({})).toBe(false);
@@ -108,5 +173,31 @@ describe('hasOps', () => {
     expect(hasOps({ grayscale: true })).toBe(true);
     expect(hasOps({ resize: { width: 10 } })).toBe(true);
     expect(hasOps({ modulate: { brightness: 1.1 } })).toBe(true);
+  });
+
+  it('detects every extended operation', () => {
+    expect(hasOps({ median: 3 })).toBe(true);
+    expect(hasOps({ gamma: 2 })).toBe(true);
+    expect(hasOps({ linear: { a: 1.1 } })).toBe(true);
+    expect(hasOps({ clahe: { width: 4, height: 4 } })).toBe(true);
+    expect(hasOps({ convolve: { width: 3, height: 3, kernel: [1] } })).toBe(true);
+    expect(hasOps({ tint: { r: 1, g: 2, b: 3, a: 255 } })).toBe(true);
+    expect(hasOps({ dilate: 1 })).toBe(true);
+    expect(hasOps({ erode: 1 })).toBe(true);
+    expect(hasOps({ affine: { matrix: [1, 0, 0, 1] } })).toBe(true);
+    expect(hasOps({ extend: { top: 1 } })).toBe(true);
+    expect(hasOps({ unflatten: true })).toBe(true);
+    expect(hasOps({ recomb: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] })).toBe(true);
+    expect(hasOps({ composite: [{ input: 'x.png' }] })).toBe(true);
+  });
+
+  it('treats a zero threshold as a real operation, not an absent one', () => {
+    // 0 is falsy but a legitimate cutoff, so presence — not truthiness — decides.
+    expect(hasOps({ threshold: 0 })).toBe(true);
+    expect(hasOps({ threshold: 128 })).toBe(true);
+  });
+
+  it('ignores an empty composite list', () => {
+    expect(hasOps({ composite: [] })).toBe(false);
   });
 });

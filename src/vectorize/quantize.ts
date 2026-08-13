@@ -295,11 +295,28 @@ function cut(set1: Box, set2: Box, m: Moments): boolean {
   return true;
 }
 
+/**
+ * How each palette entry's colour is chosen from the pixels in its cluster —
+ * potrace's `fillStrategy`, adapted from a 1-D luminance histogram to full 3-D
+ * colour clusters.
+ *
+ * - `mean` — the weighted average colour, then polished by Oklab Lloyd
+ *   relaxation. The default, and the most accurate; the other two skip Lloyd
+ *   because they deliberately pick a *representative* colour, not an average.
+ * - `dominant` — the most frequent colour cell in the cluster. Punchier, and
+ *   truer to flat-colour art where one colour genuinely dominates.
+ * - `median` — the per-channel weighted median. Robust to a cluster's outliers,
+ *   so a few stray antialiased pixels cannot drag the fill.
+ */
+export type FillStrategy = 'mean' | 'dominant' | 'median';
+
 export interface QuantizeOptions {
   /** Ignore pixels whose alpha is below this when building the palette. */
   alphaFloor?: number;
   /** Lloyd relaxation passes in Oklab. 0 disables the refinement stage. */
   refineIterations?: number;
+  /** How to pick each cluster's representative colour. Default `mean`. */
+  fillStrategy?: FillStrategy;
 }
 
 export interface Palette {
@@ -353,13 +370,21 @@ export function quantize(img: RasterImage, maxColors: number, opts: QuantizeOpti
     used = i + 1;
   }
 
+  const strategy = opts.fillStrategy ?? 'mean';
   const rgb = new Uint8Array(used * 3);
   for (let i = 0; i < used; i++) {
     const w = volume(boxes[i], m.wt);
-    if (w > 0) {
+    if (w > 0 && strategy === 'mean') {
       rgb[i * 3] = clamp255(volume(boxes[i], m.mr) / w);
       rgb[i * 3 + 1] = clamp255(volume(boxes[i], m.mg) / w);
       rgb[i * 3 + 2] = clamp255(volume(boxes[i], m.mb) / w);
+    } else if (w > 0) {
+      const c = strategy === 'dominant'
+        ? dominantColorOfBox(boxes[i], m)
+        : medianColorOfBox(boxes[i], m);
+      rgb[i * 3] = c[0];
+      rgb[i * 3 + 1] = c[1];
+      rgb[i * 3 + 2] = c[2];
     } else {
       // Degenerate box: fall back to the centre of its colour cube.
       rgb[i * 3] = clamp255(((boxes[i].r0 + boxes[i].r1) / 2) * 8);
@@ -369,9 +394,82 @@ export function quantize(img: RasterImage, maxColors: number, opts: QuantizeOpti
   }
 
   const palette: Palette = { rgb, lab: new Float64Array(used * 3), count: used };
-  refineOklab(palette, m, opts.refineIterations ?? 4);
+  // Lloyd relaxation pulls a centroid to the perceptual mean of its cluster — a
+  // polish for `mean`, but the exact undoing of what `dominant`/`median` set out
+  // to pick, so it only runs for `mean`.
+  refineOklab(palette, m, strategy === 'mean' ? (opts.refineIterations ?? 4) : 0);
   computeLab(palette);
   return palette;
+}
+
+/** The colour of the most-populated 8×8×8 cell in a box (potrace's `dominant`). */
+function dominantColorOfBox(c: Box, m: Moments): [number, number, number] {
+  let best = -1;
+  let bestCount = 0;
+  for (let r = c.r0 + 1; r <= c.r1; r++) {
+    for (let g = c.g0 + 1; g <= c.g1; g++) {
+      for (let b = c.b0 + 1; b <= c.b1; b++) {
+        const idx = boxIndex(r, g, b);
+        if (m.binCount[idx] > bestCount) {
+          bestCount = m.binCount[idx];
+          best = idx;
+        }
+      }
+    }
+  }
+  if (best < 0) {
+    return [
+      clamp255(((c.r0 + c.r1) / 2) * 8),
+      clamp255(((c.g0 + c.g1) / 2) * 8),
+      clamp255(((c.b0 + c.b1) / 2) * 8),
+    ];
+  }
+  const w = m.binCount[best];
+  return [clamp255(m.binR[best] / w), clamp255(m.binG[best] / w), clamp255(m.binB[best] / w)];
+}
+
+/** The per-channel weighted median colour of a box (potrace's `median`). */
+function medianColorOfBox(c: Box, m: Moments): [number, number, number] {
+  const rs: number[] = [], gs: number[] = [], bs: number[] = [], ws: number[] = [];
+  let totalW = 0;
+  for (let r = c.r0 + 1; r <= c.r1; r++) {
+    for (let g = c.g0 + 1; g <= c.g1; g++) {
+      for (let b = c.b0 + 1; b <= c.b1; b++) {
+        const idx = boxIndex(r, g, b);
+        const w = m.binCount[idx];
+        if (w <= 0) continue;
+        rs.push(m.binR[idx] / w);
+        gs.push(m.binG[idx] / w);
+        bs.push(m.binB[idx] / w);
+        ws.push(w);
+        totalW += w;
+      }
+    }
+  }
+  if (totalW === 0) {
+    return [
+      clamp255(((c.r0 + c.r1) / 2) * 8),
+      clamp255(((c.g0 + c.g1) / 2) * 8),
+      clamp255(((c.b0 + c.b1) / 2) * 8),
+    ];
+  }
+  return [
+    weightedMedian(rs, ws, totalW),
+    weightedMedian(gs, ws, totalW),
+    weightedMedian(bs, ws, totalW),
+  ];
+}
+
+/** Value at which the sorted, weight-accumulated series first reaches half. */
+function weightedMedian(values: number[], weights: number[], totalW: number): number {
+  const order = values.map((_, i) => i).sort((a, b) => values[a] - values[b]);
+  const half = totalW / 2;
+  let acc = 0;
+  for (const i of order) {
+    acc += weights[i];
+    if (acc >= half) return clamp255(values[i]);
+  }
+  return clamp255(values[order[order.length - 1]]);
 }
 
 function clamp255(v: number): number {
