@@ -102,9 +102,11 @@ export {
 
 export {
   trace,
+  traceSeparations,
   TRACE_DEFAULTS,
   type TraceOptions,
   type TraceOutput,
+  type Separation,
 } from './vectorize/trace.js';
 
 // --- Pre-tracing pixel filters, all pure ------------------------------------
@@ -207,5 +209,8 @@ export {
   type CustomEncoder,
 } from './codecs.js';
 
+// --- SVG → framework component codegen (pure) ------------------------------
+export { toComponent, type Framework, type ComponentOptions } from './emit/component.js';
+
 /** Version of the package this build came from. */
-export const VERSION = '1.5.0';
+export const VERSION = '1.6.0';

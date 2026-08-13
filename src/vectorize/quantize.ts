@@ -1,5 +1,5 @@
 import { oklabToSrgb, srgbToOklab } from '../color.js';
-import type { RasterImage } from '../types.js';
+import type { RasterImage, Rgba } from '../types.js';
 
 /**
  * Colour quantisation, in two stages.
@@ -317,6 +317,13 @@ export interface QuantizeOptions {
   refineIterations?: number;
   /** How to pick each cluster's representative colour. Default `mean`. */
   fillStrategy?: FillStrategy;
+  /**
+   * Use exactly these colours instead of computing a palette from the image —
+   * for brand palettes and spot-colour / screen-print workflows where the output
+   * must hit specific inks. Every pixel is mapped to its nearest supplied colour
+   * (in Oklab). When given, Wu and Lloyd are skipped entirely.
+   */
+  fixedPalette?: Rgba[];
 }
 
 export interface Palette {
@@ -329,6 +336,19 @@ export interface Palette {
 
 /** Build a palette of at most `maxColors` entries for `img`. */
 export function quantize(img: RasterImage, maxColors: number, opts: QuantizeOptions = {}): Palette {
+  // A caller-supplied palette bypasses the whole quantiser: build straight from
+  // the given colours so the output can only contain those inks.
+  if (opts.fixedPalette && opts.fixedPalette.length > 0) {
+    const cols = opts.fixedPalette.slice(0, 256);
+    const rgb = new Uint8Array(cols.length * 3);
+    const lab = new Float64Array(cols.length * 3);
+    for (let i = 0; i < cols.length; i++) {
+      rgb[i * 3] = cols[i].r; rgb[i * 3 + 1] = cols[i].g; rgb[i * 3 + 2] = cols[i].b;
+      srgbToOklab(cols[i].r, cols[i].g, cols[i].b, lab, i * 3);
+    }
+    return { rgb, lab, count: cols.length };
+  }
+
   const alphaFloor = opts.alphaFloor ?? 1;
   const k = Math.max(1, Math.min(256, Math.floor(maxColors)));
   const m = buildMoments(img, alphaFloor);

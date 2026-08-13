@@ -29,10 +29,12 @@ export {
 
 export {
   trace,
+  traceSeparations,
   autoMinArea,
   TRACE_DEFAULTS,
   type TraceOptions,
   type TraceOutput,
+  type Separation,
 } from './trace.js';
 
 export {

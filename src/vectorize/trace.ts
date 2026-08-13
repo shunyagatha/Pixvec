@@ -58,6 +58,12 @@ export interface TraceOptions {
    */
   fillStrategy?: FillStrategy;
   /**
+   * Trace to exactly these colours (brand palette / spot colours) instead of an
+   * auto-computed palette. Every pixel maps to its nearest supplied colour in
+   * Oklab. Overrides {@link colors}.
+   */
+  fixedPalette?: Rgba[];
+  /**
    * Selective blur radius applied before quantisation. Removes sensor noise and
    * JPEG grain that would otherwise fragment a flat region into speckle
    * contours, while preserving edges. 0 (default) skips it.
@@ -113,6 +119,12 @@ export interface TraceOptions {
    * the seam. 0 (default) emits fill-only paths. A value around 1 is typical.
    */
   strokeWidth?: number;
+  /**
+   * Emit one named `<g>` per colour, tagged as an Inkscape/Illustrator layer, so
+   * the SVG opens as editable colour layers (weeding/separation-ready) instead
+   * of one flattened blob. Off by default.
+   */
+  groupByColor?: boolean;
   title?: string;
   generator?: string;
 }
@@ -148,6 +160,7 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  groupByColor: false,
   turnPolicy: 'left',
   gradients: false,
   gradientMinArea: 0,
@@ -205,6 +218,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   const palette = quantize(img, o.colors, {
     refineIterations: o.refineIterations,
     fillStrategy: o.fillStrategy,
+    fixedPalette: o.fixedPalette,
   });
   const nearest = new NearestColor(palette, n);
 
@@ -292,7 +306,13 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     o.background && !hasVoid && orderedClasses.length > 1 && orderedClasses[0] < GRAD_BASE
       ? orderedClasses[0] : -1;
   if (backgroundClass >= 0) {
-    doc.addBackground(classColor(backgroundClass, palette, alphaLevels, levelCount));
+    const bg = classColor(backgroundClass, palette, alphaLevels, levelCount);
+    if (o.groupByColor) {
+      doc.addLayer(`${shortHex(bg.r, bg.g, bg.b)} (background)`, 'layer-background',
+        `<path d="M0 0h${width}v${height}H0z"${fillAttrs(bg)}/>`);
+    } else {
+      doc.addBackground(bg);
+    }
   }
 
   const fitOpts: FitOptions = {
@@ -335,20 +355,30 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
 
     if (path.isEmpty()) continue;
 
-    // An accepted gradient region paints with its `<linearGradient>` instead of
-    // a flat fill; the def is registered once, here, the first and only time its
-    // class is emitted.
+    // Build the path markup, then either drop it straight in or wrap it in a
+    // named layer. An accepted gradient region paints with its `<linearGradient>`
+    // (registered once here, the only time its class is emitted) instead of a
+    // flat fill.
+    let markup: string;
+    let label: string;
     const paint = gradientPaints?.get(cls);
     if (paint) {
       doc.addDef(paint.def);
       const op = paint.alpha < 1 ? ` fill-opacity="${+paint.alpha.toFixed(3)}"` : '';
-      doc.add(`<path fill-rule="evenodd" d="${path.toString()}" fill="${paint.ref}"${op}/>`);
-      continue;
+      markup = `<path fill-rule="evenodd" d="${path.toString()}" fill="${paint.ref}"${op}/>`;
+      label = paint.ref.replace(/^url\(#/, '').replace(/\)$/, '');
+    } else {
+      const color = classColor(cls, palette, alphaLevels, levelCount);
+      const stroke = strokeFor(shortHex(color.r, color.g, color.b));
+      markup = `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
+      label = shortHex(color.r, color.g, color.b);
     }
 
-    const color = classColor(cls, palette, alphaLevels, levelCount);
-    const stroke = strokeFor(shortHex(color.r, color.g, color.b));
-    doc.add(`<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`);
+    if (o.groupByColor) {
+      doc.addLayer(label, `layer-${label.replace(/[^a-zA-Z0-9-]/g, '')}`, markup);
+    } else {
+      doc.add(markup);
+    }
   }
 
   return {
@@ -358,6 +388,33 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     regions,
     despeckled,
   };
+}
+
+/** One standalone SVG carrying a single colour, for print/vinyl separations. */
+export interface Separation {
+  /** The layer's colour label (short hex, or the background note). */
+  color: string;
+  /** A self-contained SVG document with only this colour's geometry. */
+  svg: string;
+}
+
+/**
+ * Trace to one standalone SVG per colour — what a screen-print, vinyl (Cricut/
+ * Silhouette) or DTF workflow needs, where every colour is a separate physical
+ * screen or cut layer. Runs the layered tracer once and splits its layers into
+ * self-contained files, so it costs no more than a normal trace.
+ */
+export function traceSeparations(source: RasterImage, opts: TraceOptions = {}): Separation[] {
+  const { svg } = trace(source, { ...opts, groupByColor: true });
+  const open = svg.match(/<svg [^>]*>/)?.[0] ?? '<svg xmlns="http://www.w3.org/2000/svg">';
+  const defs = svg.match(/<defs>[\s\S]*?<\/defs>/)?.[0] ?? '';
+  const out: Separation[] = [];
+  const re = /<g inkscape:groupmode="layer" inkscape:label="([^"]*)"[^>]*>([\s\S]*?)<\/g>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(svg)) !== null) {
+    out.push({ color: m[1], svg: `${open}${defs}${m[2]}</svg>\n` });
+  }
+  return out;
 }
 
 function classColor(

@@ -24,6 +24,7 @@ const CORE_MODULES = [
   'core.ts',
   'svg/path.ts',
   'svg/build.ts',
+  'emit/component.ts',
   'metrics/index.ts',
   'metrics/ssim.ts',
   'vectorize/quantize.ts',

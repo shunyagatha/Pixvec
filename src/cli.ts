@@ -15,6 +15,7 @@ import { extractEmbedded } from './vectorize/embed.js';
 import { bytesEqual } from './io/formats/bytes.js';
 import { removeBackground, type RemoveBackgroundOptions } from './background.js';
 import { editImage, hasOps, type OpsChain } from './ops.js';
+import { toComponent, type Framework } from './emit/component.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -118,6 +119,18 @@ function colorArg(value: string): Rgba {
   const c = parseCssColor(value);
   if (!c) throw new InvalidArgumentError(`Unrecognised colour: ${value}`);
   return c;
+}
+
+/** `--palette` is a comma-separated list of colours to trace to exactly. */
+function paletteArg(value: string): Rgba[] {
+  const parts = value.split(',').map((s) => s.trim()).filter(Boolean);
+  const out = parts.map((p) => {
+    const c = parseCssColor(p);
+    if (!c) throw new InvalidArgumentError(`Unrecognised colour in --palette: ${p}`);
+    return c;
+  });
+  if (out.length === 0) throw new InvalidArgumentError('--palette needs at least one colour');
+  return out;
 }
 
 /** `--threshold` is a 0–255 cutoff or the literal `auto`. */
@@ -229,6 +242,8 @@ interface VectorizeCliOptions {
   rightAngle?: boolean;
   rightAngleThreshold?: number;
   gradients?: boolean;
+  layers?: boolean;
+  palette?: Rgba[];
   precision?: number;
   background: boolean;
   targetSsim?: number;
@@ -315,6 +330,8 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
       gradients: o.gradients,
+      groupByColor: o.layers,
+      fixedPalette: o.palette,
       precision: o.precision,
       background: o.background,
     },
@@ -827,6 +844,51 @@ async function runEdit(input: string, o: EditCliOptions): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// component
+// ---------------------------------------------------------------------------
+
+interface ComponentCliOptions {
+  output?: string;
+  framework: Framework;
+  name: string;
+  currentColor?: boolean;
+  js?: boolean;
+  json?: boolean;
+}
+
+const COMPONENT_EXT: Record<Framework, string> = {
+  react: 'tsx', solid: 'tsx', vue: 'vue', svelte: 'svelte',
+};
+
+async function runComponent(input: string, o: ComponentCliOptions): Promise<void> {
+  const bytes = await readInput(input);
+
+  // Accept an SVG directly, or vectorise a raster first.
+  const svg = looksLikeSvg(bytes)
+    ? new TextDecoder().decode(bytes)
+    : (await vectorize(await loadRaster(bytes), { mode: 'trace' })).svg;
+
+  const typescript = !o.js;
+  const source = toComponent(svg, {
+    framework: o.framework,
+    name: o.name,
+    currentColor: o.currentColor,
+    typescript,
+  });
+
+  let ext = COMPONENT_EXT[o.framework];
+  if ((o.framework === 'react' || o.framework === 'solid') && !typescript) ext = 'jsx';
+  const outPath = o.output ?? `${o.name}.${ext}`;
+  await writeOutput(outPath, source);
+
+  if (o.json) {
+    emitJson({ input, output: outPath, framework: o.framework, name: o.name, bytes: source.length });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${o.framework} component "${o.name}"  ${formatBytes(source.length)}`)}`);
+}
+
+// ---------------------------------------------------------------------------
 // info
 // ---------------------------------------------------------------------------
 
@@ -988,6 +1050,8 @@ program
   .option('--right-angle', 'snap near-axis right-angle corners to exact 90° (crisper UI/pixel art)')
   .option('--right-angle-threshold <deg>', 'degrees of slack for --right-angle', floatArg('--right-angle-threshold', 0, 45))
   .option('--gradients', 'reconstruct smooth colour ramps as SVG gradients — de-bands photos, only where it measurably beats flat')
+  .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
+  .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))
@@ -1102,6 +1166,22 @@ program
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
   .option('--json', 'machine-readable output on stdout')
   .action(runEdit);
+
+program
+  .command('component')
+  .description('Convert a raster image (or SVG) into a framework component (React/Vue/Svelte/Solid)')
+  .argument('<input>', 'source image or SVG')
+  .option('-o, --output <file>', 'output path (defaults to <Name>.<ext>)')
+  .addOption(
+    new Option('-f, --framework <fw>', 'target framework')
+      .choices(['react', 'vue', 'svelte', 'solid'])
+      .default('react'),
+  )
+  .option('-n, --name <name>', 'component name', 'Icon')
+  .option('--current-color', 'use currentColor for solid fills so CSS `color` drives it')
+  .option('--js', 'emit JavaScript instead of TypeScript')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runComponent);
 
 program
   .command('convert')

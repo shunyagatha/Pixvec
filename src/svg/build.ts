@@ -19,12 +19,26 @@ export class SvgDoc {
   private children: string[] = [];
   private defs: string[] = [];
   private idSeq = 0;
+  private inkscapeNs = false;
 
   constructor(private readonly opts: SvgDocOptions) {}
 
   add(markup: string): this {
     this.children.push(markup);
     return this;
+  }
+
+  /**
+   * Wrap markup in a named `<g>` that Inkscape and Illustrator recognise as an
+   * editable **layer**, so a traced document opens as organised colour layers
+   * rather than one flattened blob. Using this once declares the `inkscape`
+   * namespace on the root; a document that never calls it is unchanged.
+   */
+  addLayer(label: string, id: string, markup: string): this {
+    this.inkscapeNs = true;
+    return this.add(
+      `<g inkscape:groupmode="layer" inkscape:label="${escapeAttr(label)}" id="${escapeAttr(id)}">${markup}</g>`,
+    );
   }
 
   /**
@@ -58,6 +72,9 @@ export class SvgDoc {
       'xmlns="http://www.w3.org/2000/svg"',
       `viewBox="0 0 ${width} ${height}"`,
     ];
+    if (this.inkscapeNs) {
+      attrs.push('xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"');
+    }
     if (emitDimensions) {
       attrs.splice(1, 0, `width="${width}"`, `height="${height}"`);
     }
