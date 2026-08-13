@@ -25,6 +25,7 @@ import { centerlineTrace, centerlinePolylines } from './vectorize/centerline.js'
 import { startMcpServer } from './mcp/server.js';
 import { optimizeSvg } from './svg/optimize.js';
 import { svgSprite } from './emit/sprite.js';
+import { smartCrop, cropImage } from './crop.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -190,10 +191,10 @@ async function writeOutput(path: string, data: string | Uint8Array): Promise<voi
   await writeFile(path, data);
 }
 
-function defaultOutput(input: string, ext: string): string {
+function defaultOutput(input: string, ext: string, suffix = ''): string {
   const dir = dirname(input);
   const stem = basename(input, extname(input));
-  return join(dir, `${stem}${ext}`);
+  return join(dir, `${stem}${suffix}${ext}`);
 }
 
 interface TransparencyCliOptions {
@@ -936,6 +937,57 @@ async function runComponent(input: string, o: ComponentCliOptions): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// crop (content-aware)
+// ---------------------------------------------------------------------------
+
+async function runCrop(
+  input: string,
+  o: { output?: string; aspect: string; width?: number; height?: number; minScale?: number; quality?: number; json?: boolean },
+): Promise<void> {
+  const source = await loadRaster(await readInput(input));
+  const aspect = parseAspect(o.aspect, o.width, o.height);
+
+  const rect = smartCrop(source.image, {
+    aspect,
+    minScale: o.minScale,
+  });
+  let out = cropImage(source.image, rect);
+
+  // If both dimensions are given, deliver them exactly by resizing the crop.
+  if (o.width && o.height) {
+    out = await editImage(out, { resize: { width: o.width, height: o.height, fit: 'fill' } });
+  }
+
+  const outPath = o.output ?? defaultOutput(input, extname(input) || `.${source.meta.format}`, '-crop');
+  const format = formatFromExtension(extname(outPath)) ?? (source.meta.format as RasterFormat);
+  const encoded = await encodeRaster(out, { format, quality: o.quality });
+  await writeOutput(outPath, encoded);
+
+  if (o.json) {
+    emitJson({
+      input, output: outPath, format,
+      from: { width: source.image.width, height: source.image.height },
+      crop: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      to: { width: out.width, height: out.height },
+      outputBytes: encoded.length,
+    });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${source.image.width}×${source.image.height} → crop ${rect.width}×${rect.height} @ (${rect.x},${rect.y}) → ${out.width}×${out.height}  ${formatBytes(encoded.length)}`)}`);
+}
+
+/** Parse "16:9" / "1.5" into a width/height ratio, or derive it from w×h. */
+function parseAspect(spec: string, w?: number, h?: number): [number, number] {
+  if (w && h) return [w, h];
+  const m = spec.match(/^\s*([\d.]+)\s*[:x/]\s*([\d.]+)\s*$/);
+  if (m) return [Number(m[1]), Number(m[2])];
+  const single = Number(spec);
+  if (Number.isFinite(single) && single > 0) return [single, 1];
+  fail(`Invalid --aspect "${spec}". Use forms like 1:1, 16:9, 4:5, or a number.`);
+  return [1, 1]; // unreachable; fail() throws
+}
+
+// ---------------------------------------------------------------------------
 // sprite
 // ---------------------------------------------------------------------------
 
@@ -1468,6 +1520,19 @@ program
   .option('--minify', 'minify the sheet')
   .option('--json', 'machine-readable output on stdout')
   .action(runSprite);
+
+program
+  .command('crop')
+  .description('Content-aware crop to an aspect ratio — keeps the interesting subject, not the centre')
+  .argument('<input>', 'source image')
+  .option('-o, --output <file>', 'output path (default <input>-crop.<ext>)')
+  .option('-a, --aspect <w:h>', 'target aspect ratio, e.g. 1:1, 16:9, 4:5', '1:1')
+  .option('-w, --width <px>', 'exact output width', intArg('--width', 1, 1e5))
+  .option('-h, --height <px>', 'exact output height', intArg('--height', 1, 1e5))
+  .option('--min-scale <n>', 'smallest window as a fraction of the max fitting window', floatArg('--min-scale', 0.1, 1))
+  .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100))
+  .option('--json', 'machine-readable output on stdout')
+  .action(runCrop);
 
 program
   .command('optimize')

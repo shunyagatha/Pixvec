@@ -233,6 +233,9 @@ export { toComponent, type Framework, type ComponentOptions } from './emit/compo
 // --- SVG sprite / symbol sheets (pure) -------------------------------------
 export { svgSprite, type SpriteItem, type SpriteOptions } from './emit/sprite.js';
 
+// --- Content-aware smart crop (pure) ---------------------------------------
+export { smartCrop, cropImage, type SmartCropOptions, type CropRect } from './crop.js';
+
 // --- Lazy-load placeholders (pure) -----------------------------------------
 export { blurHash, lqipSvg, type LqipOptions } from './placeholder/index.js';
 
@@ -254,4 +257,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.16.0';
+export const VERSION = '1.17.0';

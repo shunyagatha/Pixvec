@@ -17,6 +17,7 @@ import { flatArtwork, pixelArt } from './fixtures.js';
 const CORE_MODULES = [
   'types.ts',
   'color.ts',
+  'crop.ts',
   'image.ts',
   'background.ts',
   'preprocess.ts',
