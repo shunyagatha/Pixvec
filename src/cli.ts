@@ -20,8 +20,8 @@ import { faviconSet } from './pipelines/favicon.js';
 import { responsiveSet } from './pipelines/responsive.js';
 import { blurHash, lqipSvg } from './placeholder/index.js';
 import { extractPalette, paletteToCssVars } from './vectorize/quantize.js';
-import { traceGeometry, toDxf, toEps, toPdf } from './io/export/index.js';
-import { centerlineTrace } from './vectorize/centerline.js';
+import { traceGeometry, toDxf, toEps, toPdf, toGcode } from './io/export/index.js';
+import { centerlineTrace, centerlinePolylines } from './vectorize/centerline.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -966,6 +966,46 @@ async function runCenterline(input: string, o: CenterlineCliOptions): Promise<vo
 }
 
 // ---------------------------------------------------------------------------
+// gcode
+// ---------------------------------------------------------------------------
+
+interface GcodeCliOptions {
+  output?: string;
+  tool: 'laser' | 'pen';
+  feed: number;
+  power: number;
+  scale: number;
+  units: 'mm' | 'in';
+  threshold?: number | 'auto';
+  whiteOnBlack?: boolean;
+  simplify: number;
+  json?: boolean;
+}
+
+async function runGcode(input: string, o: GcodeCliOptions): Promise<void> {
+  const bytes = await readInput(input);
+  if (looksLikeSvg(bytes)) fail(`${input} is an SVG; G-code export needs a raster line drawing.`);
+  const source = await loadRaster(bytes);
+  const polylines = centerlinePolylines(source.image, {
+    threshold: o.threshold,
+    blackOnWhite: !o.whiteOnBlack,
+    simplify: o.simplify,
+  });
+  const gcode = toGcode(polylines, {
+    mode: o.tool, feed: o.feed, power: o.power, scale: o.scale, units: o.units,
+    height: source.image.height,
+  });
+  const outPath = o.output ?? defaultOutput(input, '.gcode');
+  await writeOutput(outPath, gcode);
+
+  if (o.json) {
+    emitJson({ input, output: outPath, tool: o.tool, paths: polylines.length, outputBytes: Buffer.byteLength(gcode) });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${o.tool} G-code  ${polylines.length} toolpath(s)  ${formatBytes(Buffer.byteLength(gcode))}`)}`);
+}
+
+// ---------------------------------------------------------------------------
 // favicon / responsive / placeholder / palette
 // ---------------------------------------------------------------------------
 
@@ -1354,6 +1394,22 @@ program
   .option('--min-length <px>', 'drop strokes shorter than this', floatArg('--min-length', 0, 1000), 3)
   .option('--json', 'machine-readable output on stdout')
   .action(runCenterline);
+
+program
+  .command('gcode')
+  .description('Generate G-code toolpaths from line art (laser/pen plotter, GRBL-style)')
+  .argument('<input>', 'source image (line art)')
+  .option('-o, --output <file>', 'output .gcode/.nc path (defaults to <input>.gcode)')
+  .addOption(new Option('--tool <mode>', 'machine mode').choices(['laser', 'pen']).default('laser'))
+  .option('--feed <n>', 'cutting/drawing feed rate', floatArg('--feed', 1, 100000), 1000)
+  .option('--power <n>', 'laser power (S value)', floatArg('--power', 0, 100000), 1000)
+  .option('--scale <n>', 'units per pixel', floatArg('--scale', 0.0001, 1000), 1)
+  .addOption(new Option('--units <u>', 'measurement units').choices(['mm', 'in']).default('mm'))
+  .option('--threshold <cutoff>', 'binarise cutoff 0-255 or "auto"', thresholdArg)
+  .option('--white-on-black', 'the line is light on a dark ground')
+  .option('--simplify <px>', 'path simplification tolerance', floatArg('--simplify', 0, 100), 1)
+  .option('--json', 'machine-readable output on stdout')
+  .action(runGcode);
 
 program
   .command('favicon')

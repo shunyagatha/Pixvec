@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { traceGeometry, toDxf, toEps, toPdf } from '../src/io/export/index.js';
+import { traceGeometry, toDxf, toEps, toPdf, toGcode } from '../src/io/export/index.js';
 import { createImage, setPixel, flatArtwork } from './fixtures.js';
-import type { RasterImage } from '../src/types.js';
+import type { Point, RasterImage } from '../src/types.js';
 
 /** A filled disc — a shape whose boundary must fit curves. */
 function disc(size: number): RasterImage {
@@ -85,5 +85,34 @@ describe('PDF export', () => {
   it('can emit CMYK fills', () => {
     const text = new TextDecoder('latin1').decode(toPdf(traceGeometry(flatArtwork(40, 30), { colors: 3 }), { cmyk: true }));
     expect(text).toMatch(/\d k\n/); // CMYK fill operator
+  });
+});
+
+describe('G-code export', () => {
+  const square: Point[][] = [[{ x: 10, y: 10 }, { x: 20, y: 10 }, { x: 20, y: 20 }, { x: 10, y: 20 }]];
+
+  it('emits a valid GRBL-style laser program', () => {
+    const g = toGcode(square, { mode: 'laser', height: 30, feed: 800, power: 900 });
+    expect(g).toContain('G21'); // mm
+    expect(g).toContain('G90'); // absolute
+    expect(g).toContain('M3 S900'); // laser on at power
+    expect(g).toContain('M5'); // laser off
+    expect(g).toMatch(/G1 X\d.* Y\d.* F800/); // cut at feed
+    expect(g.trimEnd().endsWith('M2')).toBe(true); // program end
+  });
+
+  it('uses Z moves in pen mode and flips Y to bed space', () => {
+    const g = toGcode(square, { mode: 'pen', height: 30, penUp: 5, penDown: 0 });
+    expect(g).toContain('G0 Z5'); // pen up
+    expect(g).toContain('G1 Z0'); // pen down
+    // y=10 with height 30 → Y = 20 (origin bottom-left)
+    expect(g).toContain('Y20');
+    expect(g).not.toContain('M3'); // no laser commands in pen mode
+  });
+
+  it('honours units and scale', () => {
+    const g = toGcode(square, { units: 'in', scale: 0.1, height: 30 });
+    expect(g).toContain('G20'); // inches
+    expect(g).toMatch(/X1 /); // 10px × 0.1 = 1
   });
 });

@@ -47,8 +47,12 @@ const NBRS: ReadonlyArray<readonly [number, number]> = [
   [-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1],
 ];
 
-/** Trace an image to single-stroke centreline geometry. */
-export function centerlineTrace(image: RasterImage, opts: CenterlineOptions = {}): CenterlineOutput {
+/**
+ * Extract the medial-axis polylines of an image — the raw skeleton strokes,
+ * simplified and in image coordinates. This is what centreline SVG and G-code
+ * toolpaths are both built from.
+ */
+export function centerlinePolylines(image: RasterImage, opts: CenterlineOptions = {}): Point[][] {
   const { width, height } = image;
   const cutoff = opts.threshold === undefined || opts.threshold === 'auto'
     ? otsuThreshold(image)
@@ -69,31 +73,40 @@ export function centerlineTrace(image: RasterImage, opts: CenterlineOptions = {}
   }
 
   zhangSuenThin(mask, P, Q);
-  const polylines = walkSkeleton(mask, P, Q);
+  const raw = walkSkeleton(mask, P, Q);
+
+  const minLength = opts.minLength ?? 3;
+  const eps = opts.simplify ?? 1;
+  const out: Point[][] = [];
+  for (const poly of raw) {
+    const shifted = poly.map((p) => ({ x: p.x - 1, y: p.y - 1 }));
+    const simplified = eps > 0 ? simplify(shifted, eps) : shifted;
+    if (simplified.length < 2 || polylineLength(simplified) < minLength) continue;
+    out.push(simplified);
+  }
+  return out;
+}
+
+/** Trace an image to single-stroke centreline geometry (SVG). */
+export function centerlineTrace(image: RasterImage, opts: CenterlineOptions = {}): CenterlineOutput {
+  const { width, height } = image;
+  const polylines = centerlinePolylines(image, opts);
 
   const doc = new SvgDoc({ width, height, generator: opts.generator, title: opts.title });
   const stroke = opts.stroke ?? '#000';
   const strokeWidth = opts.strokeWidth ?? 1;
-  const minLength = opts.minLength ?? 3;
-  const eps = opts.simplify ?? 1;
 
-  let paths = 0;
   for (const poly of polylines) {
-    // Shift out of padded space and simplify.
-    const shifted = poly.map((p) => ({ x: p.x - 1, y: p.y - 1 }));
-    const simplified = eps > 0 ? simplify(shifted, eps) : shifted;
-    if (simplified.length < 2 || polylineLength(simplified) < minLength) continue;
     const path = new PathBuilder(opts.precision ?? 2);
-    path.moveTo(simplified[0].x, simplified[0].y);
-    for (let i = 1; i < simplified.length; i++) path.lineTo(simplified[i].x, simplified[i].y);
+    path.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i < poly.length; i++) path.lineTo(poly[i].x, poly[i].y);
     doc.add(
       `<path fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" ` +
       `stroke-linecap="round" stroke-linejoin="round" d="${path.toString()}"/>`,
     );
-    paths++;
   }
 
-  return { svg: doc.toString(), paths };
+  return { svg: doc.toString(), paths: polylines.length };
 }
 
 /**

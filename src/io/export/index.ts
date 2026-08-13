@@ -4,3 +4,4 @@ export { traceGeometry, type TraceGeometry, type GeometryPath } from './geometry
 export { toDxf, type DxfOptions } from './dxf.js';
 export { toEps, type EpsOptions } from './eps.js';
 export { toPdf, type PdfOptions } from './pdf.js';
+export { toGcode, type GcodeOptions } from './gcode.js';

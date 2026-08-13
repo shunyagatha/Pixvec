@@ -404,6 +404,7 @@ pixvec palette art.png --css          # perceptual palette as CSS custom propert
 pixvec extract keep.svg -o out.png --against original.png   # byte-identical recovery
 pixvec convert in.png out.svg      # direction inferred from extensions
 pixvec centerline drawing.png -o strokes.svg  # single-stroke medial-axis paths
+pixvec gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter G-code
 pixvec convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
 pixvec verify a.png b.svg          # measure any two images
 pixvec batch 'src/**/*.png' -o out/ --to svg
@@ -411,7 +412,7 @@ pixvec batch 'src/**/*.png' -o out/ --to svg
 
 `pixvec component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours.
 
-**Centerline (single-stroke) tracing** — `pixvec centerline drawing.png` — is the most-requested tracer feature neither potrace nor vtracer ships. Instead of outlining *both* edges of every stroke (which doubles the geometry and makes a pen/laser run each line twice), it extracts the **medial axis**: one open `<path fill="none">` down the middle of each stroke, via Zhang–Suen thinning → skeleton-graph walking → Douglas–Peucker. Exactly what a plotter, laser engraver, CNC router, vinyl cutter, or signature-vectorisation needs. `centerlineTrace()` is pure and in `pixvec/core`.
+**Centerline (single-stroke) tracing** — `pixvec centerline drawing.png` — is the most-requested tracer feature neither potrace nor vtracer ships. Instead of outlining *both* edges of every stroke (which doubles the geometry and makes a pen/laser run each line twice), it extracts the **medial axis**: one open `<path fill="none">` down the middle of each stroke, via Zhang–Suen thinning → skeleton-graph walking → Douglas–Peucker. Exactly what a plotter, laser engraver, CNC router, vinyl cutter, or signature-vectorisation needs. `centerlineTrace()` is pure and in `pixvec/core`. And `pixvec gcode drawing.png --tool laser|pen` takes it the last mile — **ready-to-run GRBL-style G-code toolpaths** (feed/power/units/scale, Y-flipped to bed space), a rare end-to-end image→machine pipeline in JS where other tools stop at SVG and leave you hunting for a separate svg2gcode.
 
 **Vector export beyond SVG** is the maker/CAD lane no other JS tracer serves: `pixvec convert in.png out.dxf` writes a **DXF** (closed `LWPOLYLINE`s with true colour, Y-up) that LightBurn, LibreCAD, Fusion, and every laser/router/vinyl cutter imports; `out.eps` writes **EPS/PostScript** with native curves; `out.pdf` writes a print-ready **PDF**, with `--cmyk` for prepress (free/JS tools all collapse to sRGB — pixvec doesn't). The `traceGeometry()`/`toDxf`/`toEps`/`toPdf` API (all pure, in `pixvec/core`) exposes the same structured Bézier geometry for custom pipelines.
 

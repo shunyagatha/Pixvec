@@ -31,6 +31,7 @@ const CORE_MODULES = [
   'io/export/dxf.ts',
   'io/export/eps.ts',
   'io/export/pdf.ts',
+  'io/export/gcode.ts',
   'io/export/index.ts',
   'metrics/index.ts',
   'metrics/ssim.ts',

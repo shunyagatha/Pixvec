@@ -141,6 +141,7 @@ export { traceComponents, type Loop, type TurnPolicy } from './vectorize/contour
 
 export {
   centerlineTrace,
+  centerlinePolylines,
   type CenterlineOptions,
   type CenterlineOutput,
 } from './vectorize/centerline.js';
@@ -232,12 +233,14 @@ export {
   toDxf,
   toEps,
   toPdf,
+  toGcode,
   type TraceGeometry,
   type GeometryPath,
   type DxfOptions,
   type EpsOptions,
   type PdfOptions,
+  type GcodeOptions,
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.9.0';
+export const VERSION = '1.10.0';
