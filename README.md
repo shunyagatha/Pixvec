@@ -1,4 +1,4 @@
-# pixvec
+# Pixvec
 
 **Measurable raster ⇄ SVG conversion.** PNG, JPEG, WebP, AVIF, TIFF and GIF to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
 
