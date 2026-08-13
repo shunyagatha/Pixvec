@@ -124,7 +124,8 @@
     "compare": "node scripts/compare.mjs",
     "corpus": "node scripts/fetch-corpus.mjs",
     "corpus:report": "node scripts/corpus-report.mjs",
-    "diagnose": "node scripts/diagnose-photo.mjs"
+    "diagnose": "node scripts/diagnose-photo.mjs",
+    "playground": "node scripts/build-playground.mjs"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -132,6 +133,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "esbuild": "^0.21.5",
     "imagetracerjs": "^1.2.6",
     "potrace": "^2.1.8",
     "typescript": "^5.7.2",

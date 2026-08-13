@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pixvec playground — raster → SVG, measured</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --border: #2b333d; --text: #e6edf3;
+    --muted: #8b949e; --accent: #4a9eff; --good: #3fb950; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
+  header .tag { color: var(--muted); font-size: 13px; }
+  header a { color: var(--accent); text-decoration: none; margin-left: auto; font-size: 13px; }
+  main { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 62px); }
+  .controls { border-right: 1px solid var(--border); padding: 20px; overflow-y: auto; }
+  .stage { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 26px; text-align: center; color: var(--muted); cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop.hot { border-color: var(--accent); background: #4a9eff11; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
+  .field .val { color: var(--accent); font-family: var(--mono); }
+  select, input[type=range] { width: 100%; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pane { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .pane h2 { margin: 0; padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .view { padding: 14px; display: flex; align-items: center; justify-content: center; min-height: 260px; background: repeating-conic-gradient(#1b222b 0% 25%, #12171d 0% 50%) 50% / 22px 22px; }
+  .view img, .view svg { max-width: 100%; max-height: 60vh; height: auto; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .metric .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .metric .v { font-size: 20px; font-family: var(--mono); margin-top: 3px; }
+  .metric .v.good { color: var(--good); }
+  button.dl { background: var(--accent); color: #04121f; border: 0; border-radius: 7px; padding: 9px 14px; font-weight: 600; cursor: pointer; }
+  button.dl:disabled { opacity: .4; cursor: default; }
+  .hint { color: var(--muted); font-size: 12px; }
+  input[type=checkbox] { accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>pixvec</h1>
+  <span class="tag">raster → SVG, measured — runs entirely in your browser</span>
+  <a href="https://github.com/shunyagatha/Pixvec" target="_blank" rel="noopener">GitHub ↗</a>
+</header>
+<main>
+  <section class="controls">
+    <div class="drop" id="drop">
+      <strong>Drop an image</strong><br><span class="hint">or click to choose · PNG / JPG / WebP</span>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+    <div style="height:16px"></div>
+    <div class="field">
+      <label>Mode</label>
+      <select id="mode">
+        <option value="auto">auto (pick best)</option>
+        <option value="trace" selected>trace (Bézier)</option>
+        <option value="pixel">pixel (lossless)</option>
+        <option value="centerline">centerline (strokes)</option>
+      </select>
+    </div>
+    <div class="field" data-trace>
+      <label>Colours <span class="val" id="colorsV">16</span></label>
+      <input type="range" id="colors" min="2" max="64" value="16">
+    </div>
+    <div class="field" data-trace>
+      <label>Tolerance <span class="val" id="tolV">0.4</span></label>
+      <input type="range" id="tol" min="0" max="4" step="0.1" value="0.4">
+    </div>
+    <div class="field" data-trace>
+      <label class="row"><input type="checkbox" id="gradients"> Gradients (de-band)</label>
+    </div>
+    <div class="field">
+      <label class="row"><input type="checkbox" id="minify" checked> Minify SVG</label>
+    </div>
+    <button class="dl" id="download" disabled>Download SVG</button>
+  </section>
+
+  <section class="stage">
+    <div class="panes">
+      <div class="pane">
+        <h2>Source <span id="srcSize"></span></h2>
+        <div class="view" id="srcView"><span class="hint">No image yet</span></div>
+      </div>
+      <div class="pane">
+        <h2>SVG output <span id="outSize"></span></h2>
+        <div class="view" id="outView"><span class="hint">—</span></div>
+      </div>
+    </div>
+    <div class="metrics">
+      <div class="metric"><div class="k">File size</div><div class="v" id="mSize">—</div></div>
+      <div class="metric"><div class="k">SSIM</div><div class="v" id="mSsim">—</div></div>
+      <div class="metric"><div class="k">PSNR</div><div class="v" id="mPsnr">—</div></div>
+      <div class="metric"><div class="k">Mean ΔE₀₀</div><div class="v" id="mDe">—</div></div>
+      <div class="metric"><div class="k">Shapes</div><div class="v" id="mShapes">—</div></div>
+      <div class="metric"><div class="k">Trace time</div><div class="v" id="mTime">—</div></div>
+    </div>
+    <p class="hint">Every number is measured in-browser: the output SVG is rendered back and compared to the source with the same SSIM / PSNR / CIEDE2000 pixvec uses internally. Nothing leaves your machine.</p>
+  </section>
+</main>
+
+<script type="module">
+import { trace, vectorizeExact, centerlineTrace, compareImages, optimizeSvg } from './pixvec-core.js';
+
+const $ = (id) => document.getElementById(id);
+let source = null; // { width, height, data }
+
+const fmtBytes = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB';
+
+function toRaster(imgEl) {
+  const c = document.createElement('canvas');
+  c.width = imgEl.naturalWidth; c.height = imgEl.naturalHeight;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(imgEl, 0, 0);
+  const d = ctx.getImageData(0, 0, c.width, c.height);
+  return { width: d.width, height: d.height, data: d.data };
+}
+
+async function renderSvgToRaster(svg, w, h) {
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h);
+    return { width: d.width, height: d.height, data: d.data };
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function loadFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    source = toRaster(img);
+    $('srcView').innerHTML = '';
+    const shown = new Image(); shown.src = url; $('srcView').appendChild(shown);
+    $('srcSize').textContent = source.width + '×' + source.height;
+    run();
+  };
+  img.src = url;
+}
+
+let pending;
+function schedule() { clearTimeout(pending); pending = setTimeout(run, 120); }
+
+async function run() {
+  if (!source) return;
+  const mode = $('mode').value;
+  document.querySelectorAll('[data-trace]').forEach((el) => el.style.display = mode === 'trace' || mode === 'auto' ? '' : 'none');
+  let svg, shapes = 0;
+  const t0 = performance.now();
+  try {
+    if (mode === 'centerline') {
+      const r = centerlineTrace(source, {}); svg = r.svg; shapes = r.paths;
+    } else if (mode === 'pixel') {
+      const r = vectorizeExact(source); svg = r.svg; shapes = r.shapes;
+    } else {
+      const r = trace(source, { colors: +$('colors').value, tolerance: +$('tol').value, fitError: +$('tol').value, gradients: $('gradients').checked });
+      svg = r.svg; shapes = r.shapes;
+    }
+  } catch (e) { $('outView').innerHTML = '<span class="hint">' + e.message + '</span>'; return; }
+  const ms = performance.now() - t0;
+  if ($('minify').checked) svg = optimizeSvg(svg);
+
+  $('outView').innerHTML = svg;
+  $('outSize').textContent = fmtBytes(new Blob([svg]).size);
+  $('mSize').textContent = fmtBytes(new Blob([svg]).size);
+  $('mShapes').textContent = shapes;
+  $('mTime').textContent = ms.toFixed(0) + ' ms';
+  $('download').disabled = false;
+  $('download').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    a.download = 'pixvec.svg'; a.click();
+  };
+
+  // Measured quality: render the SVG back and compare to the source.
+  try {
+    const rendered = await renderSvgToRaster(svg, source.width, source.height);
+    const q = compareImages(source, rendered);
+    const ssim = q.ssim.toFixed(4);
+    $('mSsim').textContent = ssim; $('mSsim').className = 'v' + (q.ssim > 0.95 ? ' good' : '');
+    $('mPsnr').textContent = q.psnr === Infinity ? '∞' : q.psnr.toFixed(1) + ' dB';
+    $('mPsnr').className = 'v' + (q.psnr === Infinity ? ' good' : '');
+    $('mDe').textContent = q.deltaE.mean.toFixed(2);
+  } catch { $('mSsim').textContent = $('mPsnr').textContent = $('mDe').textContent = 'n/a'; }
+}
+
+// Wire controls.
+$('colors').oninput = () => { $('colorsV').textContent = $('colors').value; schedule(); };
+$('tol').oninput = () => { $('tolV').textContent = (+$('tol').value).toFixed(1); schedule(); };
+for (const id of ['mode', 'gradients', 'minify']) $(id).onchange = run;
+
+// File input / drop.
+const drop = $('drop'), file = $('file');
+drop.onclick = () => file.click();
+file.onchange = () => file.files[0] && loadFile(file.files[0]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('hot'); };
+drop.ondragleave = () => drop.classList.remove('hot');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('hot'); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); };
+
+// A built-in sample so the page is alive on first load.
+(function sample() {
+  const w = 200, h = 150, d = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4, dd = Math.hypot(x - w / 2, y - h / 2);
+    const c = dd < 40 ? [246, 185, 59] : dd < 60 ? [214, 69, 65] : x < w / 2 ? [32, 96, 160] : [40, 150, 110];
+    d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+  }
+  source = { width: w, height: h, data: d };
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').putImageData(new ImageData(d, w, h), 0, 0);
+  $('srcView').innerHTML = ''; const im = new Image(); im.src = c.toDataURL(); $('srcView').appendChild(im);
+  $('srcSize').textContent = w + '×' + h;
+  run();
+})();
+</script>
+</body>
+</html>

@@ -9,6 +9,8 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
+**▶ [Try it in your browser](https://shunyagatha.github.io/Pixvec/)** — a zero-install playground that runs the real `pixvec/core` client-side and shows live SSIM / PSNR / CIEDE2000. Nothing leaves your machine.
+
 ```bash
 pixvec vectorize logo.png --verify
 ```
