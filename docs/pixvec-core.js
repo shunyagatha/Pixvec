@@ -2889,6 +2889,156 @@ function round(v, places) {
   return Math.round(v * p) / p;
 }
 
+// src/vectorize/primitives.ts
+var DEFAULTS = { maxError: 1, minExtent: 3 };
+function detectPrimitive(pts, opts = {}) {
+  const maxError = opts.maxError ?? DEFAULTS.maxError;
+  const minExtent = opts.minExtent ?? DEFAULTS.minExtent;
+  const n2 = pts.length >> 1;
+  if (n2 < 4) return null;
+  const b = bbox(pts, n2);
+  const w = b.maxX - b.minX;
+  const h = b.maxY - b.minY;
+  if (w < minExtent || h < minExtent) return null;
+  const area = Math.abs(shoelace(pts, n2));
+  let best = null;
+  let bestErr = Infinity;
+  const rect = fitRect(pts, n2, b, w, h, area);
+  if (rect && rect.err <= maxError) {
+    best = rect.prim;
+    bestErr = rect.err;
+  }
+  const circle = fitCircle(pts, n2, area);
+  if (circle && circle.err <= maxError && circle.err < bestErr) {
+    best = circle.prim;
+    bestErr = circle.err;
+  }
+  if (Math.abs(w - h) > 1) {
+    const ell = fitEllipse(pts, n2, b, w, h, area);
+    if (ell && ell.err <= maxError && ell.err < bestErr) {
+      best = ell.prim;
+      bestErr = ell.err;
+    }
+  }
+  return best;
+}
+function primitiveSvg(prim, attrs, precision = 2) {
+  const r = (v) => round2(v, precision);
+  switch (prim.kind) {
+    case "circle":
+      return `<circle cx="${r(prim.cx)}" cy="${r(prim.cy)}" r="${r(prim.r)}"${attrs}/>`;
+    case "ellipse":
+      return `<ellipse cx="${r(prim.cx)}" cy="${r(prim.cy)}" rx="${r(prim.rx)}" ry="${r(prim.ry)}"${attrs}/>`;
+    case "rect":
+      return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}"${attrs}/>`;
+  }
+}
+function fitRect(pts, n2, b, w, h, area) {
+  if (area < 0.95 * w * h) return null;
+  let err = 0;
+  for (let i = 0; i < n2; i++) {
+    const x = pts[i << 1], y = pts[(i << 1) + 1];
+    const d = Math.min(x - b.minX, b.maxX - x, y - b.minY, b.maxY - y);
+    if (d > err) err = d;
+  }
+  return { prim: { kind: "rect", x: b.minX, y: b.minY, w, h }, err };
+}
+function fitCircle(pts, n2, area) {
+  if (n2 < 8) return null;
+  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0;
+  for (let i = 0; i < n2; i++) {
+    const x = pts[i << 1], y = pts[(i << 1) + 1];
+    const z = x * x + y * y;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    syy += y * y;
+    sxy += x * y;
+    sxz += x * z;
+    syz += y * z;
+    sz += z;
+  }
+  const sol = solve32(
+    sxx,
+    sxy,
+    sx,
+    sxy,
+    syy,
+    sy,
+    sx,
+    sy,
+    n2,
+    sxz,
+    syz,
+    sz
+  );
+  if (!sol) return null;
+  const [A, B, C] = sol;
+  const cx = A / 2, cy = B / 2;
+  const rSq = C + cx * cx + cy * cy;
+  if (rSq <= 0) return null;
+  const r = Math.sqrt(rSq);
+  if (area < 0.85 * Math.PI * r * r) return null;
+  let maxRes = 0;
+  for (let i = 0; i < n2; i++) {
+    const dx = pts[i << 1] - cx, dy = pts[(i << 1) + 1] - cy;
+    const res = Math.abs(Math.hypot(dx, dy) - r);
+    if (res > maxRes) maxRes = res;
+  }
+  return { prim: { kind: "circle", cx, cy, r }, err: maxRes };
+}
+function fitEllipse(pts, n2, b, w, h, area) {
+  if (n2 < 8) return null;
+  const cx = b.minX + w / 2, cy = b.minY + h / 2;
+  const rx = w / 2, ry = h / 2;
+  if (rx < 1 || ry < 1) return null;
+  if (area < 0.85 * Math.PI * rx * ry) return null;
+  let maxRes = 0;
+  for (let i = 0; i < n2; i++) {
+    const px = pts[i << 1], py = pts[(i << 1) + 1];
+    const nx = (px - cx) / rx, ny = (py - cy) / ry;
+    const f = nx * nx + ny * ny - 1;
+    const gx = 2 * (px - cx) / (rx * rx);
+    const gy = 2 * (py - cy) / (ry * ry);
+    const grad = Math.hypot(gx, gy);
+    const res = grad > 1e-9 ? Math.abs(f) / grad : Math.abs(f);
+    if (res > maxRes) maxRes = res;
+  }
+  return { prim: { kind: "ellipse", cx, cy, rx, ry }, err: maxRes };
+}
+function bbox(pts, n2) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < n2; i++) {
+    const x = pts[i << 1], y = pts[(i << 1) + 1];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+function shoelace(pts, n2) {
+  let a = 0;
+  for (let i = 0, j = n2 - 1; i < n2; j = i++) {
+    const xi = pts[i << 1], yi = pts[(i << 1) + 1];
+    const xj = pts[j << 1], yj = pts[(j << 1) + 1];
+    a += xj * yi - xi * yj;
+  }
+  return a / 2;
+}
+function solve32(a, b, c, d, e, f, g, h, i, u, v, w) {
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(det) < 1e-9) return null;
+  const dx = u * (e * i - f * h) - b * (v * i - f * w) + c * (v * h - e * w);
+  const dy = a * (v * i - f * w) - u * (d * i - f * g) + c * (d * w - v * g);
+  const dz = a * (e * w - v * h) - b * (d * w - v * g) + u * (d * h - e * g);
+  return [dx / det, dy / det, dz / det];
+}
+function round2(value, precision) {
+  const f = 10 ** precision;
+  return Math.round(value * f) / f;
+}
+
 // src/vectorize/trace.ts
 var TRACE_DEFAULTS = {
   colors: 16,
@@ -2906,6 +3056,8 @@ var TRACE_DEFAULTS = {
   fitError: 0.4,
   cornerAngle: 75,
   polygonOnly: false,
+  primitives: false,
+  primitiveError: 1,
   optimize: true,
   precision: 2,
   background: true,
@@ -3036,8 +3188,10 @@ function trace(source, opts = {}) {
     regions += components.length;
     if (cls === backgroundClass) continue;
     const path = new PathBuilder(o.precision);
+    const classLoops = [];
     for (const c of components) {
       for (const loop of loopsByComponent[c]) {
+        classLoops.push(loop);
         const fitted = fitLoop(loop.pts, fitOpts);
         if (!fitted) continue;
         path.moveTo(fitted.start.x, fitted.start.y);
@@ -3060,7 +3214,8 @@ function trace(source, opts = {}) {
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
       const stroke = strokeFor(shortHex(color.r, color.g, color.b));
-      markup = `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
+      const prim = o.primitives && classLoops.length === 1 ? detectPrimitive(classLoops[0].pts, { maxError: o.primitiveError }) : null;
+      markup = prim ? primitiveSvg(prim, `${fillAttrs(color)}${stroke}`, o.precision) : `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
       label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);
     }
     if (o.groupByColor) {
@@ -4369,6 +4524,195 @@ function renderSvelte(svg) {
 `;
 }
 
+// src/emit/sprite.ts
+function svgSprite(items, opts = {}) {
+  const symbols = items.map(({ id, svg }) => {
+    const viewBox = svg.match(/viewBox="([^"]*)"/)?.[1] ?? sizeToViewBox(svg) ?? "0 0 24 24";
+    const inner = svg.replace(/^[\s\S]*?<svg\b[^>]*>/, "").replace(/<\/svg>\s*$/, "").replace(/<\?xml[\s\S]*?\?>/g, "").trim();
+    return `<symbol id="${escapeAttr(id)}" viewBox="${viewBox}">${inner}</symbol>`;
+  });
+  const hide = opts.hidden === false ? "" : ' aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"';
+  return `<svg xmlns="http://www.w3.org/2000/svg"${hide}>${symbols.join("")}</svg>
+`;
+}
+function sizeToViewBox(svg) {
+  const openTag = svg.match(/<svg\b[^>]*>/i)?.[0] ?? svg;
+  const attr = (name) => openTag.match(new RegExp(`[\\s"']${name}\\s*=\\s*["']([\\d.]+)(?:px)?["']`, "i"))?.[1];
+  const w = attr("width");
+  const h = attr("height");
+  return w && h ? `0 0 ${w} ${h}` : void 0;
+}
+
+// src/crop.ts
+function smartCrop(image, opts = {}) {
+  const { width: W, height: H } = image;
+  const aspect = resolveAspect(opts);
+  const minScale = clamp(opts.minScale ?? 0.6, 0.1, 1);
+  const sizeWeight = opts.sizeWeight ?? 0.12;
+  const centerWeight = opts.centerWeight ?? 0.25;
+  const satWeight = opts.saturationWeight ?? 0.3;
+  let maxW = W;
+  let maxH = Math.round(maxW / aspect);
+  if (maxH > H) {
+    maxH = H;
+    maxW = Math.round(maxH * aspect);
+  }
+  maxW = Math.min(maxW, W);
+  maxH = Math.min(maxH, H);
+  if (maxW < 1 || maxH < 1) {
+    return { x: 0, y: 0, width: W, height: H, score: 0 };
+  }
+  const importance = importanceMap(image, satWeight);
+  const integral = integralImage(importance, W, H);
+  const grand = integral[H * (W + 1) + W];
+  if (grand <= 1e-6) {
+    return {
+      x: Math.floor((W - maxW) / 2),
+      y: Math.floor((H - maxH) / 2),
+      width: maxW,
+      height: maxH,
+      score: 0
+    };
+  }
+  const total = grand;
+  const cx = W / 2;
+  const cy = H / 2;
+  const maxCenterDist = Math.hypot(cx, cy) || 1;
+  let best = { x: 0, y: 0, width: maxW, height: maxH, score: -Infinity };
+  const SCALE_STEPS = 6;
+  for (let s = 0; s < SCALE_STEPS; s++) {
+    const scale = 1 - (1 - minScale) * s / (SCALE_STEPS - 1);
+    const winW = Math.max(1, Math.round(maxW * scale));
+    const winH = Math.max(1, Math.round(maxH * scale));
+    if (winW > W || winH > H) continue;
+    const stepX = Math.max(1, Math.round(winW / 16));
+    const stepY = Math.max(1, Math.round(winH / 16));
+    for (let y = 0; y + winH <= H; y += stepY) {
+      for (let x = 0; x + winW <= W; x += stepX) {
+        const inside = rectSum(integral, W, x, y, winW, winH);
+        const captured = inside / total;
+        const area = winW * winH / (W * H);
+        const winCx = x + winW / 2;
+        const winCy = y + winH / 2;
+        const centerDist = Math.hypot(winCx - cx, winCy - cy) / maxCenterDist;
+        const score = captured - sizeWeight * area - centerWeight * centerDist * 0.1;
+        if (score > best.score) {
+          best = { x, y, width: winW, height: winH, score };
+        }
+      }
+    }
+  }
+  best.x = Math.min(best.x, W - best.width);
+  best.y = Math.min(best.y, H - best.height);
+  return best;
+}
+function cropImage(image, rect) {
+  const { width: W, height: H, data } = image;
+  const x = clampInt(rect.x, 0, W - 1);
+  const y = clampInt(rect.y, 0, H - 1);
+  const w = clampInt(rect.width, 1, W - x);
+  const h = clampInt(rect.height, 1, H - y);
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let row = 0; row < h; row++) {
+    const src = ((y + row) * W + x) * 4;
+    out.set(data.subarray(src, src + w * 4), row * w * 4);
+  }
+  return { width: w, height: h, data: out };
+}
+function resolveAspect(opts) {
+  if (opts.width && opts.height) return opts.width / opts.height;
+  if (Array.isArray(opts.aspect)) {
+    const [w, h] = opts.aspect;
+    return h > 0 ? w / h : 1;
+  }
+  if (typeof opts.aspect === "number" && opts.aspect > 0) return opts.aspect;
+  return 1;
+}
+function importanceMap(image, satWeight) {
+  const { width: W, height: H, data } = image;
+  const luma = new Float64Array(W * H);
+  const sat = new Float64Array(W * H);
+  for (let i = 0, p = 0; i < W * H; i++, p += 4) {
+    const r = data[p], g = data[p + 1], b = data[p + 2], a = data[p + 3] / 255;
+    luma[i] = (0.299 * r + 0.587 * g + 0.114 * b) * a;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    sat[i] = max > 0 ? (max - min) / max * a : 0;
+  }
+  const out = new Float64Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const x0 = x > 0 ? x - 1 : x, x1 = x < W - 1 ? x + 1 : x;
+      const y0 = y > 0 ? y - 1 : y, y1 = y < H - 1 ? y + 1 : y;
+      const tl = luma[y0 * W + x0], tc = luma[y0 * W + x], tr = luma[y0 * W + x1];
+      const ml = luma[y * W + x0], mr = luma[y * W + x1];
+      const bl = luma[y1 * W + x0], bc = luma[y1 * W + x], br = luma[y1 * W + x1];
+      const gx = tr + 2 * mr + br - (tl + 2 * ml + bl);
+      const gy = bl + 2 * bc + br - (tl + 2 * tc + tr);
+      const edge = Math.hypot(gx, gy) / 4;
+      out[i] = edge + satWeight * sat[i] * 255;
+    }
+  }
+  return out;
+}
+function integralImage(src, W, H) {
+  const iw = W + 1;
+  const integral = new Float64Array(iw * (H + 1));
+  for (let y = 0; y < H; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < W; x++) {
+      rowSum += src[y * W + x];
+      integral[(y + 1) * iw + (x + 1)] = integral[y * iw + (x + 1)] + rowSum;
+    }
+  }
+  return integral;
+}
+function rectSum(integral, W, x, y, w, h) {
+  const iw = W + 1;
+  const x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+  return integral[y1 * iw + x1] - integral[y0 * iw + x1] - integral[y1 * iw + x0] + integral[y0 * iw + x0];
+}
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+function clampInt(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, Math.round(v)));
+}
+
+// src/emit/animate.ts
+function framesToAnimatedSvg(frames, opts = {}) {
+  if (frames.length === 0) return '<svg xmlns="http://www.w3.org/2000/svg"/>\n';
+  if (frames.length === 1 || opts.loop === false) {
+    return frames[0];
+  }
+  const n2 = frames.length;
+  const duration = opts.duration ?? n2 / (opts.fps ?? 10);
+  const viewBox = frames[0].match(/viewBox="([^"]*)"/)?.[1] ?? sizeToViewBox2(frames[0]) ?? "0 0 100 100";
+  const reduced = opts.respectReducedMotion !== false;
+  const slot = 100 / n2;
+  const eps = Math.min(1e-4, slot / 1e3);
+  const keyframes = `@keyframes pv-flip{0%,${trim(slot)}%{opacity:1}${trim(slot + eps)}%,100%{opacity:0}}`;
+  const delays = Array.from({ length: n2 }, (_, k) => `.pv-f${k}{animation-delay:${trim(-(k * duration) / n2)}s${k === 0 ? ";opacity:1" : ""}}`).join("");
+  const reducedCss = reduced ? "@media(prefers-reduced-motion:reduce){.pv-f{animation:none}.pv-f0{opacity:1}}" : "";
+  const style = `<style>.pv-f{opacity:0;animation:pv-flip ${trim(duration)}s linear infinite}` + delays + keyframes + reducedCss + `</style>`;
+  const groups = frames.map((svg, k) => `<g class="pv-f pv-f${k}">${innerSvg(svg)}</g>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${style}${groups}</svg>
+`;
+}
+function innerSvg(svg) {
+  return svg.replace(/<\?xml[\s\S]*?\?>/g, "").replace(/^[\s\S]*?<svg\b[^>]*>/, "").replace(/<\/svg>\s*$/, "").trim();
+}
+function sizeToViewBox2(svg) {
+  const openTag = svg.match(/<svg\b[^>]*>/i)?.[0] ?? svg;
+  const attr = (name) => openTag.match(new RegExp(`[\\s"']${name}\\s*=\\s*["']([\\d.]+)(?:px)?["']`, "i"))?.[1];
+  const w = attr("width");
+  const h = attr("height");
+  return w && h ? `0 0 ${w} ${h}` : void 0;
+}
+function trim(v) {
+  return String(Math.round(v * 1e4) / 1e4);
+}
+
 // src/placeholder/index.ts
 var DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
 function encode83(value, length) {
@@ -4490,19 +4834,24 @@ function traceGeometry(source, opts = {}) {
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold
   };
+  const wantPrimitives = opts.primitives !== false;
   const paths = [];
   for (const cls of ordered) {
     const subpaths = [];
+    const primitives = [];
     for (const c of byClass.get(cls)) {
       for (const loop of loops[c]) {
         const fitted = fitLoop(loop.pts, fitOpts);
-        if (fitted) subpaths.push(fitted);
+        if (!fitted) continue;
+        subpaths.push(fitted);
+        primitives.push(wantPrimitives ? detectPrimitive(loop.pts, { maxError: o.primitiveError }) : null);
       }
     }
     if (subpaths.length === 0) continue;
     paths.push({
       color: { r: palette.rgb[cls * 3], g: palette.rgb[cls * 3 + 1], b: palette.rgb[cls * 3 + 2], a: 255 },
-      subpaths
+      subpaths,
+      ...wantPrimitives ? { primitives } : {}
     });
   }
   return { width, height, paths };
@@ -4561,20 +4910,77 @@ function toDxf(geometry, opts = {}) {
   for (const path of geometry.paths) {
     const layer = `c_${hex2(path.color.r, path.color.g, path.color.b)}`;
     const trueColor = path.color.r << 16 | path.color.g << 8 | path.color.b;
-    for (const sub of path.subpaths) {
+    const aci = String(acadColor(path.color.r, path.color.g, path.color.b));
+    path.subpaths.forEach((sub, i) => {
+      const prim = path.primitives?.[i];
+      if (prim?.kind === "circle") {
+        lines.push(
+          "0",
+          "CIRCLE",
+          "8",
+          layer,
+          "62",
+          aci,
+          "420",
+          String(trueColor),
+          "10",
+          n(prim.cx),
+          "20",
+          n(fy(prim.cy)),
+          "40",
+          n(prim.r)
+        );
+        return;
+      }
+      if (prim?.kind === "ellipse") {
+        const majorX = prim.rx >= prim.ry ? prim.rx : 0;
+        const majorY = prim.rx >= prim.ry ? 0 : prim.ry;
+        const ratio = prim.rx >= prim.ry ? prim.ry / prim.rx : prim.rx / prim.ry;
+        lines.push(
+          "0",
+          "ELLIPSE",
+          "8",
+          layer,
+          "62",
+          aci,
+          "420",
+          String(trueColor),
+          "10",
+          n(prim.cx),
+          "20",
+          n(fy(prim.cy)),
+          "30",
+          "0",
+          "11",
+          n(majorX),
+          "21",
+          n(-majorY),
+          "31",
+          "0",
+          // End parameter at full precision: n()'s 3-place rounding of 2π would
+          // leave a sub-pixel hairline gap instead of a closed ellipse.
+          "40",
+          n(ratio),
+          "41",
+          "0",
+          "42",
+          String(2 * Math.PI)
+        );
+        return;
+      }
       const verts = flatten(sub, steps);
       if (verts.length > 1) {
         const a = verts[0], b = verts[verts.length - 1];
         if (a.x === b.x && a.y === b.y) verts.pop();
       }
-      if (verts.length < 2) continue;
+      if (verts.length < 2) return;
       lines.push(
         "0",
         "LWPOLYLINE",
         "8",
         layer,
         "62",
-        String(acadColor(path.color.r, path.color.g, path.color.b)),
+        aci,
         "420",
         String(trueColor),
         "90",
@@ -4583,7 +4989,7 @@ function toDxf(geometry, opts = {}) {
         "1"
       );
       for (const v of verts) lines.push("10", n(v.x), "20", n(fy(v.y)));
-    }
+    });
   }
   lines.push("0", "ENDSEC", "0", "EOF");
   return lines.join("\n") + "\n";
@@ -4722,7 +5128,7 @@ function toGcode(polylines, opts = {}) {
 }
 
 // src/core.ts
-var VERSION = "1.13.0";
+var VERSION = "1.18.0";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,
@@ -4743,6 +5149,7 @@ export {
   connectedComponents,
   countDistinctColors,
   createImage,
+  cropImage,
   decodeBmp,
   decodeFallback,
   decodeIco,
@@ -4753,6 +5160,7 @@ export {
   despeckle,
   detectBackgroundColor,
   detectGradients,
+  detectPrimitive,
   dominantColor,
   encodeBmp,
   encodeIco,
@@ -4766,6 +5174,7 @@ export {
   findDecoder,
   findEncoder,
   fitLoop,
+  framesToAnimatedSvg,
   fromBase64,
   hex,
   isBmp,
@@ -4786,6 +5195,7 @@ export {
   paletteToCssVars,
   parseCssColor,
   premultiply,
+  primitiveSvg,
   quantize,
   quantizeAlpha,
   registerDecoder,
@@ -4795,12 +5205,14 @@ export {
   sameSize,
   selectiveBlur,
   shortHex,
+  smartCrop,
   sniffFallbackFormat,
   srgbToLab,
   srgbToLinear,
   srgbToOklab,
   ssimPlane,
   subsample,
+  svgSprite,
   toBase64,
   toComponent,
   toDxf,

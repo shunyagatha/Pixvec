@@ -75,6 +75,9 @@
     <div class="field" data-trace>
       <label class="row"><input type="checkbox" id="gradients"> Gradients (de-band)</label>
     </div>
+    <div class="field" data-trace>
+      <label class="row"><input type="checkbox" id="primitives"> Primitives (&lt;circle&gt;/&lt;rect&gt;)</label>
+    </div>
     <div class="field">
       <label class="row"><input type="checkbox" id="minify" checked> Minify SVG</label>
     </div>
@@ -163,7 +166,7 @@ async function run() {
     } else if (mode === 'pixel') {
       const r = vectorizeExact(source); svg = r.svg; shapes = r.shapes;
     } else {
-      const r = trace(source, { colors: +$('colors').value, tolerance: +$('tol').value, fitError: +$('tol').value, gradients: $('gradients').checked });
+      const r = trace(source, { colors: +$('colors').value, tolerance: +$('tol').value, fitError: +$('tol').value, gradients: $('gradients').checked, primitives: $('primitives').checked });
       svg = r.svg; shapes = r.shapes;
     }
   } catch (e) { $('outView').innerHTML = '<span class="hint">' + e.message + '</span>'; return; }
@@ -197,7 +200,7 @@ async function run() {
 // Wire controls.
 $('colors').oninput = () => { $('colorsV').textContent = $('colors').value; schedule(); };
 $('tol').oninput = () => { $('tolV').textContent = (+$('tol').value).toFixed(1); schedule(); };
-for (const id of ['mode', 'gradients', 'minify']) $(id).onchange = run;
+for (const id of ['mode', 'gradients', 'primitives', 'minify']) $(id).onchange = run;
 
 // File input / drop.
 const drop = $('drop'), file = $('file');
