@@ -72,6 +72,12 @@
       "require": "./dist/cjs/io/formats/index.js",
       "default": "./dist/esm/io/formats/index.js"
     },
+    "./ops": {
+      "types": "./dist/esm/ops.d.ts",
+      "import": "./dist/esm/ops.js",
+      "require": "./dist/cjs/ops.js",
+      "default": "./dist/esm/ops.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {

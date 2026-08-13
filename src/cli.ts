@@ -14,6 +14,7 @@ import { compareImages } from './metrics/index.js';
 import { extractEmbedded } from './vectorize/embed.js';
 import { bytesEqual } from './io/formats/bytes.js';
 import { removeBackground, type RemoveBackgroundOptions } from './background.js';
+import { editImage, hasOps, type OpsChain } from './ops.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,24 @@ function boolArg(value: string): boolean {
   if (v === 'true' || v === '1' || v === 'yes') return true;
   if (v === 'false' || v === '0' || v === 'no') return false;
   throw new InvalidArgumentError('expected true or false.');
+}
+
+/** `--resize 800x600`, `--resize 800x`, `--resize x600`. */
+function sizeArg(value: string): { width?: number; height?: number } {
+  const m = /^(\d*)x(\d*)$/i.exec(value.trim());
+  if (!m || (!m[1] && !m[2])) {
+    throw new InvalidArgumentError('expected WIDTHxHEIGHT, e.g. 800x600, 800x, or x600.');
+  }
+  return { width: m[1] ? Number(m[1]) : undefined, height: m[2] ? Number(m[2]) : undefined };
+}
+
+/** `--crop x,y,w,h`. */
+function cropArg(value: string): { left: number; top: number; width: number; height: number } {
+  const parts = value.split(',').map((p) => Number(p.trim()));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
+    throw new InvalidArgumentError('expected four non-negative integers: x,y,width,height.');
+  }
+  return { left: parts[0], top: parts[1], width: parts[2], height: parts[3] };
 }
 
 async function readInput(path: string): Promise<Buffer> {
@@ -689,6 +708,84 @@ async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// edit
+// ---------------------------------------------------------------------------
+
+interface EditCliOptions {
+  output?: string;
+  resize?: { width?: number; height?: number };
+  fit?: string;
+  rotate?: number;
+  flip?: boolean;
+  flop?: boolean;
+  crop?: { left: number; top: number; width: number; height: number };
+  trim?: boolean;
+  blur?: number;
+  sharpen?: number;
+  grayscale?: boolean;
+  negate?: boolean;
+  normalize?: boolean;
+  brightness?: number;
+  saturation?: number;
+  hue?: number;
+  background?: Rgba;
+  quality: number;
+  json?: boolean;
+}
+
+async function runEdit(input: string, o: EditCliOptions): Promise<void> {
+  const bytes = await readInput(input);
+  if (looksLikeSvg(bytes)) {
+    fail(`${input} is an SVG. \`edit\` works on raster images; rasterize it first.`);
+  }
+  const source = await loadRaster(bytes);
+
+  const chain: OpsChain = {
+    resize: o.resize ? { ...o.resize, fit: o.fit as never } : undefined,
+    rotate: o.rotate,
+    flip: o.flip,
+    flop: o.flop,
+    crop: o.crop,
+    trim: o.trim,
+    blur: o.blur,
+    sharpen: o.sharpen,
+    grayscale: o.grayscale,
+    negate: o.negate,
+    normalize: o.normalize,
+    modulate: (o.brightness || o.saturation || o.hue)
+      ? { brightness: o.brightness, saturation: o.saturation, hue: o.hue }
+      : undefined,
+    flatten: o.background,
+  };
+
+  if (!hasOps(chain)) fail('No operation given. See `pixvec edit --help`.');
+
+  const edited = await editImage(source.image, chain);
+
+  // Preserve the source format unless the output extension says otherwise.
+  const outPath = o.output ?? defaultOutput(input, extname(input) || `.${source.meta.format}`);
+  const format = formatFromExtension(extname(outPath)) ?? (source.meta.format as RasterFormat);
+  const encoded = await encodeRaster(edited, { format, quality: o.quality });
+  await writeOutput(outPath, encoded);
+
+  if (o.json) {
+    emitJson({
+      input, output: outPath, format,
+      from: { width: source.image.width, height: source.image.height },
+      to: { width: edited.width, height: edited.height },
+      outputBytes: encoded.length,
+    });
+    return;
+  }
+  info(
+    `${green('✓')} ${bold(basename(outPath))}  ${dim(
+      `${source.image.width}×${source.image.height} → ${edited.width}×${edited.height}  ` +
+        `${format}  ${formatBytes(encoded.length)}`,
+    )}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // info
 // ---------------------------------------------------------------------------
 
@@ -915,6 +1012,34 @@ program
   .option('--verify', 're-decode the encoded file and report what the encoder cost')
   .option('--json', 'machine-readable output on stdout')
   .action(runRasterize);
+
+program
+  .command('edit')
+  .description('Edit a raster image — resize, rotate, crop, and tone adjustments')
+  .argument('<input>', 'source raster image')
+  .option('-o, --output <file>', 'output path (defaults to editing in the same format)')
+  .option('--resize <WxH>', 'resize, e.g. 800x600, 800x, or x600', sizeArg)
+  .addOption(
+    new Option('--fit <mode>', 'how resize reconciles a differing aspect ratio')
+      .choices(['cover', 'contain', 'fill', 'inside', 'outside']),
+  )
+  .option('--rotate <deg>', 'rotate clockwise; multiples of 90 are lossless', floatArg('--rotate', -360, 360))
+  .option('--flip', 'mirror top-to-bottom')
+  .option('--flop', 'mirror left-to-right')
+  .option('--crop <x,y,w,h>', 'crop to a pixel region', cropArg)
+  .option('--trim', 'auto-crop a uniform border')
+  .option('--blur <sigma>', 'Gaussian blur', floatArg('--blur', 0.3, 100))
+  .option('--sharpen <sigma>', 'unsharp mask', floatArg('--sharpen', 0.3, 100))
+  .option('--grayscale', 'desaturate to greyscale')
+  .option('--negate', 'photographic negative')
+  .option('--normalize', 'stretch contrast to the full range')
+  .option('--brightness <factor>', 'brightness multiplier (1 = unchanged)', floatArg('--brightness', 0, 10))
+  .option('--saturation <factor>', 'saturation multiplier (1 = unchanged)', floatArg('--saturation', 0, 10))
+  .option('--hue <deg>', 'hue rotation in degrees', floatArg('--hue', -360, 360))
+  .option('-b, --background <color>', 'flatten transparency onto this colour', colorArg)
+  .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
+  .option('--json', 'machine-readable output on stdout')
+  .action(runEdit);
 
 program
   .command('convert')

@@ -105,13 +105,17 @@ Node.js 18.17+. The native dependencies ([sharp](https://sharp.pixelplumbing.com
 
 ### Any project architecture
 
-| You are using | Import | Native deps |
+| You want | Import | Native deps |
 |---|---|:--:|
-| Node, ESM | `import { vectorize } from 'pixvec'` | yes |
-| Node, CommonJS | `const { vectorize } = require('pixvec')` | yes |
-| Browser / Deno / Bun / edge | `import { vectorizeExact } from 'pixvec/core'` | **none** |
+| The full Node toolkit | `import { vectorize } from 'pixvec'` | yes |
+| … from CommonJS | `const { vectorize } = require('pixvec')` | yes |
+| Just the vectoriser | `import { trace } from 'pixvec/vectorize'` | **none** |
+| Just the metrics | `import { compareImages } from 'pixvec/metrics'` | **none** |
+| Just the pure-TS codecs | `import { encodeBmp } from 'pixvec/formats'` | **none** |
+| Everything portable | `import { vectorizeExact } from 'pixvec/core'` | **none** |
+| Image editing (resize, rotate…) | `import { editImage } from 'pixvec/ops'` | sharp only |
 
-`pixvec/core` is the vectorisation and measurement engine with **zero dependencies and no Node built-ins**. It takes a plain `{ width, height, data }` — byte-for-byte the layout of the browser's `ImageData` — so canvas pixels go straight in:
+Install only what you use. Every `none` subpath imports in isolation with the native codecs omitted (`npm install pixvec --omit=optional`), and the package is `"sideEffects": false`, so a bundler drops everything you never import. `pixvec/core` is the vectorisation and measurement engine with **zero dependencies and no Node built-ins**. It takes a plain `{ width, height, data }` — byte-for-byte the layout of the browser's `ImageData` — so canvas pixels go straight in:
 
 ```js
 import { vectorizeExact } from 'pixvec/core';
@@ -338,6 +342,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 ### Other commands
 
 ```bash
+pixvec edit photo.jpg -o small.png --resize 800x --grayscale  # resize, rotate, crop, tone
 pixvec extract keep.svg -o out.png --against original.png   # byte-identical recovery
 pixvec convert in.png out.svg      # direction inferred from extensions
 pixvec verify a.png b.svg          # measure any two images
