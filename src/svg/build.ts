@@ -17,12 +17,30 @@ export interface SvgDocOptions {
 /** Assembles an SVG 1.1 / SVG 2 compatible document from pre-serialised children. */
 export class SvgDoc {
   private children: string[] = [];
+  private defs: string[] = [];
+  private idSeq = 0;
 
   constructor(private readonly opts: SvgDocOptions) {}
 
   add(markup: string): this {
     this.children.push(markup);
     return this;
+  }
+
+  /**
+   * Register a `<defs>` entry — a gradient, a pattern — emitted once at the top
+   * of the document and referenced by id from a `fill`. No `<defs>` element is
+   * written unless something is added here, so a gradient-free document is
+   * byte-for-byte what it was before.
+   */
+  addDef(markup: string): this {
+    this.defs.push(markup);
+    return this;
+  }
+
+  /** A document-unique id for a def, so two gradients never collide. */
+  nextId(prefix = 'g'): string {
+    return `${prefix}${this.idSeq++}`;
   }
 
   /** A full-canvas background rectangle. Cheaper than repeating the same fill. */
@@ -49,8 +67,9 @@ export class SvgDoc {
 
     const head = generator ? `<!-- ${escapeComment(generator)} -->\n` : '';
     const titleEl = title ? `<title>${escapeText(title)}</title>` : '';
+    const defsEl = this.defs.length ? `<defs>${this.defs.join('')}</defs>` : '';
 
-    return `${head}<svg ${attrs.join(' ')}>${titleEl}${this.children.join('')}</svg>\n`;
+    return `${head}<svg ${attrs.join(' ')}>${titleEl}${defsEl}${this.children.join('')}</svg>\n`;
   }
 
   get childCount(): number {

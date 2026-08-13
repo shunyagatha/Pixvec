@@ -30,6 +30,7 @@ const CORE_MODULES = [
   'vectorize/components.ts',
   'vectorize/contour.ts',
   'vectorize/fit.ts',
+  'vectorize/gradient.ts',
   'vectorize/pixel.ts',
   'vectorize/exact.ts',
   'vectorize/trace.ts',

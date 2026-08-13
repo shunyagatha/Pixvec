@@ -65,3 +65,12 @@ export {
   type FittedPath,
   type Segment,
 } from './fit.js';
+
+export {
+  detectGradients,
+  GRAD_BASE,
+  GRADIENT_DEFAULTS,
+  type GradientTuning,
+  type GradientPaint,
+  type GradientResult,
+} from './gradient.js';

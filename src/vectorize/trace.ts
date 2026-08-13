@@ -8,6 +8,7 @@ import { traceComponents, type TurnPolicy } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
+import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
 
 /**
  * True vectorisation: colour regions become filled paths bounded by curves.
@@ -73,6 +74,23 @@ export interface TraceOptions {
   /** With {@link threshold}: dark pixels are the shape on a light ground. Default true. */
   blackOnWhite?: boolean;
   /**
+   * Reconstruct smooth colour ramps as SVG gradients instead of flat bands.
+   * Off by default. A region only becomes a gradient when the gradient's actual
+   * rendered output beats the flat bands it replaces (measured per pixel in
+   * Oklab), so flat art and hard edges are never affected.
+   */
+  gradients?: boolean;
+  /** Smallest region worth de-banding, in pixels. 0 (default) auto-scales. */
+  gradientMinArea?: number;
+  /** Largest Oklab step between neighbouring bands that may coalesce. Default 0.08. */
+  gradientStepMax?: number;
+  /** Fractional error reduction a gradient must clear to beat flat. Default 0.1. */
+  gradientMargin?: number;
+  /** Absolute RMS-Oklab ceiling for acceptance. Default 0.1. */
+  gradientMaxError?: number;
+  /** Maximum colour stops per gradient (placed adaptively). Default 16. */
+  gradientStops?: number;
+  /**
    * How to resolve a diagonal self-touch between two cells of the same region —
    * potrace's `turnPolicy`. `left` (default) always keeps the arms apart, which
    * is what most images want; `right` always joins them; `majority`/`minority`
@@ -131,6 +149,12 @@ export const TRACE_DEFAULTS = {
   refineIterations: 4,
   strokeWidth: 0,
   turnPolicy: 'left',
+  gradients: false,
+  gradientMinArea: 0,
+  gradientStepMax: 0.08,
+  gradientMargin: 0.1,
+  gradientMaxError: 0.1,
+  gradientStops: 16,
 } as const;
 
 /**
@@ -185,7 +209,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   const nearest = new NearestColor(palette, n);
 
   const levelCount = alphaLevels.length;
-  const classes = new Int32Array(n);
+  let classes: Int32Array = new Int32Array(n);
   let hasVoid = false;
 
   for (let i = 0; i < n; i++) {
@@ -198,6 +222,27 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     }
     const cIdx = nearest.index(img.data[off], img.data[off + 1], img.data[off + 2]);
     classes[i] = cIdx * levelCount + aIdx;
+  }
+
+  // --- Reconstruct smooth ramps as gradients, before segmentation. ---
+  //
+  // Rewriting the class map here — turning each accepted ramp into one synthetic
+  // class — lets the unchanged segment/trace/fit/emit pipeline treat a gradient
+  // as an ordinary region, so holes, winding and seams are handled by code that
+  // already works. When nothing is accepted the map is unchanged and the output
+  // is byte-for-byte the flat tracer's.
+  let gradientPaints: Map<number, GradientPaint> | null = null;
+  if (o.gradients) {
+    const g = detectGradients(img, classes, palette, alphaLevels, levelCount, width, height, {
+      gradients: o.gradients,
+      gradientMinArea: o.gradientMinArea,
+      gradientStepMax: o.gradientStepMax,
+      gradientMargin: o.gradientMargin,
+      gradientMaxError: o.gradientMaxError,
+      gradientStops: o.gradientStops,
+    });
+    classes = g.classes;
+    gradientPaints = g.paints.size > 0 ? g.paints : null;
   }
 
   // --- Segment, optionally removing specks. ---
@@ -240,9 +285,12 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   });
 
   // A background rectangle is only sound when nothing is transparent; otherwise
-  // it would paint over regions that must stay clear.
+  // it would paint over regions that must stay clear. A gradient region is never
+  // collapsed to a flat rectangle — that would throw away the ramp — so a
+  // synthetic gradient class is disqualified as the background.
   const backgroundClass =
-    o.background && !hasVoid && orderedClasses.length > 1 ? orderedClasses[0] : -1;
+    o.background && !hasVoid && orderedClasses.length > 1 && orderedClasses[0] < GRAD_BASE
+      ? orderedClasses[0] : -1;
   if (backgroundClass >= 0) {
     doc.addBackground(classColor(backgroundClass, palette, alphaLevels, levelCount));
   }
@@ -286,6 +334,18 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     }
 
     if (path.isEmpty()) continue;
+
+    // An accepted gradient region paints with its `<linearGradient>` instead of
+    // a flat fill; the def is registered once, here, the first and only time its
+    // class is emitted.
+    const paint = gradientPaints?.get(cls);
+    if (paint) {
+      doc.addDef(paint.def);
+      const op = paint.alpha < 1 ? ` fill-opacity="${+paint.alpha.toFixed(3)}"` : '';
+      doc.add(`<path fill-rule="evenodd" d="${path.toString()}" fill="${paint.ref}"${op}/>`);
+      continue;
+    }
+
     const color = classColor(cls, palette, alphaLevels, levelCount);
     const stroke = strokeFor(shortHex(color.r, color.g, color.b));
     doc.add(`<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`);

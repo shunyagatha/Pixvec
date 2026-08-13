@@ -141,6 +141,15 @@ export {
   type Segment,
 } from './vectorize/fit.js';
 
+export {
+  detectGradients,
+  GRAD_BASE,
+  GRADIENT_DEFAULTS,
+  type GradientTuning,
+  type GradientPaint,
+  type GradientResult,
+} from './vectorize/gradient.js';
+
 // --- Format codecs written from scratch, so they need no libvips -----------
 //
 // The decoders *and* the matching encoders both live here, so a browser or edge
@@ -199,4 +208,4 @@ export {
 } from './codecs.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.4.0';
+export const VERSION = '1.5.0';

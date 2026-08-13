@@ -242,7 +242,9 @@ Two rows deserve comment, because glossing over them is how tools mislead you:
 
 ## Compared with other vectorizers
 
-Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Pixvec's own view of quality.
+Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Pixvec's own view of quality. The field is potrace, imagetracerjs, and — the strongest modern open-source rival — **vtracer** (VisionCortex, Rust; an optional dev dependency, `npm install --no-save @neplex/vectorizer`).
+
+**Synthetic fixtures** — reproducible without licensing anyone's photographs:
 
 | Fixture | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
 |---|---|--:|--:|--:|--:|
@@ -251,23 +253,41 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 | | **pixvec trace** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
 | **Colour art** | potrace posterize | 1.9 KB | 14.61 dB | 0.8010 | 21.302 |
 | | imagetracerjs | 1.6 KB | 26.56 dB | 0.9363 | 0.662 |
+| | vtracer | 2.0 KB | 27.88 dB | 0.9490 | 0.583 |
 | | **pixvec trace** | 1.8 KB | **∞** | **1.0000** | **0.000** |
-| **Photo** | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
-| | imagetracerjs | 11.8 KB | 26.85 dB | **0.7143** | 5.623 |
-| | pixvec trace | **9.0 KB** | 26.93 dB | 0.7011 | **4.914** |
+| **Photo** (gradient + noise) | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
+| | imagetracerjs | 11.8 KB | 26.85 dB | 0.7143 | 5.623 |
+| | vtracer | 72.6 KB | **32.50 dB** | **0.7958** | 3.053 |
+| | pixvec trace | **9.0 KB** | 26.93 dB | 0.7011 | 4.914 |
 | | **pixvec lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
 
-**Bilevel** is potrace's home ground — the case it was designed for. Pixvec trace is now **bit-exact** on it (SSIM 1.0000), smaller than potrace's approximate output.
+**Real photographs** — the Kodak set at 480px, the test that actually matters:
 
-**Colour art**: pixvec trace is bit-exact here too, against imagetracerjs's 0.9363 and potrace's 0.8010.
+| Photo | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
+|---|---|--:|--:|--:|--:|
+| **Portrait** (skin, soft) | imagetracerjs | 1621 KB | 25.47 dB | 0.7093 | 5.957 |
+| | vtracer | 1661 KB | 25.79 dB | 0.7590 | 4.774 |
+| | **pixvec** | **588 KB** | **30.19 dB** | **0.8127** | **4.187** |
+| **Lighthouse** (sky) | imagetracerjs | 2010 KB | 24.58 dB | 0.7465 | 4.900 |
+| | vtracer | 1769 KB | 24.23 dB | 0.7588 | 5.678 |
+| | **pixvec** | **919 KB** | **31.94 dB** | **0.8909** | **3.757** |
+| **Parrots** (fine detail) | imagetracerjs | 301 KB | 25.81 dB | 0.7615 | 6.317 |
+| | vtracer | 605 KB | 23.16 dB | 0.7936 | 7.735 |
+| | **pixvec** | **154 KB** | 27.18 dB | 0.7758 | **6.079** |
 
-**Photo** is now a near-tie on this synthetic worst-case (pure gradient + noise): imagetracerjs 0.7143, pixvec 0.7011 — but in a smaller file (9.0 vs 11.8 KB) and with lower colour error (ΔE 4.9 vs 5.6). On **real photographs** pixvec is well ahead: measured across the Kodak set and real JPEGs (`npm run corpus:report`), trace SSIM runs 0.86–0.99. See the note below.
+**Bilevel** and **colour art** are bit-exact for pixvec (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
 
-> **How the photo result got here.** An earlier version trailed imagetracerjs by 0.05 SSIM and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
+**The synthetic photo** is a pure gradient plus noise, the one fixture pixvec loses: vtracer takes it (0.7958) with its colour-precision tracing, imagetracerjs edges pixvec on SSIM (0.7143 vs 0.7011). But it costs vtracer an **8× larger file** (72.6 vs 9.0 KB).
 
-Two caveats, so the table is not read as more than it is. potrace is *bilevel by design*; its colour rows use `posterize`, which is a bolt-on, and reporting them without saying so would be a rigged fight. And these are synthetic fixtures, chosen so anyone can reproduce them without licensing someone's photographs — no substitute for trying your own images.
+**On real photographs the picture inverts.** pixvec **leads SSIM on skin and sky** — 0.8127 and 0.8909, ahead of vtracer's 0.7590 / 0.7588 and imagetracerjs's 0.7093 / 0.7465 — while producing the **smallest file every time** (½ to ⅓ of vtracer's), with the best PSNR and ΔE almost everywhere. The synthetic-worst-case story does not survive contact with actual photographs.
 
-**On tuning knobs, not just accuracy.** Beyond the numbers, pixvec now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` seam hiding, and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); and sharp's editing pipeline behind `pixvec edit` and the `pixvec/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — pixvec's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
+**Gradient output** (`--gradients`) reconstructs smooth colour ramps — skies, skin — as SVG `<linearGradient>`s instead of flat bands. It is opt-in and **can only help**: a region becomes a gradient only when the gradient's *actual rendered output* (the renderer's sRGB stop interpolation, reproduced and scored per pixel in Oklab) beats the flat bands it would replace, so flat art stays byte-for-byte identical and hard edges are untouched. On the real photos it de-bands the smooth regions and lowers colour error (e.g. parrots ΔE 6.079 → 5.995, PSNR +0.1) — a modest, concentrated win, never a regression.
+
+> **How the photo result got here.** An earlier version trailed imagetracerjs on the synthetic photo and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
+
+Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a bolt-on, and reporting them without saying so would be a rigged fight. And the strongest *commercial* tracers (Illustrator Image Trace) and AI vectorisers remain unmeasured — pixvec is best-in-class here against the installable open-source field, not proven against everything.
+
+**On tuning knobs, not just accuracy.** Beyond the numbers, pixvec now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` seam hiding, and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); `--gradients` output that neither potrace nor imagetracerjs offers at all; and sharp's editing pipeline behind `pixvec edit` and the `pixvec/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — pixvec's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
 
 ## Metrics
 
@@ -340,6 +360,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--fill-strategy <how>` | How each palette colour is chosen from its cluster: `mean` (default), `dominant`, `median` (potrace's `fillStrategy`) |
 | `--right-angle` | Snap near-axis right-angle corners to exact 90° — crisper UI, screenshots, pixel art (imagetracerjs's `rightangleenhance`) |
 | `--right-angle-threshold <deg>` | Degrees of slack for `--right-angle` (default 12) |
+| `--gradients` | Reconstruct smooth colour ramps (skies, skin) as SVG gradients — de-bands photos, only where it measurably beats a flat fill |
 | `--no-optimize` | Do not merge adjacent curves that a single curve fits |
 | `--opt-tolerance <n>` | Error budget for a curve merge |
 | `--refine-iterations <n>` | Lloyd relaxation passes during palette construction |

@@ -228,6 +228,7 @@ interface VectorizeCliOptions {
   fillStrategy?: string;
   rightAngle?: boolean;
   rightAngleThreshold?: number;
+  gradients?: boolean;
   precision?: number;
   background: boolean;
   targetSsim?: number;
@@ -313,6 +314,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       fillStrategy: o.fillStrategy as never,
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
+      gradients: o.gradients,
       precision: o.precision,
       background: o.background,
     },
@@ -985,6 +987,7 @@ program
   )
   .option('--right-angle', 'snap near-axis right-angle corners to exact 90° (crisper UI/pixel art)')
   .option('--right-angle-threshold <deg>', 'degrees of slack for --right-angle', floatArg('--right-angle-threshold', 0, 45))
+  .option('--gradients', 'reconstruct smooth colour ramps as SVG gradients — de-bands photos, only where it measurably beats flat')
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))

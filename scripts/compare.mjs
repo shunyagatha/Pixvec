@@ -19,7 +19,7 @@
  *   npm run compare
  *   npm run compare -- --json
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -30,6 +30,34 @@ import { rasterizeSvg } from '../dist/esm/io/rasterize.js';
 import { compareImages } from '../dist/esm/metrics/index.js';
 
 const asJson = process.argv.includes('--json');
+
+// vtracer (VisionCortex, Rust) is the strongest modern open-source colour tracer
+// and the most relevant rival, so it belongs in this fight. It is an optional
+// dev dependency — a native napi binding — so the script degrades gracefully to
+// the JS-only field when it is not installed rather than hard-failing.
+let vtracer = null;
+try {
+  const vt = await import('@neplex/vectorizer');
+  // vtracer's own documented defaults for colour tracing: a fair fight is the
+  // tool at its out-of-the-box settings, the same courtesy imagetracerjs gets.
+  const config = {
+    colorMode: vt.ColorMode.Color,
+    hierarchical: vt.Hierarchical.Stacked,
+    mode: vt.PathSimplifyMode.Spline,
+    filterSpeckle: 4,
+    colorPrecision: 6,
+    layerDifference: 16,
+    cornerThreshold: 60,
+    lengthThreshold: 4,
+    spliceThreshold: 45,
+    maxIterations: 10,
+    pathPrecision: 8,
+  };
+  vtracer = { vectorize: vt.vectorize, config };
+} catch {
+  // Not installed; the head-to-head runs without it. Install with:
+  //   npm install --no-save @neplex/vectorizer
+}
 
 function image(width, height) {
   return { width, height, data: new Uint8ClampedArray(width * height * 4) };
@@ -100,6 +128,24 @@ const toPng = (img) =>
     raw: { width: img.width, height: img.height, channels: 4 },
   }).png().toBuffer();
 
+/**
+ * A real photograph from the corpus, downscaled so the whole panel of tracers
+ * finishes in seconds while keeping the continuous-tone content — skin, sky —
+ * that flat-fill tracing struggles with and gradients are meant to fix.
+ */
+async function loadReal(name, maxWidth = 480) {
+  const { data, info } = await sharp(await readFile(join('corpus', 'src', name)))
+    .resize({ width: maxWidth, withoutEnlargement: true })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return {
+    width: info.width,
+    height: info.height,
+    data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength),
+  };
+}
+
 /** Score any SVG against the source, using one renderer and one metric set. */
 async function score(source, svg) {
   // Every tool is rendered on the same white ground. potrace emits shapes on a
@@ -163,6 +209,24 @@ const tracerjs = async (_file, source) =>
     { width: source.width, height: source.height, data: Array.from(source.data) },
     { numberofcolors: 16 },
   );
+const pixvecGradients = async (_file, source) => {
+  const input = await loadRaster(await toPng(source));
+  return (await vectorize(input, { mode: 'trace', trace: { gradients: true } })).svg;
+};
+const vtracerRun = async (_file, source) => vtracer.vectorize(await toPng(source), vtracer.config);
+
+// vtracer only makes sense in colour, so it joins the colour and photo panels.
+const withVtracer = (entrants) => (vtracer ? [...entrants, ['vtracer', vtracerRun]] : entrants);
+
+// The colour/photo panel: every colour tracer, plus pixvec's flat trace, its
+// gradient-enabled trace, and its lossless fallback.
+const colourPanel = withVtracer([
+  ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
+  ['imagetracerjs', tracerjs],
+  ['pixvec trace', pixvecTrace],
+  ['pixvec gradients', pixvecGradients],
+  ['pixvec lossless', pixvecLossless],
+]);
 
 try {
   await contend('bilevel', bilevelArt(160, 120), [
@@ -172,19 +236,19 @@ try {
     ['pixvec lossless', pixvecLossless],
   ]);
 
-  await contend('colour art', colourArt(160, 120), [
-    ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
-    ['imagetracerjs', tracerjs],
-    ['pixvec trace', pixvecTrace],
-    ['pixvec lossless', pixvecLossless],
-  ]);
+  await contend('colour art', colourArt(160, 120), colourPanel);
+  await contend('photo (synthetic)', photoLike(120, 90), colourPanel);
 
-  await contend('photo', photoLike(120, 90), [
-    ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
-    ['imagetracerjs', tracerjs],
-    ['pixvec trace', pixvecTrace],
-    ['pixvec lossless', pixvecLossless],
-  ]);
+  // The real test: actual photographs — skin tones and sky gradients — where
+  // flat-fill tracing shows its worst and where gradients should earn their keep.
+  const realPhotos = [
+    ['kodak-portrait', 'photo-portrait.png'],
+    ['kodak-lighthouse', 'photo-lighthouse.png'],
+    ['kodak-parrots', 'photo-parrots.png'],
+  ];
+  for (const [label, file] of realPhotos) {
+    await contend(label, await loadReal(file), colourPanel);
+  }
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
