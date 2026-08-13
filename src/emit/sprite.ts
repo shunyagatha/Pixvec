@@ -41,7 +41,13 @@ export function svgSprite(items: SpriteItem[], opts: SpriteOptions = {}): string
 
 /** Derive a viewBox from width/height when the SVG has no explicit one. */
 function sizeToViewBox(svg: string): string | undefined {
-  const w = svg.match(/\bwidth="([\d.]+)"/)?.[1];
-  const h = svg.match(/\bheight="([\d.]+)"/)?.[1];
+  // Read only the opening <svg …> tag, and require a real delimiter before the
+  // attribute so `stroke-width="2"` cannot be mistaken for `width`. A trailing
+  // CSS unit (px) is tolerated; percentages have no absolute size, so skip them.
+  const openTag = svg.match(/<svg\b[^>]*>/i)?.[0] ?? svg;
+  const attr = (name: string): string | undefined =>
+    openTag.match(new RegExp(`[\\s"']${name}\\s*=\\s*["']([\\d.]+)(?:px)?["']`, 'i'))?.[1];
+  const w = attr('width');
+  const h = attr('height');
   return w && h ? `0 0 ${w} ${h}` : undefined;
 }

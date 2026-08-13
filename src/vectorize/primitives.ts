@@ -58,7 +58,7 @@ export function detectPrimitive(
   let best: Primitive | null = null;
   let bestErr = Infinity;
 
-  const rect = fitRect(b, w, h, area);
+  const rect = fitRect(pts, n, b, w, h, area);
   if (rect && rect.err <= maxError) {
     best = rect.prim;
     bestErr = rect.err;
@@ -100,17 +100,25 @@ export function primitiveSvg(prim: Primitive, attrs: string, precision = 2): str
 
 /** Axis-aligned rectangle: the contour of a real rect is exactly its bbox. */
 function fitRect(
+  pts: Int32Array | number[],
+  n: number,
   b: Bbox,
   w: number,
   h: number,
   area: number,
 ): { prim: Primitive; err: number } | null {
-  // The loop must actually fill its bounding box, or an L-shape / frame whose
-  // vertices all happen to touch the border would masquerade as a rectangle.
+  // Cheap pre-filter: a real rectangle fills its bounding box.
   if (area < 0.95 * w * h) return null;
-  // Residual is how far the polygon's area is from the box, expressed as an
-  // average edge offset — 0 for a true rectangle.
-  const err = (w * h - area) / (2 * (w + h));
+  // The real gate is per-vertex, like circle and ellipse: how far the worst
+  // boundary vertex sits from the nearest bbox edge. Zero for a true rectangle;
+  // large for a notch, slot or spike whose small area the ratio alone waves
+  // through (a 2-wide, 60-deep slot removes <5% of area but is 60px off-shape).
+  let err = 0;
+  for (let i = 0; i < n; i++) {
+    const x = pts[i << 1], y = pts[(i << 1) + 1];
+    const d = Math.min(x - b.minX, b.maxX - x, y - b.minY, b.maxY - y);
+    if (d > err) err = d;
+  }
   return { prim: { kind: 'rect', x: b.minX, y: b.minY, w, h }, err };
 }
 

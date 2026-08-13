@@ -51,7 +51,9 @@ export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
           '0', 'ELLIPSE', '8', layer, '62', aci, '420', String(trueColor),
           '10', n(prim.cx), '20', n(fy(prim.cy)), '30', '0',
           '11', n(majorX), '21', n(-majorY), '31', '0',
-          '40', n(ratio), '41', '0', '42', n(2 * Math.PI),
+          // End parameter at full precision: n()'s 3-place rounding of 2π would
+          // leave a sub-pixel hairline gap instead of a closed ellipse.
+          '40', n(ratio), '41', '0', '42', String(2 * Math.PI),
         );
         return;
       }

@@ -62,6 +62,16 @@ describe('detectPrimitive (unit)', () => {
   it('returns null for too few vertices', () => {
     expect(detectPrimitive(new Int32Array([0, 0, 1, 0, 1, 1]), {})).toBeNull();
   });
+
+  it('rejects a slotted rectangle whose notch barely dents the area', () => {
+    // A 100×100 square with a 2-wide, 60-deep slot cut into the top edge:
+    // <5% of the bbox area is missing, so an area-only gate would wave it
+    // through, but a boundary vertex sits 60px off the rectangle outline.
+    const slotted = new Int32Array([
+      0, 0, 49, 0, 49, 60, 51, 60, 51, 0, 100, 0, 100, 100, 0, 100,
+    ]);
+    expect(detectPrimitive(slotted, { maxError: 1 })).toBeNull();
+  });
 });
 
 describe('trace --primitives', () => {

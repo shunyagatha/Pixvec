@@ -34,6 +34,20 @@ describe('svgSprite', () => {
     expect(sheet).toContain('<symbol id="star" viewBox="0 0 32 32">');
   });
 
+  it('derives the viewBox from real width/height, not stroke-width', () => {
+    // No viewBox, and stroke-width appears before width — the fallback must not
+    // read the stroke width (2) as the icon width.
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" stroke-width="2" width="48" height="48"><path d="M0 0h48v48H0z"/></svg>';
+    const sheet = svgSprite([{ id: 'i', svg }]);
+    expect(sheet).toContain('<symbol id="i" viewBox="0 0 48 48">');
+    expect(sheet).not.toContain('viewBox="0 0 2 48"');
+  });
+
+  it('tolerates a px unit on width/height in the fallback', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32px" height="24px"><path/></svg>';
+    expect(svgSprite([{ id: 'i', svg }])).toContain('<symbol id="i" viewBox="0 0 32 24">');
+  });
+
   it('strips the inner <?xml?> prologue but keeps the geometry', () => {
     const sheet = svgSprite([{ id: 'star', svg: STAR }]);
     expect(sheet).not.toContain('<?xml');
