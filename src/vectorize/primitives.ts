@@ -176,11 +176,15 @@ function fitEllipse(
   let maxRes = 0;
   for (let i = 0; i < n; i++) {
     const px = pts[i << 1], py = pts[(i << 1) + 1];
-    // Nearest point on the axis-aligned ellipse, approximated by matching the
-    // point's parametric angle — accurate enough for a sub-pixel residual test.
-    const t = Math.atan2((py - cy) / ry, (px - cx) / rx);
-    const ex = cx + rx * Math.cos(t), ey = cy + ry * Math.sin(t);
-    const res = Math.hypot(px - ex, py - ey);
+    // Sampson distance: a first-order estimate of the true geometric distance
+    // to the conic, |F| / |∇F|. Far more accurate than matching eccentric
+    // angles, which overestimates the residual off the axes.
+    const nx = (px - cx) / rx, ny = (py - cy) / ry;
+    const f = nx * nx + ny * ny - 1;
+    const gx = (2 * (px - cx)) / (rx * rx);
+    const gy = (2 * (py - cy)) / (ry * ry);
+    const grad = Math.hypot(gx, gy);
+    const res = grad > 1e-9 ? Math.abs(f) / grad : Math.abs(f);
     if (res > maxRes) maxRes = res;
   }
   return { prim: { kind: 'ellipse', cx, cy, rx, ry }, err: maxRes };

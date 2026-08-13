@@ -30,6 +30,18 @@ describe('traceGeometry', () => {
   });
 });
 
+/** A filled axis-aligned ellipse — for the ELLIPSE entity path. */
+function ellipseImg(w: number, h: number): RasterImage {
+  const img = createImage(w, h);
+  const cx = w / 2, cy = h / 2, rx = w * 0.38, ry = h * 0.24;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const inside = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 < 1;
+      setPixel(img, x, y, inside ? 30 : 250, inside ? 80 : 250, inside ? 200 : 250);
+    }
+  return img;
+}
+
 describe('DXF export', () => {
   it('is a valid entities document of closed polylines with true colour', () => {
     const dxf = toDxf(traceGeometry(flatArtwork(60, 48), { colors: 4 }));
@@ -40,6 +52,42 @@ describe('DXF export', () => {
     expect(dxf.trimEnd().endsWith('EOF')).toBe(true);
     // 70 flag 1 == closed
     expect(dxf).toMatch(/\n70\n1\n/);
+  });
+
+  it('emits a true CIRCLE entity for a disc, not a faceted polyline', () => {
+    const dxf = toDxf(traceGeometry(disc(120), { colors: 2 }));
+    expect(dxf).toContain('\nCIRCLE\n');
+    // Pull the CIRCLE's centre (10/20) and radius (40) and sanity-check them.
+    const m = dxf.match(/\nCIRCLE\n[\s\S]*?\n10\n([\d.]+)\n20\n([\d.]+)\n40\n([\d.]+)\n/);
+    expect(m).not.toBeNull();
+    const [cx, cy, r] = [Number(m![1]), Number(m![2]), Number(m![3])];
+    // Contour vertices sit on pixel corners, so the fitted centre is ~60.5.
+    expect(Math.abs(cx - 60)).toBeLessThanOrEqual(1);
+    expect(Math.abs(cy - 60)).toBeLessThanOrEqual(1); // Y-flipped, but symmetric here
+    expect(Math.abs(r - 120 * 0.4)).toBeLessThanOrEqual(1);
+  });
+
+  it('is smaller than the flattened polyline it replaces', () => {
+    const withArc = toDxf(traceGeometry(disc(120), { colors: 2 }));
+    const flattened = toDxf(traceGeometry(disc(120), { colors: 2, primitives: false }));
+    expect(withArc).toContain('\nCIRCLE\n');
+    expect(flattened).not.toContain('\nCIRCLE\n');
+    expect(flattened).toContain('\nLWPOLYLINE\n');
+    expect(withArc.length).toBeLessThan(flattened.length);
+  });
+
+  it('emits an ELLIPSE entity with a correct axis ratio', () => {
+    const dxf = toDxf(traceGeometry(ellipseImg(140, 100), { colors: 2 }));
+    expect(dxf).toContain('\nELLIPSE\n');
+    // ratio (group 40) is minor/major ≈ (h*0.24)/(w*0.38) = 24/53.2 ≈ 0.45
+    const m = dxf.match(/\nELLIPSE\n[\s\S]*?\n40\n([\d.]+)\n/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeCloseTo((100 * 0.24) / (140 * 0.38), 1);
+  });
+
+  it('respects primitives:false (raw polylines only)', () => {
+    const dxf = toDxf(traceGeometry(disc(120), { colors: 2, primitives: false }));
+    expect(dxf).not.toContain('\nCIRCLE\n');
   });
 });
 

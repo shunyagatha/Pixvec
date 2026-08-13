@@ -10,6 +10,7 @@ import { quantize, NearestColor } from '../../vectorize/quantize.js';
 import { connectedComponents, despeckle } from '../../vectorize/components.js';
 import { traceComponents } from '../../vectorize/contour.js';
 import { fitLoop, type FittedPath, type FitOptions } from '../../vectorize/fit.js';
+import { detectPrimitive, type Primitive } from '../../vectorize/primitives.js';
 import { autoMinArea, TRACE_DEFAULTS, type TraceOptions } from '../../vectorize/trace.js';
 import type { RasterImage, Rgba } from '../../types.js';
 
@@ -18,6 +19,14 @@ export interface GeometryPath {
   color: Rgba;
   /** Closed sub-paths (outer boundaries and holes) sharing the colour. */
   subpaths: FittedPath[];
+  /**
+   * Recognised primitive per sub-path, aligned by index with {@link subpaths}
+   * (`null` where the contour is not a clean circle/ellipse/rectangle). Lets an
+   * exporter emit a true `CIRCLE`/`ELLIPSE` — a real arc a laser or router cuts
+   * in one move — instead of a faceted polyline. Present unless detection was
+   * disabled with `primitives: false`.
+   */
+  primitives?: (Primitive | null)[];
 }
 
 export interface TraceGeometry {
@@ -84,19 +93,29 @@ export function traceGeometry(source: RasterImage, opts: TraceOptions = {}): Tra
     rightAngleThreshold: o.rightAngleThreshold,
   };
 
+  // Recognise primitives by default for the exporters: a DXF CIRCLE beats a
+  // 12-gon for anything that will be cut. Opt out with `primitives: false`.
+  const wantPrimitives = opts.primitives !== false;
+
   const paths: GeometryPath[] = [];
   for (const cls of ordered) {
     const subpaths: FittedPath[] = [];
+    const primitives: (Primitive | null)[] = [];
     for (const c of byClass.get(cls)!) {
       for (const loop of loops[c]) {
         const fitted = fitLoop(loop.pts, fitOpts);
-        if (fitted) subpaths.push(fitted);
+        if (!fitted) continue;
+        subpaths.push(fitted);
+        // Detect per sub-path (holes included), so a ring becomes two circles —
+        // exactly what a cutter wants. Aligned by index with `subpaths`.
+        primitives.push(wantPrimitives ? detectPrimitive(loop.pts, { maxError: o.primitiveError }) : null);
       }
     }
     if (subpaths.length === 0) continue;
     paths.push({
       color: { r: palette.rgb[cls * 3], g: palette.rgb[cls * 3 + 1], b: palette.rgb[cls * 3 + 2], a: 255 },
       subpaths,
+      ...(wantPrimitives ? { primitives } : {}),
     });
   }
 
