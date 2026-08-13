@@ -1,5 +1,5 @@
 {
-  "name": "vexel",
+  "name": "@shunyagatha/vexel",
   "version": "0.1.0",
   "description": "High-accuracy, measurable raster <-> SVG conversion. Pixel-exact lossless vectorization, quality-targeted tracing, and exact SVG rasterization - with built-in PSNR/SSIM/deltaE verification.",
   "keywords": [
@@ -48,6 +48,9 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -56,7 +59,7 @@
     "smoke": "node scripts/smoke.mjs",
     "bench": "node scripts/bench.mjs",
     "cli": "node --enable-source-maps dist/cli.js",
-    "prepublishOnly": "npm run build"
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",

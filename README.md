@@ -3,11 +3,11 @@
 **Measurable raster ⇄ SVG conversion.** PNG, JPEG, WebP, AVIF, TIFF and GIF to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
 
 [![CI](https://github.com/shunyagatha/vexel/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/vexel/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/vexel.svg)](https://www.npmjs.com/package/vexel)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
 ```bash
-npx vexel vectorize logo.png --verify
+vexel vectorize logo.png --verify
 ```
 
 ```
@@ -48,23 +48,25 @@ Anyone promising exact photo-to-curves vectorization is either embedding a bitma
 
 ## Install
 
-```bash
-npm install -g vexel
-```
-
-Or run without installing:
+Not on npm yet. Install from source:
 
 ```bash
-npx vexel vectorize input.png
+git clone https://github.com/shunyagatha/vexel.git
+cd vexel
+npm install
+npm run build
+npm link          # puts `vexel` on your PATH
 ```
 
-As a library:
+Or install straight from GitHub:
 
 ```bash
-npm install vexel
+npm install -g github:shunyagatha/vexel
 ```
 
-Requires Node.js 18.17+. Native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows.
+Requires Node.js 18.17+. Native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows, so no compiler toolchain is needed.
+
+> The package will publish as `@shunyagatha/vexel` — the bare name `vexel` on npm belongs to an unrelated project.
 
 ## Quick start
 
@@ -207,7 +209,7 @@ vexel batch 'src/**/*.png' -o out/ --to svg
 ## Library
 
 ```ts
-import { loadRaster, vectorize, rasterize, compareImages } from 'vexel';
+import { loadRaster, vectorize, rasterize, compareImages } from '@shunyagatha/vexel';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const source = await loadRaster(await readFile('logo.png'));
