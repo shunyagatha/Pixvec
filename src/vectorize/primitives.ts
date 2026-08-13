@@ -20,7 +20,8 @@
 export type Primitive =
   | { kind: 'circle'; cx: number; cy: number; r: number }
   | { kind: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
-  | { kind: 'rect'; x: number; y: number; w: number; h: number };
+  | { kind: 'rect'; x: number; y: number; w: number; h: number }
+  | { kind: 'roundrect'; x: number; y: number; w: number; h: number; r: number };
 
 export interface PrimitiveOptions {
   /** Every vertex must sit within this many pixels of the fitted shape. Default 1.0. */
@@ -80,6 +81,15 @@ export function detectPrimitive(
     }
   }
 
+  // A rounded rectangle — the workhorse UI/icon shape. A sharp rect wins ties
+  // (its err is 0), and a circle is caught above, so this only claims shapes
+  // that genuinely have rounded corners and no better fit.
+  const round = fitRoundRect(pts, n, b, w, h);
+  if (round && round.err <= maxError && round.err < bestErr) {
+    best = round.prim;
+    bestErr = round.err;
+  }
+
   return best;
 }
 
@@ -93,6 +103,8 @@ export function primitiveSvg(prim: Primitive, attrs: string, precision = 2): str
       return `<ellipse cx="${r(prim.cx)}" cy="${r(prim.cy)}" rx="${r(prim.rx)}" ry="${r(prim.ry)}"${attrs}/>`;
     case 'rect':
       return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}"${attrs}/>`;
+    case 'roundrect':
+      return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}" rx="${r(prim.r)}" ry="${r(prim.r)}"${attrs}/>`;
   }
 }
 
@@ -120,6 +132,49 @@ function fitRect(
     if (d > err) err = d;
   }
   return { prim: { kind: 'rect', x: b.minX, y: b.minY, w, h }, err };
+}
+
+/**
+ * Rounded rectangle. The outline is the level set `distanceToShrunkBox(p) = r`,
+ * where the shrunk box is the bbox inset by the corner radius `r` — that single
+ * signed-distance identity scores edges and corner arcs alike. `r` is unknown,
+ * so it is swept and the value with the smallest worst-vertex residual wins.
+ */
+function fitRoundRect(
+  pts: Int32Array | number[],
+  n: number,
+  b: Bbox,
+  w: number,
+  h: number,
+): { prim: Primitive; err: number } | null {
+  const maxR = Math.min(w, h) / 2;
+  if (maxR < 2) return null; // too small to carry a meaningful radius
+
+  const MIN_R = 2;
+  const STEPS = 48;
+  let bestR = 0;
+  let bestErr = Infinity;
+  for (let s = 0; s <= STEPS; s++) {
+    const r = MIN_R + ((maxR - MIN_R) * s) / STEPS;
+    const ix0 = b.minX + r, ix1 = b.maxX - r, iy0 = b.minY + r, iy1 = b.maxY - r;
+    let worst = 0;
+    for (let i = 0; i < n; i++) {
+      const x = pts[i << 1], y = pts[(i << 1) + 1];
+      const qx = Math.max(ix0 - x, x - ix1, 0);
+      const qy = Math.max(iy0 - y, y - iy1, 0);
+      const res = Math.abs(Math.hypot(qx, qy) - r);
+      if (res > worst) worst = res;
+      if (worst >= bestErr) break; // cannot beat the incumbent; stop early
+    }
+    if (worst < bestErr) { bestErr = worst; bestR = r; }
+  }
+  if (bestR < MIN_R) return null;
+  // When the radius fills the whole half-extent AND the box is square, there are
+  // no straight edges left — it is a circle, not a rounded rectangle. Defer, so
+  // the circle fitter (tried first) keeps it. A stadium (w≠h, r=min/2) is still
+  // a legitimate rounded rect and passes.
+  if (bestR >= maxR - 0.75 && Math.abs(w - h) <= 1.5) return null;
+  return { prim: { kind: 'roundrect', x: b.minX, y: b.minY, w, h, r: bestR }, err: bestErr };
 }
 
 /** Algebraic (Kåsa) least-squares circle, gated on the worst radial residual. */

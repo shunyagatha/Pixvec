@@ -40,6 +40,20 @@ function ellipse(size: number, cx: number, cy: number, rx: number, ry: number): 
   return img;
 }
 
+function roundRect(size: number, x0: number, y0: number, w: number, h: number, r: number): RasterImage {
+  const img = blank(size);
+  const ix0 = x0 + r, ix1 = x0 + w - r, iy0 = y0 + r, iy1 = y0 + h - r;
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const cx = x + 0.5, cy = y + 0.5;
+      if (cx < x0 || cx > x0 + w || cy < y0 || cy > y0 + h) continue;
+      const qx = Math.max(ix0 - cx, cx - ix1, 0);
+      const qy = Math.max(iy0 - cy, cy - iy1, 0);
+      if (Math.hypot(qx, qy) <= r) setPixel(img, x, y, ...FG);
+    }
+  return img;
+}
+
 const traceOpts = { colors: 2, primitives: true } as const;
 
 describe('detectPrimitive (unit)', () => {
@@ -117,6 +131,30 @@ describe('trace --primitives', () => {
     const ref = await rasterizeSvg(trace(img, { colors: 2 }).svg, { width: 90 });
     const got = await rasterizeSvg(out.svg, { width: 90 });
     expect(compareImages(ref.image, got.image).ssim).toBeGreaterThan(0.985);
+  });
+
+  it('emits a rounded <rect rx> for a rounded rectangle', async () => {
+    const img = roundRect(100, 15, 25, 70, 50, 14);
+    const out = trace(img, traceOpts);
+    expect(out.svg).toMatch(/<rect [^>]*rx="1[0-9](\.\d+)?"/); // radius ≈ 14
+    expect(out.svg).toContain('<rect');
+
+    const ref = await rasterizeSvg(trace(img, { colors: 2 }).svg, { width: 100 });
+    const got = await rasterizeSvg(out.svg, { width: 100 });
+    expect(compareImages(ref.image, got.image).ssim).toBeGreaterThan(0.98);
+  });
+
+  it('keeps a sharp rectangle sharp (no spurious rx)', () => {
+    const img = rect(80, 15, 20, 50, 35);
+    const out = trace(img, traceOpts);
+    expect(out.svg).toContain('<rect');
+    expect(out.svg).not.toContain('rx=');
+  });
+
+  it('does not mistake a disc for a rounded rect', () => {
+    const out = trace(disc(80, 40, 40, 30), traceOpts);
+    expect(out.svg).toContain('<circle');
+    expect(out.svg).not.toContain('rx=');
   });
 
   it('leaves an organic blob as a path (no false primitive)', () => {
