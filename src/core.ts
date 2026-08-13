@@ -223,6 +223,9 @@ export {
 // --- SVG → framework component codegen (pure) ------------------------------
 export { toComponent, type Framework, type ComponentOptions } from './emit/component.js';
 
+// --- SVG sprite / symbol sheets (pure) -------------------------------------
+export { svgSprite, type SpriteItem, type SpriteOptions } from './emit/sprite.js';
+
 // --- Lazy-load placeholders (pure) -----------------------------------------
 export { blurHash, lqipSvg, type LqipOptions } from './placeholder/index.js';
 
@@ -244,4 +247,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.13.0';
+export const VERSION = '1.14.0';

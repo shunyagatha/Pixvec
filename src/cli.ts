@@ -24,6 +24,7 @@ import { traceGeometry, toDxf, toEps, toPdf, toGcode } from './io/export/index.j
 import { centerlineTrace, centerlinePolylines } from './vectorize/centerline.js';
 import { startMcpServer } from './mcp/server.js';
 import { optimizeSvg } from './svg/optimize.js';
+import { svgSprite } from './emit/sprite.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -931,6 +932,35 @@ async function runComponent(input: string, o: ComponentCliOptions): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// sprite
+// ---------------------------------------------------------------------------
+
+async function runSprite(
+  inputs: string[],
+  o: { output: string; minify?: boolean; json?: boolean },
+): Promise<void> {
+  const items: Array<{ id: string; svg: string }> = [];
+  for (const input of inputs) {
+    const bytes = await readInput(input);
+    const id = basename(input, extname(input)).replace(/[^\w-]/g, '-');
+    const svg = looksLikeSvg(bytes)
+      ? new TextDecoder().decode(bytes)
+      : (await vectorize(await loadRaster(bytes), { mode: 'auto' })).svg;
+    items.push({ id, svg });
+  }
+  let sprite = svgSprite(items);
+  if (o.minify) sprite = optimizeSvg(sprite);
+  await writeOutput(o.output, sprite);
+
+  if (o.json) {
+    emitJson({ output: o.output, symbols: items.map((i) => i.id), outputBytes: Buffer.byteLength(sprite) });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(o.output))}  ${dim(`${items.length} symbols  ${formatBytes(Buffer.byteLength(sprite))}`)}`);
+  info(`  ${dim('use:')} <svg><use href="#${items[0]?.id ?? 'icon'}"/></svg>`);
+}
+
+// ---------------------------------------------------------------------------
 // optimize
 // ---------------------------------------------------------------------------
 
@@ -1423,6 +1453,15 @@ program
   .option('--min-length <px>', 'drop strokes shorter than this', floatArg('--min-length', 0, 1000), 3)
   .option('--json', 'machine-readable output on stdout')
   .action(runCenterline);
+
+program
+  .command('sprite')
+  .description('Pack many images/SVGs into one <symbol> sprite sheet (referenced via <use href="#id">)')
+  .argument('<inputs...>', 'source images or SVGs')
+  .option('-o, --output <file>', 'output sprite path', 'sprite.svg')
+  .option('--minify', 'minify the sheet')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runSprite);
 
 program
   .command('optimize')

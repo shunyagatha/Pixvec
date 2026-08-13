@@ -26,6 +26,7 @@ const CORE_MODULES = [
   'svg/build.ts',
   'svg/optimize.ts',
   'emit/component.ts',
+  'emit/sprite.ts',
   'placeholder/index.ts',
   'io/export/geometry.ts',
   'io/export/shared.ts',
