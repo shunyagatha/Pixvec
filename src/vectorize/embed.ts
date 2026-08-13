@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { SvgDoc, escapeAttr } from '../svg/build.js';
 import type { RasterImage, SourceMeta } from '../types.js';
@@ -145,9 +146,18 @@ export async function vectorizeEmbed(
     title: opts.title,
   });
 
+  // Record what the payload is, so `extract` can hand the original file back
+  // and *prove* it is the same file rather than merely asserting it. Renderers
+  // ignore unknown data-* attributes, so this costs nothing visually.
+  const digest = createHash('sha256').update(chosen.bytes).digest('hex');
+  const provenance =
+    ` data-pixvec-sha256="${digest}"` +
+    ` data-pixvec-bytes="${chosen.bytes.length}"` +
+    (chosen.preserved ? ' data-pixvec-original="true"' : '');
+
   const dataUri = `data:${chosen.mime};base64,${chosen.bytes.toString('base64')}`;
   doc.add(
-    `<image width="${img.width}" height="${img.height}"${rendering} ` +
+    `<image width="${img.width}" height="${img.height}"${rendering}${provenance} ` +
       `${hrefAttr}="${escapeAttr(dataUri)}"/>`,
   );
 
@@ -165,6 +175,69 @@ export async function vectorizeEmbed(
     payloadBytes: chosen.bytes.length,
     bytesPreserved: chosen.preserved,
     notes,
+  };
+}
+
+export interface ExtractedPayload {
+  bytes: Buffer;
+  mime: string;
+  /** File extension implied by the media type, without a dot. */
+  extension: string;
+  /** SHA-256 recorded when the SVG was written, if present. */
+  recordedSha256?: string;
+  /** SHA-256 of what was actually recovered. */
+  actualSha256: string;
+  /** True when the two digests agree — a proof of byte-identical recovery. */
+  verified: boolean;
+  /** True when the payload is the untouched original file rather than a re-encode. */
+  isOriginal: boolean;
+}
+
+const EXTENSION_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'image/tiff': 'tiff',
+};
+
+const DATA_URI = /<image\b[^>]*?\b(?:xlink:href|href)\s*=\s*(["'])data:([^;,]+);base64,([A-Za-z0-9+/=\s]*)\1/i;
+const SHA_ATTR = /\bdata-pixvec-sha256\s*=\s*(["'])([0-9a-f]{64})\1/i;
+const ORIGINAL_ATTR = /\bdata-pixvec-original\s*=\s*(["'])true\1/i;
+
+/**
+ * Recover the embedded bitmap from an SVG produced by `embed` mode.
+ *
+ * This is what makes the round trip *byte-identical* rather than merely
+ * pixel-identical: when the SVG was written with the original file preserved,
+ * this returns those exact bytes, and the recorded digest proves it.
+ *
+ * Returns null when the document holds no base64 `<image>` payload.
+ */
+export function extractEmbedded(svg: string): ExtractedPayload | null {
+  const match = DATA_URI.exec(svg);
+  if (!match) return null;
+
+  const mime = match[2].trim().toLowerCase();
+  // Whitespace is legal inside a data URI and must go before decoding.
+  const bytes = Buffer.from(match[3].replace(/\s+/g, ''), 'base64');
+  const actualSha256 = createHash('sha256').update(bytes).digest('hex');
+
+  const tag = match[0];
+  const recorded = SHA_ATTR.exec(tag) ?? SHA_ATTR.exec(svg);
+  const recordedSha256 = recorded?.[2];
+
+  return {
+    bytes,
+    mime,
+    extension: EXTENSION_BY_MIME[mime] ?? 'bin',
+    recordedSha256,
+    actualSha256,
+    // With no recorded digest there is nothing to check against, so this
+    // reports "not verified" rather than quietly implying success.
+    verified: recordedSha256 !== undefined && recordedSha256 === actualSha256,
+    isOriginal: ORIGINAL_ATTR.test(tag) || ORIGINAL_ATTR.test(svg),
   };
 }
 

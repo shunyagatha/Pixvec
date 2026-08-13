@@ -8,6 +8,7 @@ import type {
   QualityReport, RasterImage, SourceMeta, VectorizeMode, VectorizeResult,
 } from './types.js';
 import { vectorizeEmbed, type EmbedOptions } from './vectorize/embed.js';
+import { vectorizeExact, type ExactOptions } from './vectorize/exact.js';
 import { vectorizePixels, type PixelVectorizeOptions } from './vectorize/pixel.js';
 import { trace, TRACE_DEFAULTS, type TraceOptions } from './vectorize/trace.js';
 
@@ -50,9 +51,24 @@ export interface VectorizeOptions {
   maxColors?: number;
   /** Refinement attempts before giving up and returning the best so far. */
   maxRefineSteps?: number;
+  /**
+   * What `lossless` optimises for once exactness is assured.
+   *
+   * `auto` (default) keeps real editable geometry whenever it is not
+   * unreasonably larger than the alternative — see {@link maxGeometryRatio}.
+   * `geometry` insists on real paths at any size. `size` always takes the
+   * smallest exact result, which on photographs is the embedded bitmap.
+   */
+  losslessPrefer?: 'auto' | 'geometry' | 'size';
+  /**
+   * Under `auto`, how many times larger real geometry may be than the smallest
+   * exact alternative before it stops being worth it. Default 4.
+   */
+  maxGeometryRatio?: number;
   trace?: TraceOptions;
   embed?: EmbedOptions;
   pixel?: PixelVectorizeOptions;
+  exact?: ExactOptions;
   compare?: CompareOptions;
   /** `<title>` for the generated document. */
   title?: string;
@@ -91,6 +107,15 @@ export async function vectorize(
   const generator = opts.noGenerator ? undefined : GENERATOR;
   const wantsTarget = opts.targetSsim !== undefined || opts.targetPsnr !== undefined;
   const verify = opts.verify || wantsTarget;
+
+  // Strict lossless is its own path: it verifies every candidate by rendering
+  // and refuses to return anything that is not bit-exact.
+  if (opts.mode === 'lossless' || opts.preset === 'exact') {
+    const strict = await runLossless(input, opts, generator, notes);
+    strict.elapsedMs = Date.now() - started;
+    strict.notes = notes;
+    return strict;
+  }
 
   const mode = resolveMode(input, opts, notes);
 
@@ -199,21 +224,9 @@ function resolveMode(
   notes: string[],
 ): VectorizeMode {
   if (opts.preset === 'pixelart') return 'pixel';
-  if (opts.preset === 'exact' || opts.mode === 'lossless') {
-    const flat = measureFlatness(input.image, 4096);
-    if (isPixelFeasible(input.image, flat)) {
-      notes.push('Lossless requested: using pixel mode, which is exact and remains real geometry.');
-      return 'pixel';
-    }
-    notes.push(
-      'Lossless requested, but this image is too photographic for pixel mode ' +
-        '(it would need roughly one rectangle per pixel). Falling back to embed, ' +
-        'which is exact but wraps a bitmap rather than producing shapes.',
-    );
-    return 'embed';
-  }
-
-  if (opts.mode && opts.mode !== 'auto') return opts.mode;
+  // `lossless` and the `exact` preset never reach here — `vectorize` routes them
+  // to `runLossless`, which decides by measuring candidates rather than guessing.
+  if (opts.mode && opts.mode !== 'auto' && opts.mode !== 'lossless') return opts.mode;
 
   const flat = measureFlatness(input.image, 4096);
   if (isPixelFeasible(input.image, flat)) {
@@ -263,6 +276,188 @@ function isPixelFeasible(img: RasterImage, flat: Flatness): boolean {
   if (estimatedRects > PIXEL_RECT_BUDGET) return false;
 
   return flat.runRatio <= FLAT_RUN_RATIO || flat.distinctColors <= FLAT_COLOR_COUNT;
+}
+
+// ---------------------------------------------------------------------------
+// Strict lossless
+// ---------------------------------------------------------------------------
+
+interface LosslessCandidate {
+  svg: string;
+  mode: VectorizeMode;
+  shapes: number;
+  colors: number;
+  /** Short description used in notes and errors. */
+  label: string;
+  settled?: Record<string, number | string | boolean>;
+  report?: QualityReport;
+}
+
+/**
+ * Produce a bit-exact SVG, or fail loudly.
+ *
+ * The guarantee is enforced by measurement, not by construction: every
+ * candidate is rendered back to pixels and compared against the source, and
+ * anything that is not bit-identical is discarded. If nothing survives, this
+ * throws rather than returning a near-miss — silently downgrading a lossless
+ * request is the one failure mode that would make the promise worthless.
+ *
+ * Candidates are tried in order of how useful the result is:
+ *
+ * 1. **Exact geometry** — real editable paths, either rectangles or contours,
+ *    whichever encodes smaller.
+ * 2. **Embed, original bytes preserved** — gives a byte-identical round trip of
+ *    the source *file*, not merely of its pixels.
+ * 3. **Embed, re-encoded as PNG** — always renders exactly, at the cost of no
+ *    longer carrying the original file.
+ *
+ * Step 2 sits above step 3 because it is strictly better when it works, and it
+ * usually does; it fails for JPEG sources, where the renderer's decoder rounds
+ * its inverse DCT differently from the reference decoder.
+ */
+async function runLossless(
+  input: VectorizeInput,
+  opts: VectorizeOptions,
+  generator: string | undefined,
+  notes: string[],
+): Promise<VectorizeResult> {
+  const prefer = opts.losslessPrefer ?? 'auto';
+  const maxRatio = opts.maxGeometryRatio ?? 4;
+  const title = opts.title;
+  const candidates: LosslessCandidate[] = [];
+
+  // --- 1. Real geometry ---
+  try {
+    const exact = vectorizeExact(input.image, {
+      ...opts.pixel, ...opts.exact, generator, title,
+    });
+    candidates.push({
+      svg: exact.svg,
+      mode: 'pixel',
+      shapes: exact.shapes,
+      colors: exact.colors,
+      label: `exact geometry (${exact.strategy})`,
+      settled: {
+        strategy: exact.strategy,
+        rectangleBytes: exact.sizes.rectangles,
+        ...(exact.sizes.contours !== undefined ? { contourBytes: exact.sizes.contours } : {}),
+      },
+    });
+  } catch (err) {
+    notes.push(`Exact geometry unavailable: ${(err as Error).message}`);
+  }
+
+  // --- 2 & 3. Embedded payloads ---
+  const requested = opts.embed?.strategy;
+  const strategies: Array<EmbedOptions['strategy']> =
+    requested && requested !== 'auto' ? [requested] : ['preserve', 'png'];
+
+  for (const strategy of strategies) {
+    try {
+      const out = await vectorizeEmbed(input.image, input.bytes, input.meta, {
+        ...opts.embed, strategy, generator, title,
+      });
+      candidates.push({
+        svg: out.svg,
+        mode: 'embed',
+        shapes: 1,
+        colors: 0,
+        label: `embed (${out.bytesPreserved ? 'original bytes preserved' : out.mime})`,
+        settled: {
+          mime: out.mime,
+          payloadBytes: out.payloadBytes,
+          bytesPreserved: out.bytesPreserved,
+        },
+      });
+    } catch (err) {
+      notes.push(`Embed strategy "${strategy}" failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Two strategies can converge on the same output — a BMP source has no
+  // preservable payload, so both `preserve` and `png` re-encode identically.
+  // Verifying and reporting it twice is just noise.
+  const unique: LosslessCandidate[] = [];
+  for (const candidate of candidates) {
+    if (!unique.some((seen) => seen.svg === candidate.svg)) unique.push(candidate);
+  }
+
+  // --- Verify every candidate; keep only the provably exact ones. ---
+  const exactOnes: LosslessCandidate[] = [];
+  const rejected: string[] = [];
+
+  for (const candidate of unique) {
+    const report = await verifySvg(candidate.svg, input.image, opts.compare);
+    candidate.report = report;
+    if (report.lossless) exactOnes.push(candidate);
+    else {
+      rejected.push(
+        `${candidate.label}: ${report.pixels - report.exactPixels} pixel(s) differ ` +
+          `(max ${report.maxChannelDiff}/255)`,
+      );
+    }
+  }
+
+  if (exactOnes.length === 0) {
+    throw new Error(
+      `Could not produce a bit-exact SVG for this input. Tried:\n` +
+        rejected.map((r) => `  - ${r}`).join('\n') +
+        `\nThis should not happen; please report it with the input image.`,
+    );
+  }
+
+  // --- Choose among the survivors. ---
+  const geometry = exactOnes.find((c) => c.mode === 'pixel');
+  const smallest = [...exactOnes].sort((a, b) => a.svg.length - b.svg.length)[0];
+
+  let chosen: LosslessCandidate;
+  let rationale: string | null = null;
+
+  if (prefer === 'size' || !geometry) {
+    chosen = smallest;
+  } else if (prefer === 'geometry') {
+    chosen = geometry;
+  } else {
+    // `auto`: real geometry is worth a premium, but not an unbounded one. A
+    // photograph encodes exactly as roughly one rectangle per pixel, which is a
+    // multi-megabyte file that is vector in name only.
+    const ratio = geometry.svg.length / smallest.svg.length;
+    if (ratio <= maxRatio) {
+      chosen = geometry;
+    } else {
+      chosen = smallest;
+      rationale =
+        `Exact geometry would be ${ratio.toFixed(1)}x larger than the embedded bitmap ` +
+        `(${formatCount(geometry.svg.length)} vs ${formatCount(smallest.svg.length)} bytes), ` +
+        `so the bitmap was used. Both are bit-exact; pass --prefer geometry to force real paths.`;
+    }
+  }
+
+  if (rejected.length > 0) {
+    notes.push(`Rejected ${rejected.length} candidate(s) that were not bit-exact: ${rejected.join('; ')}.`);
+  }
+  for (const c of exactOnes) {
+    if (c !== chosen) notes.push(`Alternative: ${c.label}, ${formatCount(c.svg.length)} bytes.`);
+  }
+  notes.push(`Verified bit-exact by rendering and comparing every pixel — ${chosen.label}.`);
+  if (rationale) notes.push(rationale);
+  else if (geometry && chosen === geometry && smallest !== geometry) {
+    notes.push('Kept real geometry over the smaller embedded bitmap; pass --prefer size to invert that.');
+  }
+
+  return {
+    svg: chosen.svg,
+    width: input.image.width,
+    height: input.image.height,
+    mode: chosen.mode,
+    shapes: chosen.shapes,
+    colors: chosen.colors,
+    lossless: true,
+    quality: chosen.report,
+    notes,
+    elapsedMs: 0,
+    settled: chosen.settled,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -509,4 +704,15 @@ function stripUndefined<T extends object>(obj: T): Partial<T> {
     if (v !== undefined) (out as Record<string, unknown>)[k] = v;
   }
   return out;
+}
+
+/**
+ * Group digits the same way everywhere.
+ *
+ * `toLocaleString()` follows the machine's locale, so the same build prints
+ * "236,034" on one developer's box and "2,36,034" on another's. Diagnostic
+ * output should not depend on where it runs.
+ */
+function formatCount(n: number): string {
+  return n.toLocaleString('en-US');
 }

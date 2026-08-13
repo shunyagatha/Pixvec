@@ -104,6 +104,10 @@ try {
     { label: 'Photo, 320×240', img: photoLike(320, 240), format: 'jpeg', opts: { mode: 'embed' }, note: 'embed' },
     { label: 'Photo, 320×240', img: photoLike(320, 240), format: 'jpeg', opts: {}, note: 'trace auto' },
     { label: 'Photo, 320×240', img: photoLike(320, 240), format: 'jpeg', opts: { preset: 'photo' }, note: 'trace --preset photo' },
+    // The lossless guarantee: every one of these must come back PSNR ∞.
+    { label: 'Flat artwork, 400×300', img: flatArtwork(400, 300), format: 'png', opts: { mode: 'lossless' }, note: 'lossless' },
+    { label: 'Pixel art sprite, 128×128', img: pixelArt(16), format: 'png', opts: { mode: 'lossless' }, note: 'lossless' },
+    { label: 'Photo, 320×240', img: photoLike(320, 240), format: 'jpeg', opts: { mode: 'lossless' }, note: 'lossless' },
   ];
 
   for (const [i, c] of cases.entries()) {
@@ -144,7 +148,8 @@ if (asJson) {
   console.log('|---|---|--:|--:|--:|--:|--:|--:|');
   for (const r of results) {
     console.log(
-      `| ${r.input} | \`${r.mode}\` | ${kb(r.inputBytes)} | ${kb(r.outputBytes)} | ` +
+      `| ${r.input} | \`${r.mode}\`${r.mode === 'lossless' ? ` → ${r.resolvedMode}` : ''} | ` +
+      `${kb(r.inputBytes)} | ${kb(r.outputBytes)} | ` +
       `${(r.exactRatio * 100).toFixed(2)}% | ${Number.isFinite(r.psnr) ? `${r.psnr.toFixed(2)} dB` : '∞'} | ` +
       `${r.ssim.toFixed(4)} | ${r.deltaEMean.toFixed(3)} |`,
     );

@@ -56,7 +56,10 @@ describe('vectorize mode selection', () => {
 
     expect(result.mode).toBe('embed');
     expect(result.lossless).toBe(true);
-    expect(result.notes.join(' ')).toMatch(/too photographic/);
+    // The choice is explained with the actual measured sizes rather than a
+    // heuristic guess about the kind of image this is.
+    expect(result.notes.join(' ')).toMatch(/larger than the embedded bitmap/);
+    expect(result.notes.join(' ')).toMatch(/Both are bit-exact/);
   });
 
   it('uses pixel mode when lossless is demanded of flat artwork', async () => {

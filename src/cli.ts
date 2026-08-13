@@ -11,6 +11,7 @@ import { decodeRaster, looksLikeSvg } from './io/decode.js';
 import { formatFromExtension } from './io/encode.js';
 import { baseDirFor, rasterizeSvg } from './io/rasterize.js';
 import { compareImages } from './metrics/index.js';
+import { extractEmbedded } from './vectorize/embed.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,9 @@ interface VectorizeCliOptions {
   targetPsnr?: number;
   maxColors?: number;
   maxSteps?: number;
+  lossless?: boolean;
+  prefer?: string;
+  maxGeometryRatio?: number;
   verify?: boolean;
   embedStrategy: string;
   xlink?: boolean;
@@ -175,8 +179,10 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
   const outPath = o.output ?? defaultOutput(input, '.svg');
 
   const result = await vectorize(source, {
-    mode: o.mode as never,
+    mode: (o.lossless ? 'lossless' : o.mode) as never,
     preset: o.preset as never,
+    losslessPrefer: o.prefer as never,
+    maxGeometryRatio: o.maxGeometryRatio,
     verify: o.verify,
     targetSsim: o.targetSsim,
     targetPsnr: o.targetPsnr,
@@ -270,6 +276,18 @@ async function runRasterize(input: string, o: RasterizeCliOptions): Promise<void
     : formatFromExtension(extname(outPath)) ?? 'png';
   if (!format) fail(`Unsupported output format: ${o.format ?? extname(outPath)}`);
 
+  // A lossless request must not be quietly defeated by the container. JPEG has
+  // no lossless mode at all, and GIF caps out at 256 colours, so asking either
+  // of them for an exact result is a contradiction worth reporting rather than
+  // silently honouring halfway.
+  if (o.lossless && (format === 'jpeg' || format === 'gif')) {
+    fail(
+      `--lossless cannot be honoured by ${format}: ` +
+        `${format === 'jpeg' ? 'JPEG has no lossless mode' : 'GIF is limited to 256 colours'}. ` +
+        `Use PNG, or WebP/AVIF with --lossless.`,
+    );
+  }
+
   const outcome = await rasterize(
     bytes,
     {
@@ -292,10 +310,19 @@ async function runRasterize(input: string, o: RasterizeCliOptions): Promise<void
         background: o.background,
       },
     },
-    o.verify,
+    o.verify || o.lossless,
   );
 
   await writeOutput(outPath, outcome.buffer);
+
+  // A verified --lossless run must actually be lossless.
+  if (o.lossless && outcome.quality && !outcome.quality.lossless) {
+    const differing = outcome.quality.pixels - outcome.quality.exactPixels;
+    fail(
+      `--lossless was requested but the ${format} encoder changed ${differing} pixel(s) ` +
+        `(max ${outcome.quality.maxChannelDiff}/255).`,
+    );
+  }
 
   if (o.json) {
     emitJson({
@@ -384,6 +411,91 @@ async function runVerify(a: string, b: string, o: VerifyCliOptions): Promise<voi
     );
     process.exit(2);
   }
+}
+
+// ---------------------------------------------------------------------------
+// extract
+// ---------------------------------------------------------------------------
+
+interface ExtractCliOptions {
+  output?: string;
+  against?: string;
+  json?: boolean;
+}
+
+/**
+ * Recover the bitmap embedded by `embed` mode.
+ *
+ * This is the other half of a byte-identical round trip: `vectorize --lossless`
+ * can carry the original file inside the SVG untouched, and this hands it back.
+ * The digest recorded at write time turns "should be the same file" into
+ * something checkable.
+ */
+async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
+  const svg = (await readInput(input)).toString('utf8');
+  const payload = extractEmbedded(svg);
+
+  if (!payload) {
+    fail(
+      `${basename(input)} contains no embedded bitmap. ` +
+        `Only SVGs written by embed mode carry one.`,
+    );
+  }
+
+  const outPath = o.output ?? defaultOutput(input, `.${payload.extension}`);
+  await writeOutput(outPath, payload.bytes);
+
+  // Compare against the true original when the caller can supply it.
+  let matchesSource: boolean | undefined;
+  if (o.against) {
+    const original = await readInput(o.against);
+    matchesSource = original.equals(payload.bytes);
+  }
+
+  if (o.json) {
+    emitJson({
+      input, output: outPath, mime: payload.mime,
+      bytes: payload.bytes.length,
+      sha256: payload.actualSha256,
+      recordedSha256: payload.recordedSha256 ?? null,
+      digestVerified: payload.verified,
+      isOriginalFile: payload.isOriginal,
+      matchesSource: matchesSource ?? null,
+    });
+    if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exit(2);
+    return;
+  }
+
+  info(
+    `${green('✓')} ${bold(basename(outPath))}  ${dim(`${payload.mime}  ${formatBytes(payload.bytes.length)}`)}`,
+  );
+  info(`  ${dim('sha256')}   ${payload.actualSha256}`);
+
+  if (payload.recordedSha256) {
+    info(
+      payload.verified
+        ? `  ${dim('digest')}   ${green('matches the value recorded when the SVG was written')}`
+        : `  ${dim('digest')}   ${red('MISMATCH')} — recorded ${payload.recordedSha256}`,
+    );
+  } else {
+    info(`  ${dim('digest')}   ${dim('no recorded digest; nothing to check against')}`);
+  }
+
+  info(
+    payload.isOriginal
+      ? `  ${dim('payload')}  ${green('the original file, preserved byte for byte')}`
+      : `  ${dim('payload')}  re-encoded from the source pixels (not the original bytes)`,
+  );
+
+  if (matchesSource !== undefined) {
+    info(
+      matchesSource
+        ? `  ${dim('vs source')} ${green('byte-identical to ' + basename(o.against!))}`
+        : `  ${dim('vs source')} ${red('differs from ' + basename(o.against!))}`,
+    );
+  }
+
+  if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exit(2);
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +639,17 @@ program
   .option('--target-psnr <db>', 'escalate settings until PSNR reaches this', floatArg('--target-psnr', 0, 200))
   .option('--max-colors <n>', 'palette ceiling during refinement', intArg('--max-colors', 2, 256))
   .option('--max-steps <n>', 'refinement attempts', intArg('--max-steps', 1, 12))
+  .option('-l, --lossless', 'guarantee a bit-exact result, or fail (same as --mode lossless)')
+  .addOption(
+    new Option('--prefer <what>', 'what lossless optimises for once exactness is assured')
+      .choices(['auto', 'geometry', 'size'])
+      .default('auto'),
+  )
+  .option(
+    '--max-geometry-ratio <n>',
+    'how much larger real geometry may be than the alternative under --prefer auto',
+    floatArg('--max-geometry-ratio', 1, 1000),
+  )
   .option('--verify', 'render the result and measure it against the input')
   .addOption(
     new Option('--embed-strategy <s>', 'payload handling for embed mode')
@@ -620,6 +743,15 @@ program
   .option('--fail-under <ssim>', 'exit non-zero if SSIM falls below this', floatArg('--fail-under', 0, 1))
   .option('--json', 'machine-readable output')
   .action(runVerify);
+
+program
+  .command('extract')
+  .description('Recover the original bitmap embedded in an SVG, and prove it is unchanged')
+  .argument('<input.svg>')
+  .option('-o, --output <file>', 'output path (defaults to the recorded media type)')
+  .option('--against <file>', 'also compare byte-for-byte against this file')
+  .option('--json', 'machine-readable output')
+  .action(runExtract);
 
 program
   .command('info')

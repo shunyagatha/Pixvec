@@ -22,6 +22,53 @@ Accuracy  bit-exact (lossless)
 
 ---
 
+## The lossless guarantee
+
+```bash
+pixvec vectorize anything.png --lossless
+```
+
+`--lossless` returns a **bit-exact** SVG or it **fails**. It never silently gives you a near-miss.
+
+That is enforced by measurement, not by construction. Every candidate encoding is rendered back to pixels and compared against the source; anything that is not bit-identical is discarded, and if nothing survives, the command errors out. Candidates are tried in order of how useful the result is:
+
+1. **Exact geometry** — real, editable, infinitely scalable paths. Rectangles or contours, whichever encodes smaller.
+2. **Embed, original bytes preserved** — a **byte-identical** round trip of the source *file*, not just of its pixels.
+3. **Embed, re-encoded as PNG** — always renders exactly, but no longer carries the original file.
+
+Measured across every fixture in the test suite — flat artwork, pixel art, soft alpha, photographs, JPEG sources, a single pixel — all of them come back `PSNR ∞`, `maxChannelDiff 0`.
+
+### Byte-identical, and provable
+
+When the original file is preserved, the SVG records its SHA-256. `extract` hands the file back and checks the digest:
+
+```bash
+pixvec vectorize logo.png -o keep.svg --mode embed --embed-strategy preserve
+pixvec extract keep.svg -o recovered.png --against logo.png
+```
+
+```
+✓ recovered.png  image/png  2.1 KB
+  sha256   1c4f95f66b28a40a75672614796de762f6ef8a6afec3191b460dbbd556f10366
+  digest   matches the value recorded when the SVG was written
+  payload  the original file, preserved byte for byte
+  vs source byte-identical to logo.png
+```
+
+`extract` exits non-zero on any mismatch, so it works as a CI gate. Note the honest caveat: an *embedded JPEG* survives byte for byte but does **not** render bit-identically, because resvg's decoder rounds its inverse DCT differently. Strict `--lossless` detects that, discards the candidate, and says so.
+
+### Which one you get
+
+| Input | Result | Size | Exact? |
+|---|---|--:|:--:|
+| Flat artwork 400×300 | real geometry (contours) | 3.9 KB | ✅ |
+| Pixel art 128×128 | real geometry (rectangles) | 0.6 KB | ✅ |
+| `favicon.ico` 64×64 | real geometry (rectangles) | 0.5 KB | ✅ |
+| BMP 400×300 | real geometry (contours) | 3.9 KB | ✅ |
+| Photo 320×240 | embedded PNG | 230 KB | ✅ |
+
+A photograph *can* be emitted as exact geometry, and `--prefer geometry` will do it — but it costs one rectangle per pixel, so that same photo becomes a 1.99 MB file of 42,933 shapes. It is vector in name only, so `auto` uses the bitmap and tells you the ratio it measured. Nothing is hidden.
+
 ## The honest version of "100% accuracy"
 
 Most vectorizers claim perfect accuracy. Here is what is actually true, because it determines which tool you should use:
@@ -38,11 +85,12 @@ Anyone promising exact photo-to-curves vectorization is either embedding a bitma
 
 | Mode | Output | Exact? | Use it for |
 |---|---|---|---|
-| **`pixel`** | Real vector geometry (`<path>` rectangles) | **Bit-exact** | Logos, icons, pixel art, screenshots, diagrams, flat colour |
+| **`lossless`** | Real geometry, or an embedded bitmap | **Bit-exact, verified** | Anything, when exactness is non-negotiable |
+| **`pixel`** | Real vector geometry (rectangles or contours) | **Bit-exact** | Logos, icons, pixel art, screenshots, diagrams, flat colour |
 | **`trace`** | Real Bézier curves | Approximate, measured | Photos, complex art, anything you want to *scale* or *edit* |
 | **`embed`** | Bitmap inside an SVG wrapper | **Bit-exact** | You need this exact image, in an SVG container |
 
-`auto` (the default) inspects the image and picks between `pixel` and `trace`. `--mode lossless` guarantees exactness, preferring real geometry and falling back to `embed` only when the image is too photographic.
+`auto` (the default) inspects the image and picks between `pixel` and `trace`. `--lossless` overrides everything with the guarantee described above.
 
 **`pixel` mode is the one people don't expect.** It produces genuine, editable, infinitely-scalable vector paths that rasterise back to your input with **zero** differing pixels — not "visually identical", literally identical. For flat artwork it is usually what you actually wanted.
 
@@ -95,8 +143,8 @@ pixvec vectorize logo.png
 # Prove the result is what it claims
 pixvec vectorize logo.png --verify
 
-# Guarantee a bit-exact result whatever the input
-pixvec vectorize photo.jpg --mode lossless
+# Guarantee a bit-exact result whatever the input, or fail
+pixvec vectorize photo.jpg --lossless
 
 # Trace to curves, escalating settings until it hits a quality target
 pixvec vectorize portrait.jpg --target-ssim 0.95
@@ -127,6 +175,9 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 | Photo, 320×240 | `embed` | 14.5 KB | 19.6 KB | 87.94% | 58.04 dB | 0.9982 | 0.060 |
 | Photo, 320×240 | `trace` auto | 14.5 KB | 37.0 KB | 0.01% | 26.70 dB | 0.8312 | 4.874 |
 | Photo, 320×240 | `trace --preset photo` | 14.5 KB | 53.4 KB | 0.01% | 29.73 dB | 0.7770 | 3.173 |
+| Flat artwork, 400×300 | `lossless` → `pixel` | 2.1 KB | 3.9 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
+| Pixel art sprite, 128×128 | `lossless` → `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
+| Photo, 320×240 | `lossless` → `embed` | 14.5 KB | 230.5 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 
 Two rows deserve comment, because glossing over them is how tools mislead you:
 
@@ -179,6 +230,9 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | Option | Description |
 |---|---|
 | `-o, --output <file>` | Output path (default `<input>.svg`) |
+| `-l, --lossless` | guarantee a bit-exact result, or fail |
+| `--prefer <what>` | `auto` (default), `geometry`, `size` — what lossless optimises for |
+| `--max-geometry-ratio <n>` | how much larger real geometry may be under `--prefer auto` (default 4) |
 | `-m, --mode <mode>` | `auto`, `lossless`, `pixel`, `trace`, `embed` |
 | `-p, --preset <preset>` | `logo`, `lineart`, `poster`, `photo`, `detailed`, `pixelart`, `exact` |
 | `-c, --colors <n>` | Palette size, 1–256 |
@@ -216,6 +270,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 ### Other commands
 
 ```bash
+pixvec extract keep.svg -o out.png --against original.png   # byte-identical recovery
 pixvec convert in.png out.svg      # direction inferred from extensions
 pixvec verify a.png b.svg          # measure any two images
 pixvec info file.png               # inspect and recommend a strategy
