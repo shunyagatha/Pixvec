@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import type { RasterImage, SourceMeta } from '../types.js';
+import { decodeFallback, decodeTgaFallback, type FallbackResult } from './formats/index.js';
 
 export interface DecodeOptions {
   /**
@@ -57,13 +58,26 @@ export async function decodeRaster(
 
   const { applyOrientation = true, limitInputPixels = false } = opts;
 
+  // Formats libvips was not built with are handled in pure TypeScript. They are
+  // identified by signature first, because libvips would otherwise reject them
+  // with a generic "unsupported image format" that says nothing useful.
+  const fallback = decodeFallback(bytes);
+  if (fallback) return finishFallback(fallback, bytes, opts);
+
   const base = () => sharp(bytes, { limitInputPixels, unlimited: true, animated: false });
 
   let raw: sharp.Metadata;
   try {
     raw = await base().metadata();
   } catch (err) {
-    throw new Error(`Could not read image metadata: ${(err as Error).message}`);
+    // TGA carries no leading signature, so it only gets a turn once a real
+    // codec has declined — guessing earlier risks misreading another format.
+    const tga = decodeTgaFallback(bytes);
+    if (tga) return finishFallback(tga, bytes, opts);
+    throw new Error(
+      `Could not read image metadata: ${(err as Error).message}. ` +
+        `Supported inputs: PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM/PPM, TGA.`,
+    );
   }
 
   let pipeline = base();
@@ -101,4 +115,51 @@ export async function decodeRaster(
   };
 
   return { image, meta, bytes };
+}
+
+/**
+ * Finish a pure-TypeScript decode, delegating embedded PNG/JPEG payloads.
+ *
+ * A BMP with `BI_PNG` compression, or the 256×256 entry of a modern icon, holds
+ * a complete PNG rather than raw pixels. Re-implementing a PNG decoder to reach
+ * it would be absurd when libvips is already loaded, so those bytes are simply
+ * passed back through the normal path.
+ */
+async function finishFallback(
+  result: FallbackResult,
+  original: Buffer,
+  opts: DecodeOptions,
+): Promise<Decoded> {
+  if (result.delegate) {
+    const inner = await decodeRaster(result.delegate.bytes, opts);
+    return {
+      image: inner.image,
+      // Report the container the user actually handed us, not what was inside it.
+      meta: { ...inner.meta, format: result.format, bytes: original.byteLength },
+      bytes: original,
+    };
+  }
+
+  const image = result.image!;
+  let hasAlpha = false;
+  for (let o = 3; o < image.data.length; o += 4) {
+    if (image.data[o] !== 255) { hasAlpha = true; break; }
+  }
+
+  return {
+    image,
+    meta: {
+      format: result.format,
+      width: image.width,
+      height: image.height,
+      channels: hasAlpha ? 4 : 3,
+      depth: result.channelDepth > 8 ? 'ushort' : 'uchar',
+      hasAlpha,
+      space: 'srgb',
+      hasProfile: false,
+      frames: 1,
+      bytes: original.byteLength,
+    },
+    bytes: original,
+  };
 }

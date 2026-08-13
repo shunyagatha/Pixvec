@@ -1,6 +1,6 @@
 # Pixvec
 
-**Measurable raster ⇄ SVG conversion.** PNG, JPEG, WebP, AVIF, TIFF and GIF to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
+**Measurable raster ⇄ SVG conversion.** Ten raster formats to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
 
 [![CI](https://github.com/shunyagatha/pixvec/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/pixvec/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -65,6 +65,26 @@ npm install -g github:shunyagatha/pixvec
 ```
 
 Requires Node.js 18.17+. Native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows, so no compiler toolchain is needed.
+
+## Formats
+
+| | Read | Write |
+|---|---|---|
+| **PNG** | ✅ | ✅ |
+| **JPEG** | ✅ | ✅ |
+| **WebP** | ✅ | ✅ (lossy + lossless) |
+| **AVIF** | ✅ | ✅ (lossy + lossless) |
+| **TIFF** | ✅ | ✅ |
+| **GIF** | ✅ (first frame) | ✅ |
+| **BMP** | ✅ all depths, RLE, BITFIELDS | — |
+| **ICO / CUR** | ✅ picks the largest entry | — |
+| **PNM** (PBM/PGM/PPM) | ✅ P1–P6 | — |
+| **TGA** | ✅ incl. RLE and colour-mapped | — |
+| **SVG** | ✅ (as the rasterize input) | ✅ |
+
+BMP, ICO, PNM and TGA are decoded in pure TypeScript — libvips is not built with them, and each is simple and stable enough to implement completely rather than adding another native dependency. All four are lossless formats, so the test suite asserts **bit-exact** decoding rather than approximate agreement.
+
+**Not supported:** HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW. Each needs a patent-encumbered or heavyweight native codec, and shipping one would cost every user a large binary for a format most of them never touch. Convert those with ImageMagick or `libheif` first.
 
 ## Quick start
 
@@ -245,6 +265,8 @@ Stated plainly, because you should know before you invest:
 - **16-bit sources are reduced to 8 bit** for `pixel` and `trace`, because SVG paint servers cannot express more. `embed` with `--embed-strategy preserve` keeps the original bit depth intact.
 - **Animation is not supported.** Multi-frame inputs use the first frame.
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
+- **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW do not decode.** See [Formats](#formats).
+- **This has not been benchmarked against potrace, vtracer or Illustrator.** The accuracy numbers here are measured against the *input*, which is the meaningful comparison for lossless modes but says nothing about whether the tracer beats the alternatives. Treat "best" as unproven.
 
 ## Contributing
 

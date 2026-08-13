@@ -501,7 +501,7 @@ program
 program
   .command('vectorize')
   .alias('trace')
-  .description('Convert a raster image (PNG, JPEG, WebP, AVIF, TIFF, GIF) to SVG')
+  .description('Convert a raster image (PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM, TGA) to SVG')
   .argument('<input>', 'source image')
   .option('-o, --output <file>', 'output path (defaults to <input>.svg)')
   .addOption(

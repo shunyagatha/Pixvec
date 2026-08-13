@@ -38,6 +38,25 @@ export {
   type RasterizeResult,
 } from './io/rasterize.js';
 
+export {
+  decodeBmp,
+  decodeIco,
+  decodePnm,
+  decodeTga,
+  decodeFallback,
+  decodeTgaFallback,
+  sniffFallbackFormat,
+  listIcoEntries,
+  isBmp,
+  isIco,
+  isPnm,
+  isTga,
+  type FallbackFormat,
+  type SignatureFormat,
+  type FallbackResult,
+  type IcoEntry,
+} from './io/formats/index.js';
+
 export { compareImages, ssimPlane, type CompareOptions } from './metrics/index.js';
 
 export { vectorizePixels, countDistinctColors, dominantColor, type PixelVectorizeOptions, type PixelVectorizeOutput } from './vectorize/pixel.js';
