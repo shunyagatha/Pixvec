@@ -1,6 +1,6 @@
 {
   "name": "pixvec",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Measurable raster <-> SVG conversion. Pixel-exact lossless vectorization, quality-targeted Bezier tracing, and exact SVG rasterization - with built-in PSNR/SSIM/CIEDE2000 verification. Reads PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM and TGA.",
   "keywords": [
     "svg",
@@ -24,7 +24,15 @@
     "tga",
     "ppm",
     "netpbm",
-    "image-decoder"
+    "image-decoder",
+    "typescript",
+    "browser",
+    "image-processing",
+    "image-conversion",
+    "raster-to-vector",
+    "avif",
+    "webp",
+    "image-editing"
   ],
   "license": "MIT",
   "repository": {

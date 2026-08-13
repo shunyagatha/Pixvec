@@ -2,7 +2,10 @@
 
 **Measurable raster ⇄ SVG conversion.** Eleven formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted.
 
+[![npm version](https://img.shields.io/npm/v/pixvec.svg)](https://www.npmjs.com/package/pixvec)
+[![npm downloads](https://img.shields.io/npm/dm/pixvec.svg)](https://www.npmjs.com/package/pixvec)
 [![CI](https://github.com/shunyagatha/Pixvec/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/Pixvec/actions/workflows/ci.yml)
+[![types](https://img.shields.io/npm/types/pixvec.svg)](https://www.npmjs.com/package/pixvec)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 

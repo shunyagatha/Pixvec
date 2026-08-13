@@ -198,4 +198,4 @@ export {
 } from './codecs.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.3.2';
+export const VERSION = '1.3.3';
