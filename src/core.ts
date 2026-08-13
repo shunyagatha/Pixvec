@@ -123,9 +123,12 @@ export {
   quantize,
   quantizeAlpha,
   NearestColor,
+  extractPalette,
+  paletteToCssVars,
   type Palette,
   type QuantizeOptions,
   type FillStrategy,
+  type PaletteEntry,
 } from './vectorize/quantize.js';
 
 export {
@@ -212,5 +215,8 @@ export {
 // --- SVG → framework component codegen (pure) ------------------------------
 export { toComponent, type Framework, type ComponentOptions } from './emit/component.js';
 
+// --- Lazy-load placeholders (pure) -----------------------------------------
+export { blurHash, lqipSvg, type LqipOptions } from './placeholder/index.js';
+
 /** Version of the package this build came from. */
-export const VERSION = '1.6.0';
+export const VERSION = '1.7.0';

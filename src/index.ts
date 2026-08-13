@@ -47,6 +47,20 @@ export {
   type ExtractedPayload,
 } from './vectorize/embed.js';
 
+// --- Asset pipelines (need the resize/encode path, so Node-only) -----------
+export {
+  faviconSet,
+  type FaviconOptions,
+  type FaviconSet,
+  type GeneratedFile,
+} from './pipelines/favicon.js';
+export {
+  responsiveSet,
+  type ResponsiveOptions,
+  type ResponsiveSet,
+  type ResponsiveVariant,
+} from './pipelines/responsive.js';
+
 // --- Orchestration, including the verified lossless guarantee --------------
 export {
   PRESETS,

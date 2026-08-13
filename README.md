@@ -397,14 +397,19 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 ```bash
 pixvec edit photo.jpg -o small.png --resize 800x --grayscale  # resize, rotate, crop, tone
 pixvec component logo.png -o Logo.tsx -f react --current-color # raster → typed component
+pixvec favicon logo.png -o public/    # full favicon/PWA set + manifest + <head> HTML
+pixvec responsive hero.jpg -o img/    # AVIF/WebP/fallback ladder + <picture> markup
+pixvec placeholder hero.jpg -f blurhash   # BlurHash string (or -f svg for a tiny LQIP-SVG)
+pixvec palette art.png --css          # perceptual palette as CSS custom properties
 pixvec extract keep.svg -o out.png --against original.png   # byte-identical recovery
 pixvec convert in.png out.svg      # direction inferred from extensions
 pixvec verify a.png b.svg          # measure any two images
-pixvec info file.png               # inspect and recommend a strategy
 pixvec batch 'src/**/*.png' -o out/ --to svg
 ```
 
 `pixvec component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours.
+
+The **asset pipelines** close the loop to what web devs deploy: `pixvec favicon` writes a complete favicon/PWA icon set (multi-size `.ico`, Apple touch icon, 192/512 + maskable PNGs), a `manifest.webmanifest`, and the `<head>` markup from one source; `pixvec responsive` writes an AVIF/WebP/fallback width-ladder with ready `<picture>`/`srcset` markup; `pixvec placeholder` emits a **BlurHash** string or a tiny **LQIP-SVG** (a zero-binary SQIP successor) for blur-up loading; and `pixvec palette` extracts a perceptual dominant-colour palette as JSON or CSS custom properties. All are pure-TS where they can be (`blurHash`, `lqipSvg`, `extractPalette` live in `pixvec/core`).
 
 `pixvec edit` wraps sharp's pipeline behind one command, in a fixed, sensible order (geometry → tone → colour → morphology → compositing → finish): `--resize`/`--fit`, `--rotate`, `--flip`/`--flop`, `--crop`, `--trim`; `--blur`, `--sharpen`, `--median`, `--clahe <WxH>`, `--gamma`, `--normalize`; `--grayscale`, `--negate`, `--sepia`, `--tint <color>`, `--threshold <0-255>`, `--brightness`/`--saturation`/`--hue`/`--lightness`; `--dilate`/`--erode`; `--unflatten`; `-b, --background` to flatten. Arbitrary affine warps, edge padding (`extend`), per-channel `linear` levels, custom `convolve` kernels, 3×3 `recomb`, and multi-image `composite` are available on the `pixvec/ops` library entry point. It is Node-only (needs sharp) and ships as its own subpath so browser and edge bundles never pull it in.
 

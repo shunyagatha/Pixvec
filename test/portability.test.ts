@@ -25,6 +25,7 @@ const CORE_MODULES = [
   'svg/path.ts',
   'svg/build.ts',
   'emit/component.ts',
+  'placeholder/index.ts',
   'metrics/index.ts',
   'metrics/ssim.ts',
   'vectorize/quantize.ts',
@@ -123,6 +124,7 @@ describe('pixvec/core portability', () => {
       'index.ts', 'api.ts', 'cli.ts', 'ops.ts',
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts',
       'vectorize/embed.ts',
+      'pipelines/favicon.ts', 'pipelines/responsive.ts',
     ]);
     const unclassified = found.filter((f) => !nodeOnly.has(f) && !CORE_MODULES.includes(f));
     expect(unclassified).toEqual([]);

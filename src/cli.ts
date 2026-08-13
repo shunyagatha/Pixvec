@@ -16,6 +16,10 @@ import { bytesEqual } from './io/formats/bytes.js';
 import { removeBackground, type RemoveBackgroundOptions } from './background.js';
 import { editImage, hasOps, type OpsChain } from './ops.js';
 import { toComponent, type Framework } from './emit/component.js';
+import { faviconSet } from './pipelines/favicon.js';
+import { responsiveSet } from './pipelines/responsive.js';
+import { blurHash, lqipSvg } from './placeholder/index.js';
+import { extractPalette, paletteToCssVars } from './vectorize/quantize.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -889,6 +893,87 @@ async function runComponent(input: string, o: ComponentCliOptions): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// favicon / responsive / placeholder / palette
+// ---------------------------------------------------------------------------
+
+async function runFavicon(
+  input: string,
+  o: { outDir: string; name: string; themeColor: string; backgroundColor: string; json?: boolean },
+): Promise<void> {
+  const source = await loadRaster(await readInput(input));
+  const set = await faviconSet(source.image, {
+    name: o.name, themeColor: o.themeColor, backgroundColor: o.backgroundColor,
+  });
+  await mkdir(o.outDir, { recursive: true });
+  for (const f of set.files) await writeFile(join(o.outDir, f.name), f.bytes);
+  await writeFile(join(o.outDir, 'favicon.html'), set.html);
+
+  if (o.json) {
+    emitJson({ input, outDir: o.outDir, files: set.files.map((f) => f.name), html: set.html });
+    return;
+  }
+  info(`${green('✓')} ${bold(`${set.files.length} icon files`)} ${dim(`→ ${o.outDir}`)}`);
+  for (const f of set.files) info(`  ${dim('·')} ${f.name}  ${dim(formatBytes(f.bytes.length))}`);
+  info(`\n${dim('Paste into <head>:')}\n${set.html}`);
+}
+
+async function runResponsive(
+  input: string,
+  o: { outDir: string; widths: string; formats: string; quality: number; alt: string; json?: boolean },
+): Promise<void> {
+  const source = await loadRaster(await readInput(input));
+  const widths = o.widths.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => n > 0);
+  const formats = o.formats.split(',').map((s) => s.trim()).filter(Boolean) as RasterFormat[];
+  const set = await responsiveSet(source.image, {
+    widths, formats, quality: o.quality, alt: o.alt, name: basename(input, extname(input)),
+  });
+  await mkdir(o.outDir, { recursive: true });
+  for (const v of set.variants) await writeFile(join(o.outDir, v.name), v.bytes);
+
+  if (o.json) {
+    emitJson({ input, outDir: o.outDir, variants: set.variants.map((v) => ({ name: v.name, width: v.width, bytes: v.bytes.length })), html: set.html });
+    return;
+  }
+  info(`${green('✓')} ${bold(`${set.variants.length} variants`)} ${dim(`→ ${o.outDir}`)}`);
+  info(`\n${dim('Markup:')}\n${set.html}`);
+}
+
+async function runPlaceholder(
+  input: string,
+  o: { format: 'blurhash' | 'svg'; output?: string; json?: boolean },
+): Promise<void> {
+  const source = await loadRaster(await readInput(input));
+  const value = o.format === 'svg' ? lqipSvg(source.image) : blurHash(source.image);
+
+  if (o.output) await writeOutput(o.output, value);
+  if (o.json) {
+    emitJson({ input, format: o.format, value, bytes: Buffer.byteLength(value) });
+    return;
+  }
+  if (o.output) info(`${green('✓')} ${bold(basename(o.output))}  ${dim(`${o.format}  ${formatBytes(Buffer.byteLength(value))}`)}`);
+  else process.stdout.write(`${value}\n`);
+}
+
+async function runPalette(
+  input: string,
+  o: { colors: number; css?: boolean; json?: boolean },
+): Promise<void> {
+  const source = await loadRaster(await readInput(input));
+  const palette = extractPalette(source.image, o.colors);
+
+  if (o.json) {
+    emitJson({ input, palette });
+    return;
+  }
+  if (o.css) {
+    process.stdout.write(paletteToCssVars(palette));
+    return;
+  }
+  info(`${bold(basename(input))}  ${dim(`${palette.length} colours`)}`);
+  for (const e of palette) info(`  ${e.hex}  ${dim(`${(e.weight * 100).toFixed(1)}%`)}`);
+}
+
+// ---------------------------------------------------------------------------
 // info
 // ---------------------------------------------------------------------------
 
@@ -1182,6 +1267,49 @@ program
   .option('--js', 'emit JavaScript instead of TypeScript')
   .option('--json', 'machine-readable output on stdout')
   .action(runComponent);
+
+program
+  .command('favicon')
+  .description('Generate a full favicon / PWA icon set + manifest + <head> HTML from one image')
+  .argument('<input>', 'source image (square works best)')
+  .option('-o, --out-dir <dir>', 'output directory', '.')
+  .option('-n, --name <name>', 'app name for the manifest', 'App')
+  .option('--theme-color <color>', 'manifest theme_color', '#ffffff')
+  .option('--background-color <color>', 'manifest background_color', '#ffffff')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runFavicon);
+
+program
+  .command('responsive')
+  .description('Generate a responsive image variant set (AVIF/WebP/fallback) + <picture> markup')
+  .argument('<input>', 'source image')
+  .option('-o, --out-dir <dir>', 'output directory', '.')
+  .option('--widths <list>', 'comma-separated target widths', '320,640,960,1280')
+  .option('--formats <list>', 'comma-separated formats, best first', 'avif,webp,jpeg')
+  .option('-q, --quality <n>', 'lossy quality', intArg('--quality', 1, 100), 74)
+  .option('--alt <text>', 'alt text for the <img>', '')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runResponsive);
+
+program
+  .command('placeholder')
+  .description('Generate a lazy-load placeholder: BlurHash string, ThumbHash-style, or a tiny LQIP-SVG')
+  .argument('<input>', 'source image')
+  .addOption(
+    new Option('-f, --format <fmt>', 'placeholder kind').choices(['blurhash', 'svg']).default('blurhash'),
+  )
+  .option('-o, --output <file>', 'write to a file (SVG); otherwise printed to stdout')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runPlaceholder);
+
+program
+  .command('palette')
+  .description('Extract a perceptual dominant-colour palette (JSON or CSS custom properties)')
+  .argument('<input>', 'source image')
+  .option('-c, --colors <n>', 'palette size', intArg('--colors', 1, 64), 6)
+  .option('--css', 'emit CSS custom properties instead of JSON')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runPalette);
 
 program
   .command('convert')

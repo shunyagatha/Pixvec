@@ -1,4 +1,4 @@
-import { oklabToSrgb, srgbToOklab } from '../color.js';
+import { oklabToSrgb, srgbToOklab, shortHex } from '../color.js';
 import type { RasterImage, Rgba } from '../types.js';
 
 /**
@@ -704,4 +704,50 @@ export function quantizeAlpha(img: RasterImage, maxLevels: number): Uint8Array {
   if (hist[0] > 0) levels.add(0);
   if (hist[255] > 0) levels.add(255);
   return Uint8Array.from([...levels].sort((x, y) => x - y));
+}
+
+/** One entry of an extracted palette, with its share of the image. */
+export interface PaletteEntry {
+  /** Short hex, e.g. `#e4002b`. */
+  hex: string;
+  rgb: Rgba;
+  /** Oklab coordinates, for perceptual sorting/pairing. */
+  oklab: [number, number, number];
+  /** Fraction of opaque pixels nearest to this colour, 0–1. */
+  weight: number;
+}
+
+/**
+ * Extract a perceptual dominant-colour palette — the Wu + Oklab-Lloyd quantiser
+ * pixvec already runs, exposed for theming, design tokens and placeholders.
+ * Entries come back most-used first.
+ */
+export function extractPalette(img: RasterImage, colors = 6): PaletteEntry[] {
+  const pal = quantize(img, colors, {});
+  const n = img.width * img.height;
+  const nearest = new NearestColor(pal, n);
+  const counts = new Float64Array(pal.count);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    if (img.data[o + 3] < 8) continue;
+    counts[nearest.index(img.data[o], img.data[o + 1], img.data[o + 2])]++;
+    total++;
+  }
+  const out: PaletteEntry[] = [];
+  for (let i = 0; i < pal.count; i++) {
+    out.push({
+      hex: shortHex(pal.rgb[i * 3], pal.rgb[i * 3 + 1], pal.rgb[i * 3 + 2]),
+      rgb: { r: pal.rgb[i * 3], g: pal.rgb[i * 3 + 1], b: pal.rgb[i * 3 + 2], a: 255 },
+      oklab: [pal.lab[i * 3], pal.lab[i * 3 + 1], pal.lab[i * 3 + 2]],
+      weight: total > 0 ? counts[i] / total : 0,
+    });
+  }
+  return out.sort((a, b) => b.weight - a.weight);
+}
+
+/** Render an extracted palette as CSS custom properties. */
+export function paletteToCssVars(palette: PaletteEntry[], prefix = '--color'): string {
+  const body = palette.map((e, i) => `  ${prefix}-${i + 1}: ${e.hex};`).join('\n');
+  return `:root {\n${body}\n}\n`;
 }
