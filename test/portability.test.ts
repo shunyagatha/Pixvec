@@ -24,6 +24,7 @@ const CORE_MODULES = [
   'core.ts',
   'svg/path.ts',
   'svg/build.ts',
+  'svg/optimize.ts',
   'emit/component.ts',
   'placeholder/index.ts',
   'io/export/geometry.ts',

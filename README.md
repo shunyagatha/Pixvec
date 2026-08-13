@@ -406,6 +406,7 @@ pixvec convert in.png out.svg      # direction inferred from extensions
 pixvec centerline drawing.png -o strokes.svg  # single-stroke medial-axis paths
 pixvec gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter G-code
 pixvec convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
+pixvec optimize icon.svg -o icon.min.svg   # render-preserving SVG minify
 pixvec verify a.png b.svg          # measure any two images
 pixvec batch 'src/**/*.png' -o out/ --to svg
 pixvec mcp                         # MCP server: expose pixvec as tools to AI agents/IDEs

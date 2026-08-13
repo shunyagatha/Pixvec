@@ -23,6 +23,7 @@ import { extractPalette, paletteToCssVars } from './vectorize/quantize.js';
 import { traceGeometry, toDxf, toEps, toPdf, toGcode } from './io/export/index.js';
 import { centerlineTrace, centerlinePolylines } from './vectorize/centerline.js';
 import { startMcpServer } from './mcp/server.js';
+import { optimizeSvg } from './svg/optimize.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -251,6 +252,7 @@ interface VectorizeCliOptions {
   gradients?: boolean;
   layers?: boolean;
   palette?: Rgba[];
+  minify?: boolean;
   precision?: number;
   background: boolean;
   targetSsim?: number;
@@ -350,8 +352,9 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
     },
   });
 
-  await writeOutput(outPath, result.svg);
-  const outSize = Buffer.byteLength(result.svg);
+  const svg = o.minify ? optimizeSvg(result.svg) : result.svg;
+  await writeOutput(outPath, svg);
+  const outSize = Buffer.byteLength(svg);
 
   if (o.json) {
     emitJson({
@@ -928,6 +931,30 @@ async function runComponent(input: string, o: ComponentCliOptions): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// optimize
+// ---------------------------------------------------------------------------
+
+async function runOptimize(
+  input: string,
+  o: { output?: string; precision: number; json?: boolean },
+): Promise<void> {
+  const bytes = await readInput(input);
+  if (!looksLikeSvg(bytes)) fail(`${input} is not an SVG.`);
+  const before = new TextDecoder().decode(bytes);
+  const after = optimizeSvg(before, { precision: o.precision });
+  const outPath = o.output ?? defaultOutput(input, '.min.svg');
+  await writeOutput(outPath, after);
+
+  const saved = Buffer.byteLength(before) - Buffer.byteLength(after);
+  const pct = ((saved / Buffer.byteLength(before)) * 100).toFixed(1);
+  if (o.json) {
+    emitJson({ input, output: outPath, before: Buffer.byteLength(before), after: Buffer.byteLength(after), savedPct: +pct });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${formatBytes(Buffer.byteLength(before))} → ${formatBytes(Buffer.byteLength(after))}  (−${pct}%)`)}`);
+}
+
+// ---------------------------------------------------------------------------
 // centerline
 // ---------------------------------------------------------------------------
 
@@ -1251,6 +1278,7 @@ program
   .option('--gradients', 'reconstruct smooth colour ramps as SVG gradients — de-bands photos, only where it measurably beats flat')
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
+  .option('--minify', 'minify the output SVG (render-preserving: round coords, strip defaults)')
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))
@@ -1395,6 +1423,16 @@ program
   .option('--min-length <px>', 'drop strokes shorter than this', floatArg('--min-length', 0, 1000), 3)
   .option('--json', 'machine-readable output on stdout')
   .action(runCenterline);
+
+program
+  .command('optimize')
+  .alias('minify')
+  .description('Minify an SVG (strip prologue/comments, round coordinates, drop defaults) — render-preserving')
+  .argument('<input>', 'source SVG')
+  .option('-o, --output <file>', 'output path (defaults to overwriting a copy)')
+  .option('--precision <n>', 'decimals to keep', intArg('--precision', 0, 8), 2)
+  .option('--json', 'machine-readable output on stdout')
+  .action(runOptimize);
 
 program
   .command('mcp')
