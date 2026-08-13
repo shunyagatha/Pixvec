@@ -47,8 +47,14 @@ export function framesToAnimatedSvg(frames: string[], opts: AnimateOptions = {})
   // renderer that ignores CSS animation (resvg, an `<img>` element, reduced
   // motion) shows frame 0 as the poster instead of a blank canvas. This matches
   // the animation's own t=0 state exactly, so nothing jumps when it starts.
+  //
+  // A negative delay of A advances the internal clock, so frame k is visible in
+  // wall-clock slot `(n − k) mod n`. To play *forward* (0, 1, 2, …) the delay
+  // must therefore be −((n − k) mod n)·D/n, NOT −k·D/n — the latter runs every
+  // frame after 0 in reverse, which is subtle because the poster still looks
+  // right and n = 2 happens to be symmetric.
   const delays = Array.from({ length: n }, (_, k) =>
-    `.pv-f${k}{animation-delay:${trim(-(k * duration) / n)}s${k === 0 ? ';opacity:1' : ''}}`).join('');
+    `.pv-f${k}{animation-delay:${trim((-((n - k) % n) * duration) / n)}s${k === 0 ? ';opacity:1' : ''}}`).join('');
 
   const reducedCss = reduced
     ? '@media(prefers-reduced-motion:reduce){.pv-f{animation:none}.pv-f0{opacity:1}}'

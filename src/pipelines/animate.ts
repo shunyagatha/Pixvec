@@ -115,6 +115,9 @@ function normaliseDelays(delay: number[] | undefined, pages: number): number[] {
 /** Evenly sample up to `max` frame indices from `pages` (all of them if uncapped). */
 function sampleIndices(pages: number, max?: number): number[] {
   if (!max || max >= pages) return Array.from({ length: pages }, (_, i) => i);
+  // A single requested frame has no interval to divide by — take a middle,
+  // representative frame rather than dividing by (max − 1) = 0.
+  if (max === 1) return [Math.round((pages - 1) / 2)];
   const out: number[] = [];
   for (let i = 0; i < max; i++) out.push(Math.round((i * (pages - 1)) / (max - 1)));
   return [...new Set(out)];

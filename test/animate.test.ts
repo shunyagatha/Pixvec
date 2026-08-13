@@ -25,10 +25,15 @@ describe('framesToAnimatedSvg', () => {
     expect(svg).toMatch(/\.pv-f0\{animation-delay:0s;opacity:1\}/);
   });
 
-  it('fans frames out with negative per-frame delays', () => {
+  it('fans frames out with negative delays that play FORWARD (0,1,2,…)', () => {
+    // With duration 3s over 3 frames, each slot is 1s. A negative delay of A
+    // advances the clock, so frame k shows in slot (n−k)%n. Forward playback
+    // therefore needs frame 1 at −2s (→ slot 1) and frame 2 at −1s (→ slot 2).
+    // The reverse (−1s, −2s) would run the animation backwards.
     const svg = framesToAnimatedSvg([frame('#f00'), frame('#0f0'), frame('#00f')], { duration: 3 });
-    expect(svg).toContain('.pv-f1{animation-delay:-1s');
-    expect(svg).toContain('.pv-f2{animation-delay:-2s');
+    expect(svg).toContain('.pv-f0{animation-delay:0s;opacity:1}');
+    expect(svg).toContain('.pv-f1{animation-delay:-2s');
+    expect(svg).toContain('.pv-f2{animation-delay:-1s');
   });
 
   it('guards prefers-reduced-motion by default', () => {
@@ -88,5 +93,15 @@ describe('traceAnimation', () => {
     const res = await traceAnimation(gif, { maxFrames: 2, trace: { colors: 8 } });
     expect(res.sourceFrames).toBe(4);
     expect(res.frames).toBe(2);
+  });
+
+  it('handles maxFrames:1 without dividing by zero', async () => {
+    const gif = await makeGif([[10, 10, 10], [120, 120, 120], [240, 240, 240]]);
+    const res = await traceAnimation(gif, { maxFrames: 1, trace: { colors: 8 } });
+    expect(res.sourceFrames).toBe(3);
+    expect(res.frames).toBe(1);
+    // A single frame collapses to a static SVG (no flipbook), never NaN.
+    expect(res.svg).not.toContain('NaN');
+    expect(res.svg).toContain('<svg');
   });
 });
