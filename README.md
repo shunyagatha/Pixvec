@@ -412,6 +412,20 @@ pixvec batch 'src/**/*.png' -o out/ --to svg
 pixvec mcp                         # MCP server: expose pixvec as tools to AI agents/IDEs
 ```
 
+**Build-time.** A Vite/Rollup plugin vectorises assets in your build — import an image with a query suffix and get the vector back, no CLI step:
+
+```ts
+// vite.config.ts
+import pixvec from 'pixvec/vite';
+export default { plugins: [pixvec()] };
+```
+```ts
+import logo from './logo.png?svg';        // the traced SVG string
+import Logo from './logo.png?component';  // a React/Vue/Svelte/Solid component
+```
+
+It returns the plain Vite/Rollup plugin object (no `unplugin` dependency), and the pure-TS core avoids the native-binary CI pain that sharp-based plugins carry.
+
 **AI-native.** `pixvec mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call pixvec directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Seven tools (`vectorize`, `convert`, `centerline`, `measure`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["pixvec", "mcp"] }`.
 
 `pixvec component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours.

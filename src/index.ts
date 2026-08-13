@@ -79,5 +79,8 @@ export {
   type RasterizeOutcome,
 } from './api.js';
 
+// --- Build-tool plugin (Vite/Rollup) --------------------------------------
+export { pixvecPlugin, type PixvecPluginOptions } from './plugin/vite.js';
+
 // `api.ts` is the source of truth for the version stamped into generated files.
 export { VERSION } from './api.js';

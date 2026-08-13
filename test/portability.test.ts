@@ -134,7 +134,7 @@ describe('pixvec/core portability', () => {
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts',
       'vectorize/embed.ts',
       'pipelines/favicon.ts', 'pipelines/responsive.ts',
-      'mcp/server.ts',
+      'mcp/server.ts', 'plugin/vite.ts',
     ]);
     const unclassified = found.filter((f) => !nodeOnly.has(f) && !CORE_MODULES.includes(f));
     expect(unclassified).toEqual([]);
