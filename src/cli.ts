@@ -238,6 +238,8 @@ interface VectorizeCliOptions {
   fitError?: number;
   cornerAngle?: number;
   polygon?: boolean;
+  primitives?: boolean;
+  primitiveError?: number;
   optimize?: boolean;
   optTolerance?: number;
   refineIterations?: number;
@@ -325,6 +327,8 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       fitError: o.fitError,
       cornerAngle: o.cornerAngle,
       polygonOnly: o.polygon,
+      primitives: o.primitives,
+      primitiveError: o.primitiveError,
       // commander stores --no-optimize as optimize:false; leave undefined when
       // the flag was never passed so the default stays in force.
       optimize: o.optimize,
@@ -1287,6 +1291,8 @@ program
   .option('--fit-error <px>', 'maximum curve fitting error', floatArg('--fit-error', 0.01, 100))
   .option('--corner-angle <deg>', 'turn angle treated as a sharp corner', floatArg('--corner-angle', 0, 180))
   .option('--polygon', 'emit polygons instead of curves')
+  .option('--primitives', 'recognise circles, ellipses and rectangles and emit <circle>/<ellipse>/<rect> — smaller, editable, render-preserving')
+  .option('--primitive-error <px>', 'per-vertex residual budget for --primitives', floatArg('--primitive-error', 0.1, 10))
   .option('--no-optimize', 'do not merge adjacent curves that a single curve fits')
   .option('--opt-tolerance <n>', 'error budget for a curve merge (defaults to --fit-error)', floatArg('--opt-tolerance', 0.01, 100))
   .option('--refine-iterations <n>', 'Lloyd relaxation passes during palette construction', intArg('--refine-iterations', 0, 32))

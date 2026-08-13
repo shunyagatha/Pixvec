@@ -155,6 +155,13 @@ export {
 } from './vectorize/fit.js';
 
 export {
+  detectPrimitive,
+  primitiveSvg,
+  type Primitive,
+  type PrimitiveOptions,
+} from './vectorize/primitives.js';
+
+export {
   detectGradients,
   GRAD_BASE,
   GRADIENT_DEFAULTS,
@@ -247,4 +254,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.14.0';
+export const VERSION = '1.15.0';

@@ -4,11 +4,12 @@ import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
 import type { RasterImage, Rgba } from '../types.js';
 import { connectedComponents, despeckle, type ComponentMap } from './components.js';
-import { traceComponents, type TurnPolicy } from './contour.js';
+import { traceComponents, type TurnPolicy, type Loop } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
+import { detectPrimitive, primitiveSvg } from './primitives.js';
 
 /**
  * True vectorisation: colour regions become filled paths bounded by curves.
@@ -41,6 +42,16 @@ export interface TraceOptions {
   cornerAngle?: number;
   /** Skip curve fitting and emit polygons. */
   polygonOnly?: boolean;
+  /**
+   * Recognise circles, ellipses and rectangles and emit them as `<circle>`,
+   * `<ellipse>` and `<rect>` — smaller, editable as true shapes, and the source
+   * of real arcs for CAD/DXF export. Off by default. A region is only replaced
+   * when every boundary vertex lies within {@link primitiveError} px of the
+   * fitted shape, so the substitution is render-preserving.
+   */
+  primitives?: boolean;
+  /** Per-vertex residual budget for {@link primitives}, in pixels. Default 1.0. */
+  primitiveError?: number;
   /** Merge adjacent curves where one fits both. Default on. */
   optimize?: boolean;
   /** Error budget for a curve merge. Defaults to `fitError`. */
@@ -155,6 +166,8 @@ export const TRACE_DEFAULTS = {
   fitError: 0.4,
   cornerAngle: 75,
   polygonOnly: false,
+  primitives: false,
+  primitiveError: 1.0,
   optimize: true,
   precision: 2,
   background: true,
@@ -340,8 +353,10 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     if (cls === backgroundClass) continue;
 
     const path = new PathBuilder(o.precision);
+    const classLoops: Loop[] = [];
     for (const c of components) {
       for (const loop of loopsByComponent[c]) {
+        classLoops.push(loop);
         const fitted = fitLoop(loop.pts, fitOpts);
         if (!fitted) continue;
         path.moveTo(fitted.start.x, fitted.start.y);
@@ -370,7 +385,16 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
       const stroke = strokeFor(shortHex(color.r, color.g, color.b));
-      markup = `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
+      // A region that *is* a circle/ellipse/rectangle emits the true primitive
+      // instead of a Bézier outline — smaller, editable as a shape, and the arc
+      // source for DXF. Only a single solid loop (no holes) is eligible, and the
+      // fit is residual-gated so the swap never changes the render.
+      const prim = o.primitives && classLoops.length === 1
+        ? detectPrimitive(classLoops[0].pts, { maxError: o.primitiveError })
+        : null;
+      markup = prim
+        ? primitiveSvg(prim, `${fillAttrs(color)}${stroke}`, o.precision)
+        : `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
       // Include the alpha in the label when it is below opaque, so one colour at
       // two alpha levels does not produce two indistinguishable separations.
       label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);

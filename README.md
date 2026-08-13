@@ -286,6 +286,8 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 
 **Gradient output** (`--gradients`, and on by default in auto mode for photos) reconstructs smooth colour ramps — skies, skin — as SVG `<linearGradient>`s instead of flat bands. It **can only help**: a region becomes a gradient only when the gradient's *actual rendered output* (the renderer's sRGB stop interpolation, reproduced and scored per pixel in Oklab) beats the flat bands it would replace, so flat art stays byte-for-byte identical and hard edges are untouched — a concentrated de-banding win, never a regression.
 
+**Geometric primitives** (`--primitives`) do the opposite kind of clean-up: when a region genuinely *is* a circle, ellipse or rectangle, pixvec emits `<circle>`/`<ellipse>`/`<rect>` instead of a four-curve Bézier approximation. On a plain disc that is a **68% smaller file** (a 42-px circle is `<circle cx="60" cy="60" r="42">`, not a path) — and, unlike every other JS tracer, the shape stays *editable as a shape* in Illustrator/Inkscape and becomes a true arc for CAD/DXF export. The swap is residual-gated: a region is only replaced when every boundary vertex lies within `--primitive-error` pixels (default 1.0) of the fitted shape, so it is render-preserving, never an organic blob rounded into a circle. `detectPrimitive()` is pure and in `pixvec/core`.
+
 > **How the photo result got here.** An earlier version trailed imagetracerjs on the synthetic photo and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
 
 Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a bolt-on, and reporting them without saying so would be a rigged fight. And the strongest *commercial* tracers (Illustrator Image Trace) and AI vectorisers remain unmeasured — pixvec is best-in-class here against the installable open-source field, not proven against everything.
@@ -364,6 +366,8 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--right-angle` | Snap near-axis right-angle corners to exact 90° — crisper UI, screenshots, pixel art (imagetracerjs's `rightangleenhance`) |
 | `--right-angle-threshold <deg>` | Degrees of slack for `--right-angle` (default 12) |
 | `--gradients` | Reconstruct smooth colour ramps (skies, skin) as SVG gradients — de-bands photos, only where it measurably beats a flat fill |
+| `--primitives` | Recognise circles, ellipses and rectangles and emit `<circle>`/`<ellipse>`/`<rect>` — smaller, editable as true shapes, render-preserving |
+| `--primitive-error <px>` | Per-vertex residual budget for `--primitives` (default 1.0) |
 | `--layers` | Emit one named Inkscape/Illustrator **layer** per colour — editable, screen-print/vinyl separation-ready |
 | `--palette <colors>` | Trace to exactly these comma-separated colours (brand/spot colours), e.g. `"#fff,#e4002b,#000"` |
 | `--no-optimize` | Do not merge adjacent curves that a single curve fits |
