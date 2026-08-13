@@ -32,7 +32,7 @@ Most vectorizers claim perfect accuracy. Here is what is actually true, because 
 | **Raster → SVG, lossless** | **Yes** | Two different ways, both bit-exact. See `pixel` and `embed` below. |
 | **Raster → SVG, traced into curves** | **No, and it never can be** | A photograph holds more independent information than any compact set of Bézier curves can encode. Tracing is approximation by definition. |
 
-Anyone promising exact photo-to-curves vectorization is either embedding a bitmap and calling it vector, or is wrong. **pixvec does both exact conversions properly, does the approximate one well, and always tells you which one you got and how close it landed.**
+Anyone promising exact photo-to-curves vectorization is either embedding a bitmap and calling it vector, or is wrong. **Pixvec does both exact conversions properly, does the approximate one well, and always tells you which one you got and how close it landed.**
 
 ## Three strategies, and when each is right
 
@@ -130,7 +130,7 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 
 Two rows deserve comment, because glossing over them is how tools mislead you:
 
-- **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. pixvec reports the measurement, not the claim.
+- **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. Pixvec reports the measurement, not the claim.
 - **Photo + `trace` is genuinely approximate.** 0.01% pixels exact is not a bug — it is what tracing a photograph means. If that number matters to you, you want `embed`.
 
 ## Metrics
@@ -260,7 +260,7 @@ Every conversion function is pure with respect to the filesystem — only `loadR
 Stated plainly, because you should know before you invest:
 
 - **Tracing a photograph will not look like the photograph.** That is inherent, not a tuning problem. Use `embed` when fidelity matters, or `trace` when scalability and editability matter more.
-- **`pixel` mode on photographic input** would need roughly one rectangle per pixel. pixvec refuses and tells you to use `embed` or `trace` instead.
+- **`pixel` mode on photographic input** would need roughly one rectangle per pixel. Pixvec refuses and tells you to use `embed` or `trace` instead.
 - **WebP payloads in `embed` mode are browser-only.** resvg and librsvg builds without WebP render a WebP `<image>` as *blank*, with no warning. `auto` therefore never selects WebP; `--embed-strategy webp` opts in and prints a warning.
 - **16-bit sources are reduced to 8 bit** for `pixel` and `trace`, because SVG paint servers cannot express more. `embed` with `--embed-strategy preserve` keeps the original bit depth intact.
 - **Animation is not supported.** Multi-frame inputs use the first frame.

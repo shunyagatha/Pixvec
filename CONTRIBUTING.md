@@ -1,4 +1,4 @@
-# Contributing to pixvec
+# Contributing to Pixvec
 
 Thanks for considering it. This document covers the things that are specific to this project; the usual open-source etiquette applies otherwise.
 
