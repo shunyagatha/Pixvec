@@ -37,6 +37,8 @@ export interface TraceOptions {
   cornerAngle?: number;
   /** Skip curve fitting and emit polygons. */
   polygonOnly?: boolean;
+  /** Merge adjacent curves where one fits both. Default on. */
+  optimize?: boolean;
   /** Decimal places kept in path coordinates. */
   precision?: number;
   /** Collapse the dominant colour into one full-canvas rectangle. */
@@ -65,6 +67,7 @@ export const TRACE_DEFAULTS = {
   fitError: 1,
   cornerAngle: 75,
   polygonOnly: false,
+  optimize: true,
   precision: 2,
   background: true,
   refineIterations: 4,
@@ -148,6 +151,7 @@ export function trace(img: RasterImage, opts: TraceOptions = {}): TraceOutput {
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,
     polygonOnly: o.polygonOnly,
+    optimize: o.optimize,
   };
 
   let regions = 0;

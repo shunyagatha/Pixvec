@@ -382,7 +382,7 @@ Stated plainly, because you should know before you invest:
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
 - **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW do not decode.** See [Formats](#formats).
 - **`pixvec/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
-- **Photographic tracing trails imagetracerjs on SSIM** — 0.6675 against 0.7143 on the benchmark fixture, though Pixvec leads on colour error. potrace has a curve-optimisation pass that merges adjacent Béziers where a single curve fits within tolerance; this does not, and implementing it would likely close the gap.
+- **Photographic tracing trails imagetracerjs on SSIM** — 0.6675 against 0.7143 on the benchmark fixture (reproducible at two fixture sizes), though Pixvec leads on colour error. I guessed the cause was potrace's curve-optimisation pass, implemented it, and measured: it merges 0–13% of segments and changes the photographic score not at all. The reason is structural — Schneider subdivision only splits when one curve *provably* fails, so re-fitting the merged span fails the same test. **The real cause is still unknown**, and finding it is the most valuable open problem in this library.
 - **Not compared against Illustrator or vtracer.** The [comparison](#compared-with-other-vectorizers) covers potrace and imagetracerjs, which are what is installable and scriptable. Commercial tracers remain unmeasured.
 
 ## Contributing

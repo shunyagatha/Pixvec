@@ -6,6 +6,7 @@ import { traceComponents } from '../src/vectorize/contour.js';
 import { vectorizeEmbed } from '../src/vectorize/embed.js';
 import { vectorizePixels } from '../src/vectorize/pixel.js';
 import { trace } from '../src/vectorize/trace.js';
+import { fitLoop } from '../src/vectorize/fit.js';
 import type { RasterImage, SourceMeta } from '../src/types.js';
 import {
   alphaBlob, createImage, diagonalPinch, encode, flatArtwork, photoLike, pixelArt, setPixel,
@@ -237,5 +238,67 @@ describe('trace mode', () => {
   it('keeps every region when minArea is zero', () => {
     const out = trace(photoLike(48, 36), { colors: 16, minArea: 0 });
     expect(out.despeckled).toBe(0);
+  });
+});
+
+/**
+ * Curve optimisation: merging adjacent Béziers where one curve fits both.
+ *
+ * The measured effect is small — Schneider subdivision only splits where a
+ * single curve provably failed, so re-fitting the merged span usually fails the
+ * same test. What matters is that it is never *harmful*: it must not increase
+ * the segment count and must not degrade accuracy, because every merge is
+ * checked against the same error budget the split was.
+ */
+describe('curve optimisation', () => {
+  const shapes: Array<[string, (x: number, y: number, n: number) => boolean]> = [
+    ['disc', (x, y, n) => Math.hypot(x - n / 2, y - n / 2) < n * 0.38],
+    ['ring', (x, y, n) => {
+      const d = Math.hypot(x - n / 2, y - n / 2);
+      return d < n * 0.4 && d > n * 0.22;
+    }],
+    ['lobed blob', (x, y, n) => {
+      const a = Math.atan2(y - n / 2, x - n / 2);
+      const d = Math.hypot(x - n / 2, y - n / 2);
+      return d < n * (0.28 + 0.09 * Math.sin(3 * a) + 0.05 * Math.cos(5 * a));
+    }],
+  ];
+
+  function loopFor(fn: (x: number, y: number, n: number) => boolean, n = 120) {
+    const classes = new Int32Array(n * n);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) classes[y * n + x] = fn(x, y, n) ? 1 : 0;
+    }
+    const comps = connectedComponents(classes, n, n, -1);
+    const loops = traceComponents(comps.labels, n, n, comps.count);
+    const target = comps.classes.findIndex((c) => c === 1);
+    return loops[target][0];
+  }
+
+  it.each(shapes)('never emits more segments for a %s', (_name, fn) => {
+    const loop = loopFor(fn);
+    for (const tolerance of [0.5, 1, 2]) {
+      const base = { tolerance, fitError: tolerance, cornerAngle: 75, polygonOnly: false };
+      const off = fitLoop(loop.pts, { ...base, optimize: false })!;
+      const on = fitLoop(loop.pts, { ...base, optimize: true })!;
+      expect(on.segments.length).toBeLessThanOrEqual(off.segments.length);
+    }
+  });
+
+  it('keeps the traced result at least as accurate', async () => {
+    const source = flatArtwork(120, 90);
+    const off = await roundTrip(source, trace(source, { colors: 8, optimize: false }).svg);
+    const on = await roundTrip(source, trace(source, { colors: 8, optimize: true }).svg);
+    // Merges are gated on the same error budget, so accuracy must not fall
+    // meaningfully. A little float noise either way is fine.
+    expect(on.psnr).toBeGreaterThan(off.psnr - 0.5);
+  });
+
+  it('is on by default', () => {
+    const loop = loopFor(shapes[2][1]);
+    const base = { tolerance: 1, fitError: 1, cornerAngle: 75, polygonOnly: false };
+    const explicit = fitLoop(loop.pts, { ...base, optimize: true })!;
+    const implicit = fitLoop(loop.pts, base)!;
+    expect(implicit.segments.length).toBe(explicit.segments.length);
   });
 });
