@@ -12,7 +12,7 @@ import { encode, flatArtwork, pixelArt } from './fixtures.js';
 let dir: string;
 
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'vexel-io-'));
+  dir = await mkdtemp(join(tmpdir(), 'pixvec-io-'));
 });
 
 afterAll(async () => {

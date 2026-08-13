@@ -1,13 +1,13 @@
-# vexel
+# pixvec
 
 **Measurable raster ⇄ SVG conversion.** PNG, JPEG, WebP, AVIF, TIFF and GIF to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
 
-[![CI](https://github.com/shunyagatha/vexel/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/vexel/actions/workflows/ci.yml)
+[![CI](https://github.com/shunyagatha/pixvec/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/pixvec/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
 ```bash
-vexel vectorize logo.png --verify
+pixvec vectorize logo.png --verify
 ```
 
 ```
@@ -32,7 +32,7 @@ Most vectorizers claim perfect accuracy. Here is what is actually true, because 
 | **Raster → SVG, lossless** | **Yes** | Two different ways, both bit-exact. See `pixel` and `embed` below. |
 | **Raster → SVG, traced into curves** | **No, and it never can be** | A photograph holds more independent information than any compact set of Bézier curves can encode. Tracing is approximation by definition. |
 
-Anyone promising exact photo-to-curves vectorization is either embedding a bitmap and calling it vector, or is wrong. **vexel does both exact conversions properly, does the approximate one well, and always tells you which one you got and how close it landed.**
+Anyone promising exact photo-to-curves vectorization is either embedding a bitmap and calling it vector, or is wrong. **pixvec does both exact conversions properly, does the approximate one well, and always tells you which one you got and how close it landed.**
 
 ## Three strategies, and when each is right
 
@@ -51,50 +51,48 @@ Anyone promising exact photo-to-curves vectorization is either embedding a bitma
 Not on npm yet. Install from source:
 
 ```bash
-git clone https://github.com/shunyagatha/vexel.git
-cd vexel
+git clone https://github.com/shunyagatha/pixvec.git
+cd pixvec
 npm install
 npm run build
-npm link          # puts `vexel` on your PATH
+npm link          # puts `pixvec` on your PATH
 ```
 
 Or install straight from GitHub:
 
 ```bash
-npm install -g github:shunyagatha/vexel
+npm install -g github:shunyagatha/pixvec
 ```
 
 Requires Node.js 18.17+. Native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows, so no compiler toolchain is needed.
 
-> The package will publish as `@shunyagatha/vexel` — the bare name `vexel` on npm belongs to an unrelated project.
-
 ## Quick start
 
 ```bash
-# Convert, letting vexel choose the strategy
-vexel vectorize logo.png
+# Convert, letting pixvec choose the strategy
+pixvec vectorize logo.png
 
 # Prove the result is what it claims
-vexel vectorize logo.png --verify
+pixvec vectorize logo.png --verify
 
 # Guarantee a bit-exact result whatever the input
-vexel vectorize photo.jpg --mode lossless
+pixvec vectorize photo.jpg --mode lossless
 
 # Trace to curves, escalating settings until it hits a quality target
-vexel vectorize portrait.jpg --target-ssim 0.95
+pixvec vectorize portrait.jpg --target-ssim 0.95
 
 # SVG back to raster at any size
-vexel rasterize logo.svg -o logo@4x.png --scale 4
-vexel rasterize logo.svg -o hero.webp --width 2400 --lossless
+pixvec rasterize logo.svg -o logo@4x.png --scale 4
+pixvec rasterize logo.svg -o hero.webp --width 2400 --lossless
 
 # Ask what a file is and what to do with it
-vexel info photo.jpg
+pixvec info photo.jpg
 
 # Measure any two images against each other — raster or SVG, in any combination
-vexel verify original.png result.svg
+pixvec verify original.png result.svg
 
 # Whole directories
-vexel batch 'assets/**/*.png' -o dist/ --to svg
+pixvec batch 'assets/**/*.png' -o dist/ --to svg
 ```
 
 ## Accuracy, measured
@@ -112,7 +110,7 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 
 Two rows deserve comment, because glossing over them is how tools mislead you:
 
-- **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. vexel reports the measurement, not the claim.
+- **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. pixvec reports the measurement, not the claim.
 - **Photo + `trace` is genuinely approximate.** 0.01% pixels exact is not a bug — it is what tracing a photograph means. If that number matters to you, you want `embed`.
 
 ## Metrics
@@ -156,7 +154,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 
 ## CLI
 
-### `vexel vectorize <input>`
+### `pixvec vectorize <input>`
 
 | Option | Description |
 |---|---|
@@ -178,7 +176,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--xlink` | Use `xlink:href` for SVG 1.1 consumers |
 | `--json` | Machine-readable output on stdout |
 
-### `vexel rasterize <input.svg>`
+### `pixvec rasterize <input.svg>`
 
 | Option | Description |
 |---|---|
@@ -198,18 +196,18 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 ### Other commands
 
 ```bash
-vexel convert in.png out.svg      # direction inferred from extensions
-vexel verify a.png b.svg          # measure any two images
-vexel info file.png               # inspect and recommend a strategy
-vexel batch 'src/**/*.png' -o out/ --to svg
+pixvec convert in.png out.svg      # direction inferred from extensions
+pixvec verify a.png b.svg          # measure any two images
+pixvec info file.png               # inspect and recommend a strategy
+pixvec batch 'src/**/*.png' -o out/ --to svg
 ```
 
-`vexel verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines.
+`pixvec verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines.
 
 ## Library
 
 ```ts
-import { loadRaster, vectorize, rasterize, compareImages } from '@shunyagatha/vexel';
+import { loadRaster, vectorize, rasterize, compareImages } from 'pixvec';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const source = await loadRaster(await readFile('logo.png'));
@@ -242,7 +240,7 @@ Every conversion function is pure with respect to the filesystem — only `loadR
 Stated plainly, because you should know before you invest:
 
 - **Tracing a photograph will not look like the photograph.** That is inherent, not a tuning problem. Use `embed` when fidelity matters, or `trace` when scalability and editability matter more.
-- **`pixel` mode on photographic input** would need roughly one rectangle per pixel. vexel refuses and tells you to use `embed` or `trace` instead.
+- **`pixel` mode on photographic input** would need roughly one rectangle per pixel. pixvec refuses and tells you to use `embed` or `trace` instead.
 - **WebP payloads in `embed` mode are browser-only.** resvg and librsvg builds without WebP render a WebP `<image>` as *blank*, with no warning. `auto` therefore never selects WebP; `--embed-strategy webp` opts in and prints a warning.
 - **16-bit sources are reduced to 8 bit** for `pixel` and `trace`, because SVG paint servers cannot express more. `embed` with `--embed-strategy preserve` keeps the original bit depth intact.
 - **Animation is not supported.** Multi-frame inputs use the first frame.
@@ -253,8 +251,8 @@ Stated plainly, because you should know before you invest:
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/shunyagatha/vexel.git
-cd vexel
+git clone https://github.com/shunyagatha/pixvec.git
+cd pixvec
 npm install
 npm run build
 npm test

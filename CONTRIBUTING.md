@@ -1,12 +1,12 @@
-# Contributing to vexel
+# Contributing to pixvec
 
 Thanks for considering it. This document covers the things that are specific to this project; the usual open-source etiquette applies otherwise.
 
 ## Getting set up
 
 ```bash
-git clone https://github.com/shunyagatha/vexel.git
-cd vexel
+git clone https://github.com/shunyagatha/pixvec.git
+cd pixvec
 npm install
 npm run build
 npm test

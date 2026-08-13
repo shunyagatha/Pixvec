@@ -1,5 +1,5 @@
 /**
- * Core data types shared across Vexel.
+ * Core data types shared across Pixvec.
  *
  * The canonical in-memory representation is **straight (non-premultiplied) RGBA8
  * in the sRGB colour space**. Every decoder normalises to it and every encoder

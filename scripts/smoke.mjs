@@ -53,7 +53,7 @@ async function flatArtwork(width, height) {
   return sharp(data, { raw: { width, height, channels: 4 } }).png().toBuffer();
 }
 
-const dir = await mkdtemp(join(tmpdir(), 'vexel-smoke-'));
+const dir = await mkdtemp(join(tmpdir(), 'pixvec-smoke-'));
 
 try {
   const src = join(dir, 'art.png');

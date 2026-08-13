@@ -1,5 +1,5 @@
 /**
- * Vexel — measurable raster <-> SVG conversion.
+ * Pixvec — measurable raster <-> SVG conversion.
  *
  * The public surface is deliberately small: load, convert, measure. Every
  * conversion function is pure with respect to the filesystem; only `loadRaster`

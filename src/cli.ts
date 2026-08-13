@@ -168,7 +168,7 @@ interface VectorizeCliOptions {
 async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void> {
   const bytes = await readInput(input);
   if (looksLikeSvg(bytes)) {
-    fail(`${input} is already an SVG. Did you mean \`vexel rasterize\`?`);
+    fail(`${input} is already an SVG. Did you mean \`pixvec rasterize\`?`);
   }
 
   const source = await loadRaster(bytes);
@@ -261,7 +261,7 @@ interface RasterizeCliOptions {
 async function runRasterize(input: string, o: RasterizeCliOptions): Promise<void> {
   const bytes = await readInput(input);
   if (!looksLikeSvg(bytes)) {
-    fail(`${input} does not look like an SVG. Did you mean \`vexel vectorize\`?`);
+    fail(`${input} does not look like an SVG. Did you mean \`pixvec vectorize\`?`);
   }
 
   const outPath = o.output ?? defaultOutput(input, `.${o.format ?? 'png'}`);
@@ -487,7 +487,7 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
 const program = new Command();
 
 program
-  .name('vexel')
+  .name('pixvec')
   .description(
     'Measurable raster <-> SVG conversion.\n\n' +
       'Raster to SVG has three honest strategies and this tool exposes all of them:\n' +
@@ -652,7 +652,7 @@ program
 program.parseAsync(process.argv).catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
   process.stderr.write(`${red('error')} ${message}\n`);
-  if (process.env.VEXEL_DEBUG && err instanceof Error && err.stack) {
+  if (process.env.PIXVEC_DEBUG && err instanceof Error && err.stack) {
     process.stderr.write(`${dim(err.stack)}\n`);
   }
   process.exit(1);

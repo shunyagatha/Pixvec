@@ -1,5 +1,5 @@
 {
-  "name": "@shunyagatha/vexel",
+  "name": "pixvec",
   "version": "0.1.0",
   "description": "High-accuracy, measurable raster <-> SVG conversion. Pixel-exact lossless vectorization, quality-targeted tracing, and exact SVG rasterization - with built-in PSNR/SSIM/deltaE verification.",
   "keywords": [
@@ -22,11 +22,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shunyagatha/vexel.git"
+    "url": "git+https://github.com/shunyagatha/pixvec.git"
   },
-  "homepage": "https://github.com/shunyagatha/vexel#readme",
+  "homepage": "https://github.com/shunyagatha/pixvec#readme",
   "bugs": {
-    "url": "https://github.com/shunyagatha/vexel/issues"
+    "url": "https://github.com/shunyagatha/pixvec/issues"
   },
   "type": "module",
   "engines": {
@@ -41,16 +41,13 @@
     }
   },
   "bin": {
-    "vexel": "./dist/cli.js"
+    "pixvec": "./dist/cli.js"
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
