@@ -119,6 +119,23 @@ function colorArg(value: string): Rgba {
   return c;
 }
 
+/** `--threshold` is a 0–255 cutoff or the literal `auto`. */
+function thresholdArg(value: string): number | 'auto' {
+  if (value.toLowerCase() === 'auto') return 'auto';
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 255) {
+    throw new InvalidArgumentError('--threshold must be an integer 0-255 or "auto".');
+  }
+  return n;
+}
+
+function boolArg(value: string): boolean {
+  const v = value.toLowerCase();
+  if (v === 'true' || v === '1' || v === 'yes') return true;
+  if (v === 'false' || v === '0' || v === 'no') return false;
+  throw new InvalidArgumentError('expected true or false.');
+}
+
 async function readInput(path: string): Promise<Buffer> {
   try {
     return await readFile(path);
@@ -180,6 +197,14 @@ interface VectorizeCliOptions {
   fitError?: number;
   cornerAngle?: number;
   polygon?: boolean;
+  optimize?: boolean;
+  optTolerance?: number;
+  refineIterations?: number;
+  blur?: number;
+  blurDelta?: number;
+  threshold?: number | 'auto';
+  blackOnWhite?: boolean;
+  strokeWidth?: number;
   precision?: number;
   background: boolean;
   targetSsim?: number;
@@ -251,6 +276,16 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       fitError: o.fitError,
       cornerAngle: o.cornerAngle,
       polygonOnly: o.polygon,
+      // commander stores --no-optimize as optimize:false; leave undefined when
+      // the flag was never passed so the default stays in force.
+      optimize: o.optimize,
+      optimizeError: o.optTolerance,
+      refineIterations: o.refineIterations,
+      blur: o.blur,
+      blurDelta: o.blurDelta,
+      threshold: o.threshold,
+      blackOnWhite: o.blackOnWhite,
+      strokeWidth: o.strokeWidth,
       precision: o.precision,
       background: o.background,
     },
@@ -796,6 +831,14 @@ program
   .option('--fit-error <px>', 'maximum curve fitting error', floatArg('--fit-error', 0.01, 100))
   .option('--corner-angle <deg>', 'turn angle treated as a sharp corner', floatArg('--corner-angle', 0, 180))
   .option('--polygon', 'emit polygons instead of curves')
+  .option('--no-optimize', 'do not merge adjacent curves that a single curve fits')
+  .option('--opt-tolerance <n>', 'error budget for a curve merge (defaults to --fit-error)', floatArg('--opt-tolerance', 0.01, 100))
+  .option('--refine-iterations <n>', 'Lloyd relaxation passes during palette construction', intArg('--refine-iterations', 0, 32))
+  .option('--blur <radius>', 'selective (edge-preserving) blur before quantisation, 1-5', intArg('--blur', 0, 5))
+  .option('--blur-delta <n>', 'edge-preservation threshold for --blur', intArg('--blur-delta', 0, 255))
+  .option('--threshold <cutoff>', 'reduce to two colours by luminance: a 0-255 number or "auto" (Otsu)', thresholdArg)
+  .option('--black-on-white <bool>', 'with --threshold: dark pixels are the shape (default true)', boolArg)
+  .option('--stroke-width <n>', 'stroke each path in its fill colour to hide seams between regions', floatArg('--stroke-width', 0, 100))
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))

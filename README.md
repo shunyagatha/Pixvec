@@ -302,6 +302,14 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--fit-error <px>` | Maximum curve fitting error |
 | `--corner-angle <deg>` | Turn angle treated as a sharp corner |
 | `--polygon` | Emit polygons instead of curves |
+| `--threshold <cutoff\|auto>` | Reduce to two colours by luminance before tracing (potrace-style bilevel; `auto` = Otsu) |
+| `--black-on-white <bool>` | With `--threshold`: dark pixels are the shape (default true) |
+| `--blur <1-5>` | Selective, edge-preserving blur before quantising — removes grain without softening edges |
+| `--blur-delta <n>` | Edge-preservation threshold for `--blur` (default 20) |
+| `--stroke-width <n>` | Stroke each path in its own fill colour to hide seams between regions |
+| `--no-optimize` | Do not merge adjacent curves that a single curve fits |
+| `--opt-tolerance <n>` | Error budget for a curve merge |
+| `--refine-iterations <n>` | Lloyd relaxation passes during palette construction |
 | `--precision <n>` | Decimals kept in path coordinates |
 | `--no-background` | Do not collapse the dominant colour into one rectangle |
 | `--target-ssim <v>` / `--target-psnr <db>` | Escalate until the target is reached |

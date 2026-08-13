@@ -1,10 +1,13 @@
 import { SvgDoc, fillAttrs } from '../svg/build.js';
+import { shortHex } from '../color.js';
 import { PathBuilder } from '../svg/path.js';
+import { selectiveBlur } from '../preprocess.js';
 import type { RasterImage, Rgba } from '../types.js';
 import { connectedComponents, despeckle, type ComponentMap } from './components.js';
 import { traceComponents } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { NearestColor, quantize, quantizeAlpha } from './quantize.js';
+import { applyThreshold } from './threshold.js';
 
 /**
  * True vectorisation: colour regions become filled paths bounded by curves.
@@ -39,12 +42,38 @@ export interface TraceOptions {
   polygonOnly?: boolean;
   /** Merge adjacent curves where one fits both. Default on. */
   optimize?: boolean;
+  /** Error budget for a curve merge. Defaults to `fitError`. */
+  optimizeError?: number;
   /** Decimal places kept in path coordinates. */
   precision?: number;
   /** Collapse the dominant colour into one full-canvas rectangle. */
   background?: boolean;
   /** Lloyd relaxation passes during palette construction. */
   refineIterations?: number;
+  /**
+   * Selective blur radius applied before quantisation. Removes sensor noise and
+   * JPEG grain that would otherwise fragment a flat region into speckle
+   * contours, while preserving edges. 0 (default) skips it.
+   */
+  blur?: number;
+  /** Edge-preservation threshold for {@link blur}. Default 20. */
+  blurDelta?: number;
+  /**
+   * Reduce to two colours by a luminance cutoff before tracing — potrace's mode,
+   * for scanned line art and black-on-white logos. A number is a fixed 0–255
+   * cutoff; `'auto'` uses Otsu's method. Omitted skips it.
+   */
+  threshold?: number | 'auto';
+  /** With {@link threshold}: dark pixels are the shape on a light ground. Default true. */
+  blackOnWhite?: boolean;
+  /**
+   * Stroke every path in its own fill colour, at this width in pixels.
+   *
+   * This is imagetracerjs's trick for hiding the hairline gap that can appear
+   * between two abutting colour regions: a thin same-colour stroke overpaints
+   * the seam. 0 (default) emits fill-only paths. A value around 1 is typical.
+   */
+  strokeWidth?: number;
   title?: string;
   generator?: string;
 }
@@ -79,6 +108,7 @@ export const TRACE_DEFAULTS = {
   precision: 2,
   background: true,
   refineIterations: 4,
+  strokeWidth: 0,
 } as const;
 
 /**
@@ -100,13 +130,27 @@ export function autoMinArea(pixels: number): number {
   return Math.min(16, Math.round(pixels / 50_000));
 }
 
-export function trace(img: RasterImage, opts: TraceOptions = {}): TraceOutput {
+export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput {
   const clean = stripUndefined(opts);
   const o = {
     ...TRACE_DEFAULTS,
-    minArea: autoMinArea(img.width * img.height),
+    minArea: autoMinArea(source.width * source.height),
     ...clean,
   };
+
+  // --- Preprocess before the tracer ever sees the pixels. ---
+  //
+  // Order matters: blur removes grain first, then threshold (if requested)
+  // collapses to two colours. A blur after thresholding would just soften the
+  // clean edge the threshold produced.
+  let img = source;
+  if (o.blur && o.blur >= 1) {
+    img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  if (opts.threshold !== undefined) {
+    img = applyThreshold(img, { threshold: o.threshold, blackOnWhite: o.blackOnWhite }).image;
+  }
+
   const { width, height } = img;
   const n = width * height;
 
@@ -184,7 +228,14 @@ export function trace(img: RasterImage, opts: TraceOptions = {}): TraceOutput {
     cornerAngle: o.cornerAngle,
     polygonOnly: o.polygonOnly,
     optimize: o.optimize,
+    optimizeError: o.optimizeError,
   };
+
+  // A same-colour stroke of a pixel or so overpaints the hairline seam that can
+  // appear between two abutting regions when a renderer antialiases their shared
+  // edge. Emitted per path in the path's own fill colour.
+  const strokeFor = (svgColor: string): string =>
+    o.strokeWidth > 0 ? ` stroke="${svgColor}" stroke-width="${o.strokeWidth}"` : '';
 
   let regions = 0;
 
@@ -209,7 +260,8 @@ export function trace(img: RasterImage, opts: TraceOptions = {}): TraceOutput {
 
     if (path.isEmpty()) continue;
     const color = classColor(cls, palette, alphaLevels, levelCount);
-    doc.add(`<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}/>`);
+    const stroke = strokeFor(shortHex(color.r, color.g, color.b));
+    doc.add(`<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`);
   }
 
   return {

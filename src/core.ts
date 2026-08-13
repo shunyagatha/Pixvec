@@ -107,6 +107,15 @@ export {
   type TraceOutput,
 } from './vectorize/trace.js';
 
+// --- Pre-tracing pixel filters, all pure ------------------------------------
+export { selectiveBlur, type BlurOptions } from './preprocess.js';
+export {
+  applyThreshold,
+  otsuThreshold,
+  type ThresholdOptions,
+  type ThresholdResult,
+} from './vectorize/threshold.js';
+
 // --- Vectorisation internals, for building your own pipeline ---------------
 export {
   quantize,
