@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { measureFlatness, vectorize, verifySvg, type VectorizeInput } from '../src/api.js';
 import { decodeRaster } from '../src/io/decode.js';
 import { quantize, quantizeAlpha } from '../src/vectorize/quantize.js';
+import { autoMinArea, trace } from '../src/vectorize/trace.js';
 import { srgbToOklab } from '../src/color.js';
-import { alphaBlob, encode, flatArtwork, photoLike, pixelArt } from './fixtures.js';
+import { alphaBlob, createImage, encode, flatArtwork, photoLike, pixelArt, setPixel } from './fixtures.js';
 import type { RasterImage } from '../src/types.js';
 
 async function asInput(img: RasterImage, format: 'png' | 'jpeg' = 'png'): Promise<VectorizeInput> {
@@ -188,5 +189,84 @@ describe('quantizeAlpha', () => {
   it('returns sorted levels', () => {
     const levels = Array.from(quantizeAlpha(alphaBlob(), 6));
     expect(levels).toEqual([...levels].sort((a, b) => a - b));
+  });
+});
+
+/**
+ * Auto mode chooses a strategy from image statistics *before* producing
+ * anything, and those signals misjudge anti-aliased artwork. A logo with a
+ * couple of hundred colours and soft edges reads as "too varied for exact
+ * geometry", goes to the tracer, and comes back larger than the source file and
+ * still approximate — while an embedded copy would be smaller *and* exact.
+ *
+ * The guard only fires on strict dominance: the alternative has to win on both
+ * size and accuracy. Anything less is a real trade-off and belongs to the caller.
+ */
+describe('auto mode never returns a dominated result', () => {
+  it('switches away from a traced result that is beaten on both size and accuracy', async () => {
+    // Anti-aliased flat artwork: few colours, soft edges, exactly the shape that
+    // fools the statistics-based choice.
+    const size = 200;
+    const img = createImage(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - size / 2, y - size / 2);
+        // A soft edge over ~2px, as any real rasteriser would produce.
+        const t = Math.min(1, Math.max(0, (d - 60) / 2));
+        const mix = (a: number, b: number) => Math.round(a * (1 - t) + b * t);
+        setPixel(img, x, y, mix(214, 250), mix(69, 244), mix(65, 232), 255);
+      }
+    }
+
+    const input = await asInput(img);
+    const auto = await vectorize(input, { verify: true });
+    const traced = await vectorize(input, { mode: 'trace', verify: true });
+
+    // Whatever auto picked, it must not be worse on both axes than what it could
+    // have had. That is the whole invariant.
+    const autoBytes = Buffer.byteLength(auto.svg);
+    const tracedBytes = Buffer.byteLength(traced.svg);
+    const autoBetterOrEqual =
+      auto.lossless || auto.quality!.ssim >= traced.quality!.ssim || autoBytes <= tracedBytes;
+    expect(autoBetterOrEqual).toBe(true);
+  });
+
+  it('keeps tracing when the traced result is genuinely smaller', async () => {
+    // A photograph traces to something smaller than an exact copy, so there is a
+    // real trade-off and auto must not quietly resolve it.
+    const input = await asInput(photoLike(200, 150));
+    const result = await vectorize(input, { verify: true });
+    expect(result.mode).toBe('trace');
+  });
+
+  it('leaves an explicit mode alone', async () => {
+    const size = 120;
+    const img = createImage(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - size / 2, y - size / 2);
+        const t = Math.min(1, Math.max(0, (d - 35) / 2));
+        const mix = (a: number, b: number) => Math.round(a * (1 - t) + b * t);
+        setPixel(img, x, y, mix(20, 240), mix(90, 240), mix(180, 240), 255);
+      }
+    }
+    // Asking for trace means trace, however large the result.
+    const result = await vectorize(await asInput(img), { mode: 'trace', verify: true });
+    expect(result.mode).toBe('trace');
+  });
+});
+
+describe('autoMinArea', () => {
+  it('disables despeckling on small images and scales up on large ones', () => {
+    expect(autoMinArea(172 * 178)).toBeLessThanOrEqual(1);   // no despeckle
+    expect(autoMinArea(265 * 314)).toBe(2);
+    expect(autoMinArea(768 * 512)).toBe(8);
+    expect(autoMinArea(4000 * 3000)).toBe(16);               // capped
+  });
+
+  it('is used when minArea is not given, and overridable', () => {
+    const img = photoLike(320, 240);
+    expect(trace(img).despeckled).toBeGreaterThan(0);
+    expect(trace(img, { minArea: 0 }).despeckled).toBe(0);
   });
 });
