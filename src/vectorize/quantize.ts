@@ -343,8 +343,11 @@ export function quantize(img: RasterImage, maxColors: number, opts: QuantizeOpti
     const rgb = new Uint8Array(cols.length * 3);
     const lab = new Float64Array(cols.length * 3);
     for (let i = 0; i < cols.length; i++) {
-      rgb[i * 3] = cols[i].r; rgb[i * 3 + 1] = cols[i].g; rgb[i * 3 + 2] = cols[i].b;
-      srgbToOklab(cols[i].r, cols[i].g, cols[i].b, lab, i * 3);
+      // Clamp: an out-of-range channel would give NaN Oklab (never selected by
+      // NearestColor), silently painting a region with the wrong ink.
+      const r = clamp255(cols[i].r), g = clamp255(cols[i].g), b = clamp255(cols[i].b);
+      rgb[i * 3] = r; rgb[i * 3 + 1] = g; rgb[i * 3 + 2] = b;
+      srgbToOklab(r, g, b, lab, i * 3);
     }
     return { rgb, lab, count: cols.length };
   }

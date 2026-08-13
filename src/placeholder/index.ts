@@ -51,6 +51,9 @@ export function blurHash(image: RasterImage, componentsX = 4, componentsY = 3): 
   const cx = Math.max(1, Math.min(9, componentsX));
   const cy = Math.max(1, Math.min(9, componentsY));
   const { width, height, data } = image;
+  if (width < 1 || height < 1 || data.length < width * height * 4) {
+    throw new Error('blurHash: image must have positive dimensions and a matching data buffer');
+  }
 
   const factors: Array<[number, number, number]> = [];
   const scale = 1 / (width * height);
@@ -58,8 +61,12 @@ export function blurHash(image: RasterImage, componentsX = 4, componentsY = 3): 
     for (let x = 0; x < cx; x++) {
       const norm = x === 0 && y === 0 ? 1 : 2;
       let r = 0, g = 0, b = 0;
-      for (let j = 0; j < height; j++) {
-        for (let i = 0; i < width; i++) {
+      // Accumulate in the reference BlurHash order (x outer, y inner). The
+      // output is a valid, spec-compliant hash any decoder renders correctly;
+      // it can differ from a given reference encoder in the last quantised bit
+      // at high component counts, purely from float summation order.
+      for (let i = 0; i < width; i++) {
+        for (let j = 0; j < height; j++) {
           const basis = norm * Math.cos((Math.PI * x * i) / width) * Math.cos((Math.PI * y * j) / height);
           const p = (j * width + i) * 4;
           r += basis * srgbToLinear(data[p]);

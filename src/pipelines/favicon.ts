@@ -11,6 +11,7 @@
 import { editImage } from '../ops.js';
 import { encodeRaster } from '../io/encode.js';
 import { encodeIco } from '../io/formats/index.js';
+import { parseCssColor } from '../color.js';
 import type { RasterImage } from '../types.js';
 
 export interface FaviconOptions {
@@ -63,9 +64,22 @@ export async function faviconSet(image: RasterImage, opts: FaviconOptions = {}):
   }
   files.push({ name: 'favicon.ico', bytes: encodeIco(icoEntries) });
 
-  // Standalone PNG icons.
+  const bg = parseCssColor(opts.backgroundColor ?? '#ffffff') ?? { r: 255, g: 255, b: 255, a: 255 };
+
+  // Standalone PNG icons. The maskable one gets a real safe-zone: the icon at
+  // 80% on a background-filled square, so a circular/rounded OS mask never clips
+  // it (without this it was identical to the normal icon).
   for (const icon of PNG_ICONS) {
-    files.push({ name: icon.name, bytes: await png(await square(icon.size)) });
+    let img: RasterImage;
+    if (icon.maskable) {
+      const inner = Math.round(icon.size * 0.8);
+      const pad = Math.round((icon.size - inner) / 2);
+      const scaled = await editImage(image, { resize: { width: inner, height: inner, fit: 'cover' } });
+      img = await editImage(scaled, { extend: { top: pad, bottom: pad, left: pad, right: pad, background: bg } });
+    } else {
+      img = await square(icon.size);
+    }
+    files.push({ name: icon.name, bytes: await png(img) });
   }
 
   const name = opts.name ?? 'App';

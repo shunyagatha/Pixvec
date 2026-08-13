@@ -27,11 +27,13 @@ export function toComponent(svg: string, opts: ComponentOptions): string {
   const name = opts.name ?? 'Icon';
   const jsx = opts.framework === 'react' || opts.framework === 'solid';
 
-  // Editor-namespace attributes (xmlns:inkscape, inkscape:label, …) are noise in
-  // a component and are invalid in JSX; drop them everywhere.
+  // Strip only *editor*-namespace attributes (Inkscape/Sodipodi) — they are noise
+  // and invalid in JSX. Crucially, do NOT strip xlink:href, which carries the
+  // base64 payload of an embedded image; an earlier blanket namespace strip
+  // silently destroyed embed-mode output.
   let body = svg
     .replace(/^<!--[\s\S]*?-->\n?/, '') // strip the generator comment
-    .replace(/\s(?:xmlns:[\w-]+|[a-z]+:[\w-]+)="[^"]*"/gi, '')
+    .replace(/\s(?:xmlns:(?:inkscape|sodipodi)|(?:inkscape|sodipodi):[\w-]+)="[^"]*"/gi, '')
     .trim();
 
   if (opts.currentColor) {
@@ -40,9 +42,14 @@ export function toComponent(svg: string, opts: ComponentOptions): string {
   }
 
   if (jsx) {
-    // JSX wants camelCased attribute names (fill-rule → fillRule, …).
-    body = body.replace(/\s([a-z]+(?:-[a-z]+)+)=/g, (_m, attr: string) =>
-      ` ${attr.replace(/-([a-z])/g, (_x: string, c: string) => c.toUpperCase())}=`);
+    body = body
+      // JSX-supported namespaced attrs become camelCase (xlink:href → xlinkHref).
+      .replace(/\s(xlink:[a-z]+|xmlns:xlink)=/gi, (_m, a: string) =>
+        ` ${a.replace(/[:-]([a-z])/g, (_x: string, c: string) => c.toUpperCase())}=`)
+      // Hyphenated names → camelCase (fill-rule → fillRule), but leave data-*
+      // and aria-*, which JSX requires to stay hyphenated.
+      .replace(/\s(?!data-|aria-)([a-z]+(?:-[a-z]+)+)=/g, (_m, attr: string) =>
+        ` ${attr.replace(/-([a-z])/g, (_x: string, c: string) => c.toUpperCase())}=`);
   }
 
   switch (opts.framework) {

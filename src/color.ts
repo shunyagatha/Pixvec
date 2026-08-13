@@ -34,7 +34,9 @@ export function linearToSrgb(v: number): number {
 
 /** Convert 8-bit sRGB to Oklab, writing into `out` to avoid per-pixel allocation. */
 export function srgbToOklab(r8: number, g8: number, b8: number, out: Float64Array, off = 0): void {
-  const r = SRGB_TO_LINEAR[r8], g = SRGB_TO_LINEAR[g8], b = SRGB_TO_LINEAR[b8];
+  // Mask like srgbToLinear, so an out-of-range channel wraps to a valid entry
+  // rather than reading `undefined` from the table and poisoning the result with NaN.
+  const r = SRGB_TO_LINEAR[r8 & 0xff], g = SRGB_TO_LINEAR[g8 & 0xff], b = SRGB_TO_LINEAR[b8 & 0xff];
 
   const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
   const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;

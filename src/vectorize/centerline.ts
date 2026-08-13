@@ -149,19 +149,45 @@ function zhangSuenThin(m: Uint8Array, P: number, Q: number): void {
   }
 }
 
-/** Walk a 1-pixel skeleton into open polylines, splitting at junctions. */
+// The 8 neighbours in clockwise ring order (N, NE, E, SE, S, SW, W, NW), for the
+// crossing number.
+const RING_CW: ReadonlyArray<readonly [number, number]> = [
+  [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1],
+];
+
+/** Walk a 1-pixel skeleton into open polylines, splitting only at real junctions. */
 function walkSkeleton(m: Uint8Array, P: number, Q: number): Point[][] {
   const fg = (x: number, y: number): boolean => m[y * P + x] === 1;
-  const degree = (x: number, y: number): number => {
-    let d = 0;
-    for (const [dx, dy] of NBRS) if (fg(x + dx, y + dy)) d++;
-    return d;
+  // The crossing number — 0→1 transitions around the neighbour ring — classifies
+  // a skeleton pixel: 1 = endpoint, 2 = pass-through (INCLUDING a right-angle
+  // corner, even when the corner forms an 8-clique that inflates the raw degree),
+  // ≥3 = a genuine branch. Using this instead of the raw neighbour count is what
+  // keeps a bent stroke or a rectangle outline one continuous path.
+  const crossing = (x: number, y: number): number => {
+    let c = 0;
+    for (let k = 0; k < 8; k++) {
+      const a = fg(x + RING_CW[k][0], y + RING_CW[k][1]) ? 1 : 0;
+      const b = fg(x + RING_CW[(k + 1) % 8][0], y + RING_CW[(k + 1) % 8][1]) ? 1 : 0;
+      if (a === 0 && b === 1) c++;
+    }
+    return c;
   };
   const used = new Set<number>();
   const edgeKey = (ax: number, ay: number, bx: number, by: number): number => {
     const a = ay * P + ax, b = by * P + bx;
     const lo = Math.min(a, b), hi = Math.max(a, b);
     return lo * P * Q + hi;
+  };
+  // A diagonal edge whose orthogonal "shoulder" is also foreground is the
+  // hypotenuse of a filled right-angle corner — a shortcut that would let the
+  // walk cut across the corner and orphan an arm. Drop it; the orthogonal path
+  // through the corner keeps the stroke connected. A genuine 1-px diagonal line
+  // has empty shoulders and is kept.
+  const allowed = (ax: number, ay: number, bx: number, by: number): boolean => {
+    if (Math.abs(ax - bx) === 1 && Math.abs(ay - by) === 1) {
+      return !(fg(ax, by) || fg(bx, ay));
+    }
+    return true;
   };
 
   const walk = (sx: number, sy: number): Point[] => {
@@ -171,7 +197,7 @@ function walkSkeleton(m: Uint8Array, P: number, Q: number): Point[][] {
       let next: [number, number, number] | null = null;
       for (const [dx, dy] of NBRS) {
         const nx = cx + dx, ny = cy + dy;
-        if (!fg(nx, ny)) continue;
+        if (!fg(nx, ny) || !allowed(cx, cy, nx, ny)) continue;
         const key = edgeKey(cx, cy, nx, ny);
         if (used.has(key)) continue;
         next = [nx, ny, key];
@@ -181,7 +207,7 @@ function walkSkeleton(m: Uint8Array, P: number, Q: number): Point[][] {
       used.add(next[2]);
       cx = next[0]; cy = next[1];
       pts.push({ x: cx, y: cy });
-      if (degree(cx, cy) !== 2) break; // stop at an endpoint or junction
+      if (crossing(cx, cy) !== 2) break; // stop at an endpoint or junction, pass through corners
     }
     return pts;
   };
@@ -190,7 +216,7 @@ function walkSkeleton(m: Uint8Array, P: number, Q: number): Point[][] {
   const hasUnusedEdge = (x: number, y: number): boolean => {
     for (const [dx, dy] of NBRS) {
       const nx = x + dx, ny = y + dy;
-      if (fg(nx, ny) && !used.has(edgeKey(x, y, nx, ny))) return true;
+      if (fg(nx, ny) && allowed(x, y, nx, ny) && !used.has(edgeKey(x, y, nx, ny))) return true;
     }
     return false;
   };
@@ -199,8 +225,7 @@ function walkSkeleton(m: Uint8Array, P: number, Q: number): Point[][] {
   for (let y = 1; y < Q - 1; y++) {
     for (let x = 1; x < P - 1; x++) {
       if (!fg(x, y)) continue;
-      const d = degree(x, y);
-      if (d === 2) continue;
+      if (crossing(x, y) === 2) continue; // pass-through/corner — walked, not a start
       while (hasUnusedEdge(x, y)) {
         const poly = walk(x, y);
         if (poly.length >= 2) out.push(poly);

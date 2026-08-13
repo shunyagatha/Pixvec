@@ -52,6 +52,29 @@ describe('centerlineTrace', () => {
     expect(centerlineTrace(inv, { blackOnWhite: false }).paths).toBe(1);
   });
 
+  it('keeps a right-angle corner continuous (audit regression)', () => {
+    // An L: horizontal then vertical. The corner must stay one path, not split.
+    const img = white(24, 24);
+    for (let x = 3; x <= 14; x++) setPixel(img, x, 6, 0, 0, 0);
+    for (let y = 6; y <= 18; y++) setPixel(img, 14, y, 0, 0, 0);
+    const out = centerlineTrace(img);
+    expect(out.paths).toBe(1); // one continuous stroke through the corner
+  });
+
+  it('traces a rectangle outline as a single closed loop, corners intact', () => {
+    const img = white(28, 22);
+    for (let x = 3; x <= 24; x++) { setPixel(img, x, 3, 0, 0, 0); setPixel(img, x, 18, 0, 0, 0); }
+    for (let y = 3; y <= 18; y++) { setPixel(img, 3, y, 0, 0, 0); setPixel(img, 24, y, 0, 0, 0); }
+    const out = centerlineTrace(img);
+    expect(out.paths).toBe(1); // not four disjoint edges
+  });
+
+  it('still traces a genuine diagonal line as one stroke', () => {
+    const img = white(20, 20);
+    for (let i = 3; i <= 15; i++) setPixel(img, i, i, 0, 0, 0);
+    expect(centerlineTrace(img).paths).toBe(1);
+  });
+
   it('drops strokes below the minimum length', () => {
     const img = white(60, 60);
     // one long stroke + one 2px speck

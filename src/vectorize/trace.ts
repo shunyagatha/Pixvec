@@ -371,11 +371,15 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       const color = classColor(cls, palette, alphaLevels, levelCount);
       const stroke = strokeFor(shortHex(color.r, color.g, color.b));
       markup = `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
-      label = shortHex(color.r, color.g, color.b);
+      // Include the alpha in the label when it is below opaque, so one colour at
+      // two alpha levels does not produce two indistinguishable separations.
+      label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);
     }
 
     if (o.groupByColor) {
-      doc.addLayer(label, `layer-${label.replace(/[^a-zA-Z0-9-]/g, '')}`, markup);
+      // Key the id off the class, which is unique, so the document never carries
+      // two `<g>`s with the same id (invalid SVG) when colours repeat across alpha.
+      doc.addLayer(label, `layer-${cls}`, markup);
     } else {
       doc.add(markup);
     }

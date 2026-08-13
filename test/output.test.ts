@@ -4,7 +4,7 @@ import { rasterizeSvg } from '../src/io/rasterize.js';
 import { compareImages } from '../src/metrics/index.js';
 import { shortHex } from '../src/color.js';
 import { toComponent } from '../src/emit/component.js';
-import { flatArtwork, photoLike } from './fixtures.js';
+import { flatArtwork, photoLike, createImage, setPixel } from './fixtures.js';
 
 /**
  * Output-shape features: layered SVG (Inkscape/Illustrator layers) and per-colour
@@ -25,6 +25,18 @@ describe('layered SVG (groupByColor)', () => {
     const svg = trace(flatArtwork(80, 60), { colors: 8 }).svg;
     expect(svg).not.toContain('groupmode');
     expect(svg).not.toContain('xmlns:inkscape');
+  });
+
+  it('gives every layer a unique id even when one colour repeats across alpha (audit regression)', () => {
+    // Same RGB at two alpha levels used to collide on id and label.
+    const img = createImage(4, 1);
+    setPixel(img, 0, 0, 255, 255, 255, 255);
+    setPixel(img, 1, 0, 255, 255, 255, 255);
+    setPixel(img, 2, 0, 200, 50, 50, 255);
+    setPixel(img, 3, 0, 200, 50, 50, 128);
+    const svg = trace(img, { colors: 8, alphaLevels: 4, groupByColor: true, minArea: 0 }).svg;
+    const ids = [...svg.matchAll(/<g [^>]*id="([^"]+)"/g)].map((m) => m[1]);
+    expect(ids.length).toBe(new Set(ids).size); // all ids unique — valid SVG
   });
 
   it('rasterises identically to the flat output — same geometry, just grouped', async () => {
@@ -87,6 +99,24 @@ describe('toComponent', () => {
     const c = toComponent(grad, { framework: 'react', currentColor: true });
     expect(c).toMatch(/fill="currentColor"/);
     if (grad.includes('url(#')) expect(c).toContain('url(#'); // gradient refs untouched
+  });
+
+  // Audit regressions.
+  it('preserves xlink:href payload (React → xlinkHref), never strips it', () => {
+    const withImg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image xlink:href="data:image/png;base64,AAAA"/></svg>';
+    const react = toComponent(withImg, { framework: 'react' });
+    expect(react).toContain('data:image/png;base64,AAAA'); // payload survives
+    expect(react).toContain('xlinkHref='); // and is JSX-camelCased
+    const vue = toComponent(withImg, { framework: 'vue' });
+    expect(vue).toContain('xlink:href='); // kept as-is for HTML-like templates
+  });
+
+  it('keeps data-* and aria-* hyphenated in JSX', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" data-icon="x" aria-label="y" fill-rule="evenodd"><path d="M0 0"/></svg>';
+    const c = toComponent(svg, { framework: 'react' });
+    expect(c).toContain('data-icon='); // not dataIcon
+    expect(c).toContain('aria-label='); // not ariaLabel
+    expect(c).toContain('fillRule='); // real attr still camelCased
   });
 });
 
