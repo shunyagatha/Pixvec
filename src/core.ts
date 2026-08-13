@@ -218,5 +218,20 @@ export { toComponent, type Framework, type ComponentOptions } from './emit/compo
 // --- Lazy-load placeholders (pure) -----------------------------------------
 export { blurHash, lqipSvg, type LqipOptions } from './placeholder/index.js';
 
+// --- Non-SVG vector exporters: DXF / EPS / PDF (pure) ----------------------
+// Structured Bézier geometry plus writers for the CAD/CNC/print formats every
+// other JS tracer skips. All pure text — no libvips, no resvg.
+export {
+  traceGeometry,
+  toDxf,
+  toEps,
+  toPdf,
+  type TraceGeometry,
+  type GeometryPath,
+  type DxfOptions,
+  type EpsOptions,
+  type PdfOptions,
+} from './io/export/index.js';
+
 /** Version of the package this build came from. */
-export const VERSION = '1.7.0';
+export const VERSION = '1.8.0';

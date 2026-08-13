@@ -20,6 +20,7 @@ import { faviconSet } from './pipelines/favicon.js';
 import { responsiveSet } from './pipelines/responsive.js';
 import { blurHash, lqipSvg } from './placeholder/index.js';
 import { extractPalette, paletteToCssVars } from './vectorize/quantize.js';
+import { traceGeometry, toDxf, toEps, toPdf } from './io/export/index.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -594,11 +595,43 @@ function toRasterizeOptions(o: SharedCliOptions, output: string): RasterizeCliOp
 }
 
 async function runConvert(input: string, output: string, o: SharedCliOptions): Promise<void> {
-  if (extname(output).toLowerCase() === '.svg') {
+  const ext = extname(output).toLowerCase();
+  if (ext === '.svg') {
     await runVectorize(input, toVectorizeOptions(o, output));
+  } else if (ext === '.dxf' || ext === '.eps' || ext === '.pdf') {
+    await runVectorExport(input, output, ext, o);
   } else {
     await runRasterize(input, toRasterizeOptions(o, output));
   }
+}
+
+/** Raster → a non-SVG vector format (DXF/EPS/PDF) via structured trace geometry. */
+async function runVectorExport(
+  input: string,
+  output: string,
+  ext: '.dxf' | '.eps' | '.pdf',
+  o: SharedCliOptions,
+): Promise<void> {
+  const bytes = await readInput(input);
+  if (looksLikeSvg(bytes)) {
+    fail(`${ext} export needs a raster input; got an SVG. Rasterize it first.`);
+  }
+  const source = await loadRaster(bytes);
+  const geometry = traceGeometry(source.image, { colors: o.colors, tolerance: o.tolerance });
+  const cmyk = Boolean((o as SharedCliOptions & { cmyk?: boolean }).cmyk);
+
+  const data: string | Uint8Array =
+    ext === '.dxf' ? toDxf(geometry)
+      : ext === '.eps' ? toEps(geometry, { cmyk })
+        : toPdf(geometry, { cmyk });
+  await writeOutput(output, data);
+
+  const size = typeof data === 'string' ? Buffer.byteLength(data) : data.length;
+  if (o.json) {
+    emitJson({ input, output, format: ext.slice(1), colorPaths: geometry.paths.length, outputBytes: size });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(output))}  ${dim(`${ext.slice(1).toUpperCase()}  ${geometry.paths.length} colour path(s)  ${formatBytes(size)}`)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1313,7 +1346,7 @@ program
 
 program
   .command('convert')
-  .description('Convert in whichever direction the file extensions imply')
+  .description('Convert in whichever direction the file extensions imply (incl. .svg/.dxf/.eps/.pdf out)')
   .argument('<input>')
   .argument('<output>')
   .addOption(
@@ -1339,6 +1372,7 @@ program
   .option('--bg-tolerance <n>', 'how far a pixel may sit from the background colour (Oklab distance)', floatArg('--bg-tolerance', 0, 1))
   .option('--bg-everywhere', 'remove matching pixels anywhere, not just those reachable from the edge')
   .option('--feather', 'fade the cut instead of a hard edge')
+  .option('--cmyk', 'emit CMYK colours for .pdf/.eps output (print/prepress)')
   .option('--verify', 'measure the result')
   .option('--json', 'machine-readable output')
   .action((input: string, output: string, opts: SharedCliOptions) =>
