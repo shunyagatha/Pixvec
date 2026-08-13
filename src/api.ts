@@ -628,6 +628,31 @@ function runPixel(
  * search short. The best result seen is kept, so a target that turns out to be
  * unreachable still returns the closest attempt rather than the last one.
  */
+/**
+ * When no preset is named, scale the trace settings to the content instead of
+ * always using the lean 16-colour default. A photograph traced with 16 colours
+ * bands visibly; a zero-config `convert photo.png out.svg` should give it a
+ * photo-grade palette and gradient de-banding (which can only help). Flat artwork
+ * keeps the lean default, which is already ideal — and is never sent here anyway,
+ * since auto mode routes it to bit-exact pixel output first.
+ */
+function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
+  const flat = measureFlatness(img, 4096);
+  // Only the palette is widened (plus gradient de-banding for photos). minArea
+  // and the fit tolerances are deliberately left to auto-scale: forcing a larger
+  // minArea here despeckled fine detail — feathers, foliage — and cost more
+  // accuracy than the extra colours bought back.
+  if (flat.capped) {
+    notes.push('Auto-tuned trace for photographic content: 48-colour palette with gradient de-banding.');
+    return { colors: 48, gradients: true };
+  }
+  if (flat.distinctColors > FLAT_COLOR_COUNT) {
+    notes.push(`Auto-tuned trace for rich colour (${flat.distinctColors} colours): 32-colour palette.`);
+    return { colors: 32 };
+  }
+  return {};
+}
+
 async function runTrace(
   input: VectorizeInput,
   opts: VectorizeOptions,
@@ -636,7 +661,7 @@ async function runTrace(
 ): Promise<VectorizeResult> {
   const preset = opts.preset && opts.preset !== 'auto' && opts.preset in PRESETS
     ? PRESETS[opts.preset as keyof typeof PRESETS]
-    : {};
+    : autoTracePreset(input.image, notes);
 
   const base: TraceOptions = {
     ...TRACE_DEFAULTS,

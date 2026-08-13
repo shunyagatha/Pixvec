@@ -250,38 +250,39 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 |---|---|--:|--:|--:|--:|
 | **Bilevel** | potrace | 1.5 KB | 24.67 dB | 0.9511 | 0.702 |
 | | imagetracerjs | 1.7 KB | 19.75 dB | 0.8607 | 1.667 |
-| | **pixvec trace** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
+| | **pixvec (auto)** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
 | **Colour art** | potrace posterize | 1.9 KB | 14.61 dB | 0.8010 | 21.302 |
 | | imagetracerjs | 1.6 KB | 26.56 dB | 0.9363 | 0.662 |
 | | vtracer | 2.0 KB | 27.88 dB | 0.9490 | 0.583 |
-| | **pixvec trace** | 1.8 KB | **∞** | **1.0000** | **0.000** |
+| | **pixvec (auto)** | 1.8 KB | **∞** | **1.0000** | **0.000** |
 | **Photo** (gradient + noise) | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
 | | imagetracerjs | 11.8 KB | 26.85 dB | 0.7143 | 5.623 |
 | | vtracer | 72.6 KB | **32.50 dB** | **0.7958** | 3.053 |
-| | pixvec trace | **9.0 KB** | 26.93 dB | 0.7011 | 4.914 |
+| | pixvec (auto) | **12 KB** | 31.13 dB | 0.7767 | 2.958 |
+| | pixvec photo | 15 KB | 32.19 dB | 0.7923 | **2.704** |
 | | **pixvec lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
 
-**Real photographs** — the Kodak set at 480px, the test that actually matters:
+**Real photographs** — the Kodak set at 480px, the test that actually matters. `pixvec (auto)` is the **zero-config default**: `pixvec convert photo.png out.svg`, which scales the palette to the content on its own.
 
 | Photo | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
 |---|---|--:|--:|--:|--:|
 | **Portrait** (skin, soft) | imagetracerjs | 1621 KB | 25.47 dB | 0.7093 | 5.957 |
 | | vtracer | 1661 KB | 25.79 dB | 0.7590 | 4.774 |
-| | **pixvec** | **588 KB** | **30.19 dB** | **0.8127** | **4.187** |
+| | **pixvec (auto)** | **1338 KB** | **34.80 dB** | **0.9140** | **2.663** |
 | **Lighthouse** (sky) | imagetracerjs | 2010 KB | 24.58 dB | 0.7465 | 4.900 |
 | | vtracer | 1769 KB | 24.23 dB | 0.7588 | 5.678 |
-| | **pixvec** | **919 KB** | **31.94 dB** | **0.8909** | **3.757** |
+| | **pixvec (auto)** | **1743 KB** | **36.26 dB** | **0.9453** | **2.575** |
 | **Parrots** (fine detail) | imagetracerjs | 301 KB | 25.81 dB | 0.7615 | 6.317 |
 | | vtracer | 605 KB | 23.16 dB | 0.7936 | 7.735 |
-| | **pixvec** | **154 KB** | 27.18 dB | 0.7758 | **6.079** |
+| | **pixvec (auto)** | **309 KB** | **31.18 dB** | **0.8460** | **3.686** |
 
 **Bilevel** and **colour art** are bit-exact for pixvec (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
 
-**The synthetic photo** is a pure gradient plus noise, the one fixture pixvec loses: vtracer takes it (0.7958) with its colour-precision tracing, imagetracerjs edges pixvec on SSIM (0.7143 vs 0.7011). But it costs vtracer an **8× larger file** (72.6 vs 9.0 KB).
+**The synthetic photo** — a pure gradient plus noise — is vtracer's best case: it takes the SSIM (0.7958) with fine colour-precision tracing. But pixvec's default reaches 0.7767 (its `photo` preset 0.7923, all but tying) at **one-fifth to one-sixth the file size** (12–15 KB vs 72.6 KB), and already beats imagetracerjs (0.7143). More colours close the last gap; it is not worth 5× the bytes on a synthetic worst case.
 
-**On real photographs the picture inverts.** pixvec **leads SSIM on skin and sky** — 0.8127 and 0.8909, ahead of vtracer's 0.7590 / 0.7588 and imagetracerjs's 0.7093 / 0.7465 — while producing the **smallest file every time** (½ to ⅓ of vtracer's), with the best PSNR and ΔE almost everywhere. The synthetic-worst-case story does not survive contact with actual photographs.
+**On real photographs pixvec is simply ahead — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.19**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7590 / 0.7588 / 0.7936 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR and ΔE, in a **smaller or comparable file every time** (parrots at half vtracer's size). The synthetic-worst-case story does not survive contact with actual photographs.
 
-**Gradient output** (`--gradients`) reconstructs smooth colour ramps — skies, skin — as SVG `<linearGradient>`s instead of flat bands. It is opt-in and **can only help**: a region becomes a gradient only when the gradient's *actual rendered output* (the renderer's sRGB stop interpolation, reproduced and scored per pixel in Oklab) beats the flat bands it would replace, so flat art stays byte-for-byte identical and hard edges are untouched. On the real photos it de-bands the smooth regions and lowers colour error (e.g. parrots ΔE 6.079 → 5.995, PSNR +0.1) — a modest, concentrated win, never a regression.
+**Gradient output** (`--gradients`, and on by default in auto mode for photos) reconstructs smooth colour ramps — skies, skin — as SVG `<linearGradient>`s instead of flat bands. It **can only help**: a region becomes a gradient only when the gradient's *actual rendered output* (the renderer's sRGB stop interpolation, reproduced and scored per pixel in Oklab) beats the flat bands it would replace, so flat art stays byte-for-byte identical and hard edges are untouched — a concentrated de-banding win, never a regression.
 
 > **How the photo result got here.** An earlier version trailed imagetracerjs on the synthetic photo and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
 

@@ -209,9 +209,12 @@ const tracerjs = async (_file, source) =>
     { width: source.width, height: source.height, data: Array.from(source.data) },
     { numberofcolors: 16 },
   );
-const pixvecGradients = async (_file, source) => {
+// `mode: 'trace'` with no preset is exactly what `pixvec convert photo.png
+// out.svg` runs: auto-trace scales the palette to the content, so this row is
+// the honest zero-config default a user actually gets.
+const pixvecPhotoPreset = async (_file, source) => {
   const input = await loadRaster(await toPng(source));
-  return (await vectorize(input, { mode: 'trace', trace: { gradients: true } })).svg;
+  return (await vectorize(input, { mode: 'trace', preset: 'photo', trace: { gradients: true } })).svg;
 };
 const vtracerRun = async (_file, source) => vtracer.vectorize(await toPng(source), vtracer.config);
 
@@ -223,8 +226,8 @@ const withVtracer = (entrants) => (vtracer ? [...entrants, ['vtracer', vtracerRu
 const colourPanel = withVtracer([
   ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
   ['imagetracerjs', tracerjs],
-  ['pixvec trace', pixvecTrace],
-  ['pixvec gradients', pixvecGradients],
+  ['pixvec (auto)', pixvecTrace],
+  ['pixvec photo', pixvecPhotoPreset],
   ['pixvec lossless', pixvecLossless],
 ]);
 
