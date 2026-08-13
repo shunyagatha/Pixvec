@@ -213,6 +213,33 @@ Two rows deserve comment, because glossing over them is how tools mislead you:
 - **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. Pixvec reports the measurement, not the claim.
 - **Photo + `trace` is genuinely approximate.** 0.01% pixels exact is not a bug — it is what tracing a photograph means. If that number matters to you, you want `embed`.
 
+## Compared with other vectorizers
+
+Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Pixvec's own view of quality.
+
+| Fixture | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
+|---|---|--:|--:|--:|--:|
+| **Bilevel** | potrace | 1.5 KB | 24.67 dB | 0.9511 | 0.702 |
+| | imagetracerjs | 1.7 KB | 19.75 dB | 0.8607 | 1.667 |
+| | **pixvec trace** | **1.0 KB** | **25.36 dB** | **0.9587** | **0.612** |
+| | **pixvec lossless** | 1.4 KB | **∞** | **1.0000** | **0.000** |
+| **Colour art** | potrace posterize | 1.9 KB | 14.61 dB | 0.8010 | 21.302 |
+| | imagetracerjs | 1.6 KB | 26.56 dB | 0.9363 | 0.662 |
+| | **pixvec trace** | 1.8 KB | **30.16 dB** | **0.9610** | **0.428** |
+| | **pixvec lossless** | 1.8 KB | **∞** | **1.0000** | **0.000** |
+| **Photo** | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
+| | imagetracerjs | 11.8 KB | 26.85 dB | **0.7143** | 5.623 |
+| | pixvec trace | 13.6 KB | 26.16 dB | 0.6675 | **5.145** |
+| | **pixvec lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
+
+**Bilevel** is potrace's home ground — the case it was designed for. Pixvec is smaller *and* more accurate there, and can be **exact** for less than potrace's approximate output.
+
+**Colour art** is where the gap is widest: 30.16 dB against 26.56 and 14.61. And `lossless` is bit-exact at the same file size as the approximate result, which makes the trade-off moot.
+
+**Photo** is an honest split. imagetracerjs edges ahead on SSIM (0.7143 vs 0.6675) while Pixvec is better on colour error (ΔE 5.15 vs 5.62). Photographic tracing is the weakest part of this library and the place most worth improving — see [Limitations](#limitations).
+
+Two caveats, so the table is not read as more than it is. potrace is *bilevel by design*; its colour rows use `posterize`, which is a bolt-on, and reporting them without saying so would be a rigged fight. And these are synthetic fixtures, chosen so anyone can reproduce them without licensing someone's photographs — no substitute for trying your own images.
+
 ## Metrics
 
 `--verify` reports the standard full-reference measures, computed the way their literature defines them so the values are comparable against other tools:
@@ -355,7 +382,8 @@ Stated plainly, because you should know before you invest:
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
 - **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW do not decode.** See [Formats](#formats).
 - **`pixvec/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
-- **This has not been benchmarked against potrace, vtracer or Illustrator.** The accuracy numbers here are measured against the *input*, which is the meaningful comparison for lossless modes but says nothing about whether the tracer beats the alternatives. Treat "best" as unproven.
+- **Photographic tracing trails imagetracerjs on SSIM** — 0.6675 against 0.7143 on the benchmark fixture, though Pixvec leads on colour error. potrace has a curve-optimisation pass that merges adjacent Béziers where a single curve fits within tolerance; this does not, and implementing it would likely close the gap.
+- **Not compared against Illustrator or vtracer.** The [comparison](#compared-with-other-vectorizers) covers potrace and imagetracerjs, which are what is installable and scriptable. Commercial tracers remain unmeasured.
 
 ## Contributing
 

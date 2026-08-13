@@ -102,7 +102,13 @@ const toPng = (img) =>
 
 /** Score any SVG against the source, using one renderer and one metric set. */
 async function score(source, svg) {
-  const { image: rendered } = await rasterizeSvg(svg, { width: source.width });
+  // Every tool is rendered on the same white ground. potrace emits shapes on a
+  // transparent background, so scoring it against an opaque source without this
+  // would report ~2 dB and be a rigged fight rather than a comparison.
+  const { image: rendered } = await rasterizeSvg(svg, {
+    width: source.width,
+    background: { r: 255, g: 255, b: 255, a: 255 },
+  });
   if (rendered.width !== source.width || rendered.height !== source.height) {
     return { error: `size mismatch ${rendered.width}x${rendered.height}` };
   }
@@ -159,22 +165,22 @@ const tracerjs = async (_file, source) =>
   );
 
 try {
-  await contend('bilevel', bilevelArt(320, 240), [
+  await contend('bilevel', bilevelArt(160, 120), [
     ['potrace', (file) => runPotrace(file, { threshold: 128 })],
     ['imagetracerjs', tracerjs],
     ['pixvec trace', pixvecTrace],
     ['pixvec lossless', pixvecLossless],
   ]);
 
-  await contend('colour art', colourArt(320, 240), [
+  await contend('colour art', colourArt(160, 120), [
     ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
     ['imagetracerjs', tracerjs],
     ['pixvec trace', pixvecTrace],
     ['pixvec lossless', pixvecLossless],
   ]);
 
-  await contend('photo', photoLike(240, 180), [
-    ['potrace posterize', (file) => runPosterize(file, { steps: 6 })],
+  await contend('photo', photoLike(120, 90), [
+    ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
     ['imagetracerjs', tracerjs],
     ['pixvec trace', pixvecTrace],
     ['pixvec lossless', pixvecLossless],
