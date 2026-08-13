@@ -22,6 +22,7 @@ import { blurHash, lqipSvg } from './placeholder/index.js';
 import { extractPalette, paletteToCssVars } from './vectorize/quantize.js';
 import { traceGeometry, toDxf, toEps, toPdf, toGcode } from './io/export/index.js';
 import { centerlineTrace, centerlinePolylines } from './vectorize/centerline.js';
+import { startMcpServer } from './mcp/server.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -1394,6 +1395,11 @@ program
   .option('--min-length <px>', 'drop strokes shorter than this', floatArg('--min-length', 0, 1000), 3)
   .option('--json', 'machine-readable output on stdout')
   .action(runCenterline);
+
+program
+  .command('mcp')
+  .description('Start the MCP server (stdio), exposing pixvec as tools for AI agents/IDEs')
+  .action(() => { startMcpServer(); });
 
 program
   .command('gcode')

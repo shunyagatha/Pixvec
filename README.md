@@ -408,7 +408,10 @@ pixvec gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter 
 pixvec convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
 pixvec verify a.png b.svg          # measure any two images
 pixvec batch 'src/**/*.png' -o out/ --to svg
+pixvec mcp                         # MCP server: expose pixvec as tools to AI agents/IDEs
 ```
+
+**AI-native.** `pixvec mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call pixvec directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Seven tools (`vectorize`, `convert`, `centerline`, `measure`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["pixvec", "mcp"] }`.
 
 `pixvec component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours.
 
