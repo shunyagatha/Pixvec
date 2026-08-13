@@ -1,0 +1,14 @@
+node_modules/
+dist/
+tmp/
+coverage/
+bench-out/
+
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+.idea/
+.vscode/
+*.tsbuildinfo

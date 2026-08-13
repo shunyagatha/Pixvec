@@ -1,0 +1,189 @@
+import { deltaE2000, luma709, srgbToLab } from '../color.js';
+import { compositeOver, premultiply, sameSize } from '../image.js';
+import type { AlphaMode, QualityReport, RasterImage, Rgba } from '../types.js';
+import { ssimPlane } from './ssim.js';
+
+export { ssimPlane };
+
+export interface CompareOptions {
+  /**
+   * `premultiplied` (default) treats colour under zero alpha as invisible, which
+   * is what a renderer does. `straight` compares the raw stored bytes.
+   */
+  alphaMode?: AlphaMode;
+  /** Background used to flatten both images before the CIEDE2000 pass. */
+  deltaEBackground?: Rgba;
+  /** Skip the CIEDE2000 pass, which is the expensive part on large photos. */
+  skipDeltaE?: boolean;
+  /** Skip SSIM, which allocates six float planes per channel. */
+  skipSsim?: boolean;
+}
+
+const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
+
+/**
+ * Full-reference comparison of two same-sized images.
+ *
+ * Every number here is computed the way the corresponding literature defines it,
+ * so the values are comparable against other tools rather than being a private
+ * scale. `psnr` is `Infinity` exactly when the images are bit-identical under
+ * the chosen alpha model.
+ */
+export function compareImages(
+  reference: RasterImage,
+  candidate: RasterImage,
+  opts: CompareOptions = {},
+): QualityReport {
+  if (!sameSize(reference, candidate)) {
+    throw new Error(
+      `Cannot compare images of different sizes: ` +
+        `${reference.width}x${reference.height} vs ${candidate.width}x${candidate.height}`,
+    );
+  }
+
+  const alphaMode = opts.alphaMode ?? 'premultiplied';
+  const bg = opts.deltaEBackground ?? WHITE;
+
+  const a = alphaMode === 'premultiplied' ? premultiply(reference) : reference.data;
+  const b = alphaMode === 'premultiplied' ? premultiply(candidate) : candidate.data;
+
+  const width = reference.width;
+  const height = reference.height;
+  const pixels = width * height;
+
+  let sqErr = 0;
+  let exactPixels = 0;
+  let maxChannelDiff = 0;
+
+  for (let i = 0; i < pixels; i++) {
+    const o = i * 4;
+    const d0 = a[o] - b[o];
+    const d1 = a[o + 1] - b[o + 1];
+    const d2 = a[o + 2] - b[o + 2];
+    const d3 = a[o + 3] - b[o + 3];
+
+    sqErr += d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+
+    if (d0 === 0 && d1 === 0 && d2 === 0 && d3 === 0) {
+      exactPixels++;
+    } else {
+      const m = Math.max(Math.abs(d0), Math.abs(d1), Math.abs(d2), Math.abs(d3));
+      if (m > maxChannelDiff) maxChannelDiff = m;
+    }
+  }
+
+  const mse = sqErr / (pixels * 4);
+  const rmse = Math.sqrt(mse);
+  const psnr = mse === 0 ? Infinity : 10 * Math.log10((255 * 255) / mse);
+  const lossless = exactPixels === pixels;
+
+  let ssim = 1;
+  let ssimLuma = 1;
+  if (!lossless && !opts.skipSsim) {
+    const planesA = extractPlanes(a, pixels);
+    const planesB = extractPlanes(b, pixels);
+
+    const channelScores: number[] = [];
+    for (let c = 0; c < 3; c++) {
+      channelScores.push(ssimPlane(planesA.rgb[c], planesB.rgb[c], width, height));
+    }
+    ssim = channelScores.reduce((s, v) => s + v, 0) / channelScores.length;
+    ssimLuma = ssimPlane(planesA.luma, planesB.luma, width, height);
+  }
+
+  let deltaE = { mean: 0, p95: 0, max: 0 };
+  if (!lossless && !opts.skipDeltaE) {
+    deltaE = deltaEStats(reference, candidate, bg);
+  }
+
+  return {
+    width,
+    height,
+    pixels,
+    exactPixels,
+    exactRatio: pixels === 0 ? 1 : exactPixels / pixels,
+    maxChannelDiff,
+    mse,
+    rmse,
+    psnr,
+    ssim,
+    ssimLuma,
+    deltaE,
+    deltaEBackground: bg,
+    alphaMode,
+    lossless,
+  };
+}
+
+function extractPlanes(rgba: Uint8ClampedArray, pixels: number) {
+  const r = new Float64Array(pixels);
+  const g = new Float64Array(pixels);
+  const b = new Float64Array(pixels);
+  const luma = new Float64Array(pixels);
+  for (let i = 0; i < pixels; i++) {
+    const o = i * 4;
+    r[i] = rgba[o];
+    g[i] = rgba[o + 1];
+    b[i] = rgba[o + 2];
+    luma[i] = luma709(rgba[o], rgba[o + 1], rgba[o + 2]);
+  }
+  return { rgb: [r, g, b] as const, luma };
+}
+
+/**
+ * CIEDE2000 statistics over both images flattened onto `bg`.
+ *
+ * The percentile comes from a 0.01-wide histogram rather than a sorted array:
+ * a 12-megapixel comparison would otherwise need a 48 MB buffer just to answer
+ * "what is the 95th percentile".
+ */
+function deltaEStats(
+  reference: RasterImage,
+  candidate: RasterImage,
+  bg: Rgba,
+): { mean: number; p95: number; max: number } {
+  const flatA = compositeOver(reference, bg);
+  const flatB = compositeOver(candidate, bg);
+  const pixels = reference.width * reference.height;
+
+  const BINS = 10_001; // 0.00 .. 100.00 in 0.01 steps
+  const hist = new Uint32Array(BINS);
+  const labA = new Float64Array(3);
+  const labB = new Float64Array(3);
+
+  let sum = 0;
+  let max = 0;
+
+  for (let i = 0; i < pixels; i++) {
+    const o = i * 3;
+    const ra = flatA[o], ga = flatA[o + 1], ba = flatA[o + 2];
+    const rb = flatB[o], gb = flatB[o + 1], bb = flatB[o + 2];
+
+    if (ra === rb && ga === gb && ba === bb) {
+      hist[0]++;
+      continue;
+    }
+
+    srgbToLab(ra, ga, ba, labA);
+    srgbToLab(rb, gb, bb, labB);
+    const de = deltaE2000(labA[0], labA[1], labA[2], labB[0], labB[1], labB[2]);
+
+    sum += de;
+    if (de > max) max = de;
+    const bin = Math.min(BINS - 1, Math.round(de * 100));
+    hist[bin]++;
+  }
+
+  const target = Math.ceil(pixels * 0.95);
+  let cumulative = 0;
+  let p95 = 0;
+  for (let i = 0; i < BINS; i++) {
+    cumulative += hist[i];
+    if (cumulative >= target) {
+      p95 = i / 100;
+      break;
+    }
+  }
+
+  return { mean: pixels === 0 ? 0 : sum / pixels, p95, max };
+}

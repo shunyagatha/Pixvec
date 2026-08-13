@@ -1,0 +1,14 @@
+# Normalise to LF in the repository regardless of the contributor's platform.
+# Image tooling is developed across Linux, macOS and Windows, and a CRLF commit
+# from one of them makes every subsequent diff unreadable.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.tif binary
+*.tiff binary
+*.gif binary
+*.ico binary

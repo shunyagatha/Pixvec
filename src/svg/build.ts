@@ -1,0 +1,87 @@
+import type { Rgba } from '../types.js';
+import { shortHex } from '../color.js';
+
+export interface SvgDocOptions {
+  width: number;
+  height: number;
+  /** Emitted as a comment at the top of the file. */
+  generator?: string;
+  /** `shape-rendering` on the root group. `crispEdges` disables antialiasing. */
+  shapeRendering?: 'auto' | 'crispEdges' | 'optimizeSpeed' | 'geometricPrecision';
+  /** Set on the root `<svg>`; omit for a document that scales freely. */
+  emitDimensions?: boolean;
+  /** Human-readable `<title>`. */
+  title?: string;
+}
+
+/** Assembles an SVG 1.1 / SVG 2 compatible document from pre-serialised children. */
+export class SvgDoc {
+  private children: string[] = [];
+
+  constructor(private readonly opts: SvgDocOptions) {}
+
+  add(markup: string): this {
+    this.children.push(markup);
+    return this;
+  }
+
+  /** A full-canvas background rectangle. Cheaper than repeating the same fill. */
+  addBackground(color: Rgba): this {
+    const { width, height } = this.opts;
+    return this.add(
+      `<path d="M0 0h${width}v${height}H0z"${fillAttrs(color)}/>`,
+    );
+  }
+
+  toString(): string {
+    const { width, height, generator, shapeRendering, emitDimensions = true, title } = this.opts;
+
+    const attrs = [
+      'xmlns="http://www.w3.org/2000/svg"',
+      `viewBox="0 0 ${width} ${height}"`,
+    ];
+    if (emitDimensions) {
+      attrs.splice(1, 0, `width="${width}"`, `height="${height}"`);
+    }
+    if (shapeRendering && shapeRendering !== 'auto') {
+      attrs.push(`shape-rendering="${shapeRendering}"`);
+    }
+
+    const head = generator ? `<!-- ${escapeComment(generator)} -->\n` : '';
+    const titleEl = title ? `<title>${escapeText(title)}</title>` : '';
+
+    return `${head}<svg ${attrs.join(' ')}>${titleEl}${this.children.join('')}</svg>\n`;
+  }
+
+  get childCount(): number {
+    return this.children.length;
+  }
+}
+
+/**
+ * `fill` plus, when needed, `fill-opacity`.
+ *
+ * `fill="rgba(...)"` is CSS Color 4 and not every SVG 1.1 renderer accepts it,
+ * so alpha goes through `fill-opacity` — which every renderer has supported
+ * since 2001.
+ */
+export function fillAttrs(c: Rgba): string {
+  const fill = ` fill="${shortHex(c.r, c.g, c.b)}"`;
+  if (c.a >= 255) return fill;
+  // Three decimals resolves all 256 alpha steps unambiguously (1/255 ≈ 0.0039).
+  const o = (c.a / 255).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  return `${fill} fill-opacity="${o.startsWith('0.') ? o.slice(1) : o}"`;
+}
+
+export function escapeText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function escapeAttr(s: string): string {
+  return escapeText(s).replace(/"/g, '&quot;');
+}
+
+/** XML comments may not contain `--`. */
+export function escapeComment(s: string): string {
+  return s.replace(/--+/g, '-').replace(/-$/, '');
+}

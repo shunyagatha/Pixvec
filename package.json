@@ -1,0 +1,76 @@
+{
+  "name": "vexel",
+  "version": "0.1.0",
+  "description": "High-accuracy, measurable raster <-> SVG conversion. Pixel-exact lossless vectorization, quality-targeted tracing, and exact SVG rasterization - with built-in PSNR/SSIM/deltaE verification.",
+  "keywords": [
+    "svg",
+    "vectorize",
+    "vectorizer",
+    "raster",
+    "rasterize",
+    "png-to-svg",
+    "jpg-to-svg",
+    "webp-to-svg",
+    "svg-to-png",
+    "image-trace",
+    "potrace",
+    "lossless",
+    "ssim",
+    "psnr",
+    "delta-e"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shunyagatha/vexel.git"
+  },
+  "homepage": "https://github.com/shunyagatha/vexel#readme",
+  "bugs": {
+    "url": "https://github.com/shunyagatha/vexel/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "vexel": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke.mjs",
+    "bench": "node scripts/bench.mjs",
+    "cli": "node --enable-source-maps dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "commander": "^12.1.0",
+    "sharp": "^0.34.2",
+    "tinyglobby": "^0.2.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "sharp@0.34.5": true
+  }
+}
