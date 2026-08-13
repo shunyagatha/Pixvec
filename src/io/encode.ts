@@ -1,6 +1,9 @@
 import sharp from 'sharp';
 import type { RasterFormat, RasterImage, Rgba } from '../types.js';
-import { encodeBmp, encodeIco, encodeIcoDib, encodePnm, encodeTga } from './formats/encoders.js';
+import {
+  encodeBmp, encodeIco, encodeIcoDib, encodePnm, encodeTga,
+  type BmpEncodeOptions, type PnmEncodeOptions, type TgaEncodeOptions,
+} from './formats/encoders.js';
 
 export interface EncodeOptions {
   format: RasterFormat;
@@ -14,6 +17,15 @@ export interface EncodeOptions {
   background?: Rgba;
   /** Written into the container so viewers report the right physical size. */
   density?: number;
+  /**
+   * Format-specific encoder knobs for the pure-TypeScript encoders. Ignored for
+   * the libvips-backed formats. Without these, `bmp`/`pnm`/`tga` are reachable
+   * but stuck on their defaults — 24/32-bit BMP, P6 PNM, RLE TGA — with no way
+   * to request greyscale PNM or an uncompressed TGA.
+   */
+  bmp?: Omit<BmpEncodeOptions, 'background'>;
+  pnm?: Omit<PnmEncodeOptions, 'background'>;
+  tga?: Omit<TgaEncodeOptions, 'background'>;
 }
 
 const OPAQUE_WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
@@ -33,13 +45,14 @@ export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promi
   // so the conversion matrix is square: anything readable is also writable.
   switch (format) {
     case 'bmp':
-      return Buffer.from(encodeBmp(img, { background }));
+      return Buffer.from(encodeBmp(img, { background, ...opts.bmp }));
     case 'pnm':
-      return Buffer.from(encodePnm(img, { background }));
+      return Buffer.from(encodePnm(img, { background, ...opts.pnm }));
     case 'tga':
       // RLE is a clear win on the flat artwork that reaches TGA in practice,
       // and the encoder falls back to raw packets rather than inflating noise.
-      return Buffer.from(encodeTga(img, { background, rle: true }));
+      // A caller can turn it off via `opts.tga.rle` when they want raw packets.
+      return Buffer.from(encodeTga(img, { background, rle: true, ...opts.tga }));
     case 'ico': {
       // PNG payloads are what every icon above 48px uses, and libvips is right
       // here, so use it rather than the larger uncompressed DIB.

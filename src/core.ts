@@ -131,7 +131,13 @@ export {
   type Segment,
 } from './vectorize/fit.js';
 
-// --- Format decoders written from scratch, so they need no codec -----------
+// --- Format codecs written from scratch, so they need no libvips -----------
+//
+// The decoders *and* the matching encoders both live here, so a browser or edge
+// consumer of pixvec/core can round-trip BMP, ICO, PNM and TGA with no native
+// dependency. Exporting only the decoders (as an earlier version did) made the
+// "square conversion matrix" claim false for the portable build: those callers
+// could read the four formats but not write them.
 export {
   decodeBmp,
   decodeIco,
@@ -145,11 +151,23 @@ export {
   isIco,
   isPnm,
   isTga,
+  encodeBmp,
+  encodePnm,
+  encodeTga,
+  encodeIco,
+  encodeIcoDib,
   type FallbackFormat,
   type SignatureFormat,
   type FallbackResult,
   type IcoEntry,
+  type BmpEncodeOptions,
+  type PnmEncodeOptions,
+  type TgaEncodeOptions,
+  type IcoEntryInput,
 } from './io/formats/index.js';
+
+// --- Preprocessing that stays pure -----------------------------------------
+export { autoMinArea } from './vectorize/trace.js';
 
 // --- Byte helpers, useful when feeding the decoders ------------------------
 export { toBase64, fromBase64, bytesEqual, latin1 } from './io/formats/bytes.js';

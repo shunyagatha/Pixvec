@@ -54,6 +54,24 @@
       "require": "./dist/cjs/core.js",
       "default": "./dist/esm/core.js"
     },
+    "./vectorize": {
+      "types": "./dist/esm/vectorize/index.d.ts",
+      "import": "./dist/esm/vectorize/index.js",
+      "require": "./dist/cjs/vectorize/index.js",
+      "default": "./dist/esm/vectorize/index.js"
+    },
+    "./metrics": {
+      "types": "./dist/esm/metrics/index.d.ts",
+      "import": "./dist/esm/metrics/index.js",
+      "require": "./dist/cjs/metrics/index.js",
+      "default": "./dist/esm/metrics/index.js"
+    },
+    "./formats": {
+      "types": "./dist/esm/io/formats/index.d.ts",
+      "import": "./dist/esm/io/formats/index.js",
+      "require": "./dist/cjs/io/formats/index.js",
+      "default": "./dist/esm/io/formats/index.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -71,7 +89,7 @@
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
     "bench": "node scripts/bench.mjs",
-    "cli": "node --enable-source-maps dist/cli.js",
+    "cli": "node --enable-source-maps dist/esm/cli.js",
     "prepare": "npm run build",
     "build:esm": "tsc -p tsconfig.json",
     "build:cjs": "tsc -p tsconfig.cjs.json",

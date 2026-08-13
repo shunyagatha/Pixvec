@@ -447,6 +447,8 @@ interface SharedCliOptions {
   mode?: string;
   preset?: string;
   colors?: number;
+  tolerance?: number;
+  precision?: number;
   width?: number;
   height?: number;
   scale?: number;
@@ -454,6 +456,10 @@ interface SharedCliOptions {
   background?: Rgba;
   quality?: number;
   lossless?: boolean;
+  transparent?: boolean | string;
+  bgTolerance?: number;
+  bgEverywhere?: boolean;
+  feather?: boolean;
   verify?: boolean;
   json?: boolean;
 }
@@ -464,8 +470,14 @@ function toVectorizeOptions(o: SharedCliOptions, output: string): VectorizeCliOp
     mode: o.mode ?? 'auto',
     preset: o.preset ?? 'auto',
     colors: o.colors,
+    tolerance: o.tolerance,
+    precision: o.precision,
     lossless: o.lossless,
     prefer: 'auto',
+    transparent: o.transparent,
+    bgTolerance: o.bgTolerance,
+    bgEverywhere: o.bgEverywhere,
+    feather: o.feather,
     // Vectorize's own meaning: collapse the dominant colour into one rectangle.
     background: true,
     embedStrategy: 'auto',
@@ -484,6 +496,10 @@ function toRasterizeOptions(o: SharedCliOptions, output: string): RasterizeCliOp
     background: o.background,
     quality: o.quality ?? 92,
     lossless: o.lossless,
+    transparent: o.transparent,
+    bgTolerance: o.bgTolerance,
+    bgEverywhere: o.bgEverywhere,
+    feather: o.feather,
     shapeRendering: 'geometricPrecision',
     textRendering: 'optimizeLegibility',
     imageRendering: 'optimizeQuality',
@@ -831,7 +847,7 @@ program
   .option('-f, --format <fmt>', 'output format (inferred from the extension otherwise)')
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
   .option('--lossless', 'lossless WebP/AVIF')
-  .option('--effort <n>', 'encoder effort')
+  .option('--effort <n>', 'encoder effort (PNG 0-9, WebP 0-6, AVIF 0-9)', intArg('--effort', 0, 10))
   .addOption(
     new Option('--shape-rendering <mode>', 'antialiasing for shapes')
       .choices(['optimizeSpeed', 'crispEdges', 'geometricPrecision'])
@@ -862,14 +878,29 @@ program
   .description('Convert in whichever direction the file extensions imply')
   .argument('<input>')
   .argument('<output>')
-  .option('-m, --mode <mode>', 'conversion strategy for raster → SVG', 'auto')
-  .option('-p, --preset <preset>', 'tuning profile', 'auto')
+  .addOption(
+    new Option('-m, --mode <mode>', 'conversion strategy for raster → SVG')
+      .choices(['auto', 'lossless', 'pixel', 'trace', 'embed'])
+      .default('auto'),
+  )
+  .addOption(
+    new Option('-p, --preset <preset>', 'tuning profile')
+      .choices(['auto', ...Object.keys(PRESETS), 'pixelart', 'exact'])
+      .default('auto'),
+  )
   .option('-c, --colors <n>', 'palette size', intArg('--colors', 1, 256))
+  .option('--tolerance <px>', 'outline simplification tolerance', floatArg('--tolerance', 0, 100))
+  .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('-w, --width <px>', 'output width for SVG → raster', intArg('--width', 1, 100000))
   .option('-h, --height <px>', 'output height for SVG → raster', intArg('--height', 1, 100000))
   .option('-s, --scale <factor>', 'uniform zoom', floatArg('--scale', 0.001, 1000))
   .option('-b, --background <color>', 'background colour', colorArg)
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
+  .option('-l, --lossless', 'guarantee a bit-exact result, or fail')
+  .option('-t, --transparent [color]', 'make the background transparent; detects the colour when omitted')
+  .option('--bg-tolerance <n>', 'how far a pixel may sit from the background colour (Oklab distance)', floatArg('--bg-tolerance', 0, 1))
+  .option('--bg-everywhere', 'remove matching pixels anywhere, not just those reachable from the edge')
+  .option('--feather', 'fade the cut instead of a hard edge')
   .option('--verify', 'measure the result')
   .option('--json', 'machine-readable output')
   .action((input: string, output: string, opts: SharedCliOptions) =>
@@ -916,12 +947,23 @@ program
   .argument('<patterns...>', 'glob patterns')
   .requiredOption('-o, --out-dir <dir>', 'destination directory')
   .option('--to <ext>', 'target extension', 'svg')
-  .option('-m, --mode <mode>', 'conversion strategy', 'auto')
-  .option('-p, --preset <preset>', 'tuning profile', 'auto')
+  .addOption(
+    new Option('-m, --mode <mode>', 'conversion strategy')
+      .choices(['auto', 'lossless', 'pixel', 'trace', 'embed'])
+      .default('auto'),
+  )
+  .addOption(
+    new Option('-p, --preset <preset>', 'tuning profile')
+      .choices(['auto', ...Object.keys(PRESETS), 'pixelart', 'exact'])
+      .default('auto'),
+  )
   .option('-c, --colors <n>', 'palette size', intArg('--colors', 1, 256))
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
+  .option('-l, --lossless', 'guarantee a bit-exact result, or fail')
+  .option('-t, --transparent [color]', 'make the background transparent; detects the colour when omitted')
   .option('--concurrency <n>', 'parallel workers', intArg('--concurrency', 1, 64), 4)
   .option('--verify', 'measure every result')
+  .option('--json', 'machine-readable output')
   .action((patterns: string[], opts: SharedCliOptions & { outDir: string; to: string; concurrency: number }) =>
     runBatch(patterns, opts as unknown as BatchCliOptions),
   );

@@ -31,6 +31,7 @@ const CORE_MODULES = [
   'vectorize/pixel.ts',
   'vectorize/exact.ts',
   'vectorize/trace.ts',
+  'vectorize/index.ts',
   'io/formats/bytes.ts',
   'io/formats/bmp.ts',
   'io/formats/ico.ts',
@@ -133,6 +134,36 @@ describe('pixvec/core surface', () => {
       'toBase64', 'fromBase64',
     ]) {
       expect(typeof (core as Record<string, unknown>)[name]).toBe('function');
+    }
+  });
+
+  /**
+   * The square-matrix claim has to hold for the portable build too. An earlier
+   * version exported only the decoders, so a browser consumer could read BMP,
+   * ICO, PNM and TGA but not write them — the matrix was a half-matrix there.
+   */
+  it('exposes the pure-TypeScript encoders, not just the decoders', () => {
+    for (const name of ['encodeBmp', 'encodePnm', 'encodeTga', 'encodeIco', 'encodeIcoDib']) {
+      expect(typeof (core as Record<string, unknown>)[name]).toBe('function');
+    }
+  });
+
+  it('round-trips BMP/PNM/TGA through core alone, no codec involved', () => {
+    const source = flatArtwork(24, 18);
+    const codecs: Array<[string, (img: typeof source) => Uint8Array]> = [
+      ['bmp', core.encodeBmp],
+      ['pnm', (img) => core.encodePnm(img, { variant: 'P6' })],
+      ['tga', (img) => core.encodeTga(img, { rle: true })],
+    ];
+
+    for (const [name, encode] of codecs) {
+      const bytes = encode(source);
+      const decoded = core.decodeFallback(bytes) ?? core.decodeTgaFallback(bytes);
+      expect(decoded, `${name} did not decode`).not.toBeNull();
+      const image = decoded!.image!;
+      expect([image.width, image.height], `${name} size`).toEqual([source.width, source.height]);
+      // These are lossless formats; the pixels must survive exactly.
+      expect(core.compareImages(source, image).lossless, `${name} not bit-exact`).toBe(true);
     }
   });
 
