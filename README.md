@@ -2,7 +2,7 @@
 
 **Measurable raster ⇄ SVG conversion.** Ten raster formats to SVG — and back — with the accuracy of every conversion actually measured rather than asserted.
 
-[![CI](https://github.com/shunyagatha/pixvec/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/pixvec/actions/workflows/ci.yml)
+[![CI](https://github.com/shunyagatha/Pixvec/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/Pixvec/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
@@ -51,8 +51,8 @@ Anyone promising exact photo-to-curves vectorization is either embedding a bitma
 Not on npm yet. Install from source:
 
 ```bash
-git clone https://github.com/shunyagatha/pixvec.git
-cd pixvec
+git clone https://github.com/shunyagatha/Pixvec.git
+cd Pixvec
 npm install
 npm run build
 npm link          # puts `pixvec` on your PATH
@@ -61,7 +61,7 @@ npm link          # puts `pixvec` on your PATH
 Or install straight from GitHub:
 
 ```bash
-npm install -g github:shunyagatha/pixvec
+npm install -g github:shunyagatha/Pixvec
 ```
 
 Requires Node.js 18.17+. Native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows, so no compiler toolchain is needed.
@@ -273,8 +273,8 @@ Stated plainly, because you should know before you invest:
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/shunyagatha/pixvec.git
-cd pixvec
+git clone https://github.com/shunyagatha/Pixvec.git
+cd Pixvec
 npm install
 npm run build
 npm test

@@ -5,8 +5,8 @@ Thanks for considering it. This document covers the things that are specific to 
 ## Getting set up
 
 ```bash
-git clone https://github.com/shunyagatha/pixvec.git
-cd pixvec
+git clone https://github.com/shunyagatha/Pixvec.git
+cd Pixvec
 npm install
 npm run build
 npm test

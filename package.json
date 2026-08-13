@@ -29,11 +29,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shunyagatha/pixvec.git"
+    "url": "git+https://github.com/shunyagatha/Pixvec.git"
   },
-  "homepage": "https://github.com/shunyagatha/pixvec#readme",
+  "homepage": "https://github.com/shunyagatha/Pixvec#readme",
   "bugs": {
-    "url": "https://github.com/shunyagatha/pixvec/issues"
+    "url": "https://github.com/shunyagatha/Pixvec/issues"
   },
   "type": "module",
   "engines": {
