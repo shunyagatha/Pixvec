@@ -18,6 +18,7 @@ import { editImage, hasOps, type OpsChain } from './ops.js';
 import { toComponent, type Framework } from './emit/component.js';
 import { faviconSet } from './pipelines/favicon.js';
 import { responsiveSet } from './pipelines/responsive.js';
+import { traceAnimation } from './pipelines/animate.js';
 import { blurHash, lqipSvg } from './placeholder/index.js';
 import { extractPalette, paletteToCssVars } from './vectorize/quantize.js';
 import { traceGeometry, toDxf, toEps, toPdf, toGcode } from './io/export/index.js';
@@ -937,6 +938,40 @@ async function runComponent(input: string, o: ComponentCliOptions): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// animate (GIF/APNG → animated SVG)
+// ---------------------------------------------------------------------------
+
+async function runAnimate(
+  input: string,
+  o: { output?: string; colors: number; maxFrames?: number; fps: number; loop?: boolean; minify?: boolean; json?: boolean },
+): Promise<void> {
+  const bytes = await readInput(input);
+  const result = await traceAnimation(bytes, {
+    maxFrames: o.maxFrames,
+    fps: o.fps,
+    loop: o.loop,
+    trace: { colors: o.colors },
+  });
+  let svg = result.svg;
+  if (o.minify) svg = optimizeSvg(svg);
+
+  const outPath = o.output ?? defaultOutput(input, '.svg');
+  await writeOutput(outPath, svg);
+
+  if (o.json) {
+    emitJson({
+      input, output: outPath,
+      frames: result.frames, sourceFrames: result.sourceFrames,
+      width: result.width, height: result.height,
+      duration: result.duration, outputBytes: Buffer.byteLength(svg),
+    });
+    return;
+  }
+  const framesNote = result.frames < result.sourceFrames ? `${result.frames}/${result.sourceFrames} frames` : `${result.frames} frames`;
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${result.width}×${result.height}  ${framesNote}  ${result.duration.toFixed(2)}s loop  ${formatBytes(Buffer.byteLength(svg))}`)}`);
+}
+
+// ---------------------------------------------------------------------------
 // crop (content-aware)
 // ---------------------------------------------------------------------------
 
@@ -1533,6 +1568,19 @@ program
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100))
   .option('--json', 'machine-readable output on stdout')
   .action(runCrop);
+
+program
+  .command('animate')
+  .description('Trace an animated GIF/APNG into one CSS-animated SVG (shared palette, no JS)')
+  .argument('<input>', 'animated GIF or APNG')
+  .option('-o, --output <file>', 'output SVG path (default <input>.svg)')
+  .option('-c, --colors <n>', 'palette size shared across frames', intArg('--colors', 2, 256), 16)
+  .option('--max-frames <n>', 'cap frames (sampled evenly) to bound size', intArg('--max-frames', 1, 1000))
+  .option('--fps <n>', 'playback rate when the source carries no delays', floatArg('--fps', 0.1, 60), 10)
+  .option('--no-loop', 'freeze on the first frame (no animation)')
+  .option('--minify', 'minify the assembled SVG')
+  .option('--json', 'machine-readable output on stdout')
+  .action(runAnimate);
 
 program
   .command('optimize')

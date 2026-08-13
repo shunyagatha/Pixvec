@@ -28,6 +28,7 @@ const CORE_MODULES = [
   'svg/optimize.ts',
   'emit/component.ts',
   'emit/sprite.ts',
+  'emit/animate.ts',
   'placeholder/index.ts',
   'io/export/geometry.ts',
   'io/export/shared.ts',
@@ -136,7 +137,7 @@ describe('pixvec/core portability', () => {
       'index.ts', 'api.ts', 'cli.ts', 'ops.ts',
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts',
       'vectorize/embed.ts',
-      'pipelines/favicon.ts', 'pipelines/responsive.ts',
+      'pipelines/favicon.ts', 'pipelines/responsive.ts', 'pipelines/animate.ts',
       'mcp/server.ts', 'plugin/vite.ts',
     ]);
     const unclassified = found.filter((f) => !nodeOnly.has(f) && !CORE_MODULES.includes(f));

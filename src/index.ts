@@ -60,6 +60,11 @@ export {
   type ResponsiveSet,
   type ResponsiveVariant,
 } from './pipelines/responsive.js';
+export {
+  traceAnimation,
+  type TraceAnimationOptions,
+  type AnimationResult,
+} from './pipelines/animate.js';
 
 // --- Orchestration, including the verified lossless guarantee --------------
 export {
