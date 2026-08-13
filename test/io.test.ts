@@ -181,4 +181,27 @@ describe('rasterizeSvg', () => {
   it('reports a useful error for malformed SVG', async () => {
     await expect(rasterizeSvg('<svg><unclosed>')).rejects.toThrow(/Failed to parse SVG/);
   });
+
+  /**
+   * Regression: `background` means a boolean to the vectorizer ("collapse the
+   * dominant colour") and an RGBA colour here. A CLI path forwarded the boolean,
+   * which stringified to `rgba(undefined,undefined,undefined,NaN)` and surfaced
+   * as "invalid number at position 6" — an error pointing nowhere near the bug.
+   */
+  it('rejects a background that is not an RGBA object', async () => {
+    const svg = square(4, 4);
+    for (const bad of [true, 'white', 42, {}, { r: 1, g: 2, b: 3 }]) {
+      await expect(
+        rasterizeSvg(svg, { background: bad as never }),
+      ).rejects.toThrow(/background must be an \{r, g, b, a\} object/);
+    }
+  });
+
+  it('accepts a well-formed background', async () => {
+    const { image } = await rasterizeSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"></svg>',
+      { background: { r: 10, g: 20, b: 30, a: 255 } },
+    );
+    expect(Array.from(image.data.slice(0, 4))).toEqual([10, 20, 30, 255]);
+  });
 });

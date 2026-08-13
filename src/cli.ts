@@ -352,12 +352,70 @@ async function runRasterize(input: string, o: RasterizeCliOptions): Promise<void
 // convert (direction inferred from extensions)
 // ---------------------------------------------------------------------------
 
-async function runConvert(input: string, output: string, o: Record<string, unknown>): Promise<void> {
-  const outIsSvg = extname(output).toLowerCase() === '.svg';
-  if (outIsSvg) {
-    await runVectorize(input, { ...(o as unknown as VectorizeCliOptions), output });
+/**
+ * Options `convert` and `batch` accept, before the direction is known.
+ *
+ * Kept deliberately small and explicitly typed. An earlier version forwarded a
+ * merged `Record<string, unknown>` to whichever runner applied, which quietly
+ * broke: `background` is a boolean for vectorize ("collapse the dominant colour
+ * into one rectangle") and an RGBA colour for rasterize ("paint underneath").
+ * Passing `true` where a colour was expected produced
+ * `rgba(undefined,undefined,undefined,NaN)` and a baffling parser error.
+ */
+interface SharedCliOptions {
+  mode?: string;
+  preset?: string;
+  colors?: number;
+  width?: number;
+  height?: number;
+  scale?: number;
+  /** Rasterize only: painted under the artwork. */
+  background?: Rgba;
+  quality?: number;
+  lossless?: boolean;
+  verify?: boolean;
+  json?: boolean;
+}
+
+function toVectorizeOptions(o: SharedCliOptions, output: string): VectorizeCliOptions {
+  return {
+    output,
+    mode: o.mode ?? 'auto',
+    preset: o.preset ?? 'auto',
+    colors: o.colors,
+    lossless: o.lossless,
+    prefer: 'auto',
+    // Vectorize's own meaning: collapse the dominant colour into one rectangle.
+    background: true,
+    embedStrategy: 'auto',
+    generator: true,
+    verify: o.verify,
+    json: o.json,
+  };
+}
+
+function toRasterizeOptions(o: SharedCliOptions, output: string): RasterizeCliOptions {
+  return {
+    output,
+    width: o.width,
+    height: o.height,
+    scale: o.scale,
+    background: o.background,
+    quality: o.quality ?? 92,
+    lossless: o.lossless,
+    shapeRendering: 'geometricPrecision',
+    textRendering: 'optimizeLegibility',
+    imageRendering: 'optimizeQuality',
+    verify: o.verify,
+    json: o.json,
+  };
+}
+
+async function runConvert(input: string, output: string, o: SharedCliOptions): Promise<void> {
+  if (extname(output).toLowerCase() === '.svg') {
+    await runVectorize(input, toVectorizeOptions(o, output));
   } else {
-    await runRasterize(input, { ...(o as unknown as RasterizeCliOptions), output });
+    await runRasterize(input, toRasterizeOptions(o, output));
   }
 }
 
@@ -551,14 +609,22 @@ async function runInfo(input: string, o: { json?: boolean }): Promise<void> {
 // batch
 // ---------------------------------------------------------------------------
 
-interface BatchCliOptions extends VectorizeCliOptions {
+interface BatchCliOptions extends SharedCliOptions {
   outDir: string;
   to: string;
   concurrency: number;
 }
 
 async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
-  const files = await glob(patterns, { absolute: false, onlyFiles: true });
+  // Glob syntax reserves `\` as an escape character, so a Windows path like
+  // `C:\assets\*.png` matches nothing at all. Forward slashes work on every
+  // platform, including Windows, so normalise before matching rather than
+  // telling users their shell-completed path is wrong.
+  const normalized = patterns.map((p) => p.replace(/\\/g, '/'));
+  // Absolute results, because a relative path cannot express a match on another
+  // drive: `C:\...` relativised against `F:\...` yields `../../C:/...`, which
+  // then resolves to the fictional `F:\C:\...`.
+  const files = await glob(normalized, { absolute: true, onlyFiles: true });
   if (files.length === 0) fail(`No files matched: ${patterns.join(', ')}`);
 
   await mkdir(o.outDir, { recursive: true });
@@ -575,9 +641,9 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
       const target = join(o.outDir, `${basename(file, extname(file))}.${o.to.replace(/^\./, '')}`);
       try {
         if (o.to.replace(/^\./, '') === 'svg') {
-          await runVectorize(file, { ...o, output: target });
+          await runVectorize(file, toVectorizeOptions(o, target));
         } else {
-          await runRasterize(file, { ...(o as unknown as RasterizeCliOptions), output: target });
+          await runRasterize(file, toRasterizeOptions(o, target));
         }
         done++;
       } catch (err) {
@@ -717,13 +783,8 @@ program
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
   .option('--verify', 'measure the result')
   .option('--json', 'machine-readable output')
-  .action((input: string, output: string, opts: Record<string, unknown>) =>
-    runConvert(input, output, {
-      embedStrategy: 'auto', background: true, generator: true,
-      shapeRendering: 'geometricPrecision', textRendering: 'optimizeLegibility',
-      imageRendering: 'optimizeQuality',
-      ...opts,
-    }),
+  .action((input: string, output: string, opts: SharedCliOptions) =>
+    runConvert(input, output, opts),
   );
 
 program
@@ -772,13 +833,8 @@ program
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
   .option('--concurrency <n>', 'parallel workers', intArg('--concurrency', 1, 64), 4)
   .option('--verify', 'measure every result')
-  .action((patterns: string[], opts: Record<string, unknown>) =>
-    runBatch(patterns, {
-      embedStrategy: 'auto', background: true, generator: true,
-      shapeRendering: 'geometricPrecision', textRendering: 'optimizeLegibility',
-      imageRendering: 'optimizeQuality',
-      ...opts,
-    } as unknown as BatchCliOptions),
+  .action((patterns: string[], opts: SharedCliOptions & { outDir: string; to: string; concurrency: number }) =>
+    runBatch(patterns, opts as unknown as BatchCliOptions),
   );
 
 program.parseAsync(process.argv).catch((err: unknown) => {

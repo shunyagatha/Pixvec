@@ -74,7 +74,17 @@ export async function rasterizeSvg(
   };
 
   if (opts.background) {
+    // Validate rather than trust. A caller passing something that is not an RGBA
+    // object would otherwise stringify to `rgba(undefined,undefined,undefined,NaN)`
+    // and surface as an opaque "invalid number at position 6" from the parser,
+    // miles from the actual mistake.
     const { r, g, b, a } = opts.background;
+    if (![r, g, b, a].every((v) => typeof v === 'number' && Number.isFinite(v))) {
+      throw new Error(
+        `background must be an {r, g, b, a} object with numeric channels, got ` +
+          `${JSON.stringify(opts.background)}`,
+      );
+    }
     render.background = a >= 255 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${(a / 255).toFixed(4)})`;
   }
 

@@ -10,6 +10,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -102,6 +103,31 @@ try {
   const info = JSON.parse(run(['info', src, '--json']));
   check('info reports the raster kind', info.kind === 'raster');
   check('info counts colours', typeof info.flatness?.distinctColors === 'number');
+
+  // Regression: `convert` and `batch` used to forward a merged options blob to
+  // whichever runner applied, so the SVG-to-raster direction of both crashed on
+  // a `background` value that meant something else to the other runner.
+  console.log('convert, both directions');
+  run(['convert', src, join(dir, 'conv.svg')]);
+  run(['convert', join(dir, 'art.svg'), join(dir, 'conv.png')]);
+  const converted = JSON.parse(run(['info', join(dir, 'conv.png'), '--json']));
+  check('convert produced a real raster', converted.width === 240 && converted.height === 180,
+    `${converted.width}x${converted.height}`);
+  run(['convert', join(dir, 'art.svg'), join(dir, 'conv2.png'), '--scale', '2']);
+  const convertScaled = JSON.parse(run(['info', join(dir, 'conv2.png'), '--json']));
+  check('convert honours --scale', convertScaled.width === 480, `width=${convertScaled.width}`);
+
+  console.log('batch, both directions');
+  run(['batch', join(dir, '*.png'), '-o', join(dir, 'b1'), '--to', 'svg']);
+  run(['batch', join(dir, 'art.svg'), '-o', join(dir, 'b2'), '--to', 'png']);
+  check('batch produced svg output', existsSync(join(dir, 'b1', 'art.svg')));
+  check('batch produced png output', existsSync(join(dir, 'b2', 'art.png')));
+
+  console.log('extract');
+  run(['vectorize', src, '-o', join(dir, 'keep.svg'), '--mode', 'embed', '--embed-strategy', 'preserve']);
+  const extracted = JSON.parse(run(['extract', join(dir, 'keep.svg'), '-o', join(dir, 'back.png'), '--against', src, '--json']));
+  check('extract recovers the original file', extracted.matchesSource === true);
+  check('extract verifies the recorded digest', extracted.digestVerified === true);
 
   console.log('exit codes');
   let threw = false;
