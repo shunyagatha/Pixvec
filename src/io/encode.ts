@@ -4,9 +4,15 @@ import {
   encodeBmp, encodeIco, encodeIcoDib, encodePnm, encodeTga,
   type BmpEncodeOptions, type PnmEncodeOptions, type TgaEncodeOptions,
 } from './formats/encoders.js';
+import { findEncoder, registeredFormats } from '../codecs.js';
 
 export interface EncodeOptions {
-  format: RasterFormat;
+  /**
+   * A built-in format, or the name of a codec registered via `pixvec/codecs`.
+   * The string escape hatch is what lets a user-supplied HEIC/JXL encoder be a
+   * valid target here without widening the built-in union.
+   */
+  format: RasterFormat | (string & {});
   /** 1–100. Ignored by PNG and by lossless WebP. */
   quality?: number;
   /** WebP / AVIF: encode losslessly. */
@@ -36,10 +42,18 @@ function rawBuffer(img: RasterImage): Buffer {
 }
 
 /** Formats that cannot carry an alpha channel and therefore need flattening. */
-const NO_ALPHA: ReadonlySet<RasterFormat> = new Set<RasterFormat>(['jpeg']);
+const NO_ALPHA: ReadonlySet<string> = new Set<string>(['jpeg']);
 
 export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promise<Buffer> {
   const { format, quality = 90, lossless = false, effort, background = OPAQUE_WHITE, density } = opts;
+
+  // A user-registered encoder wins for its format, so a WASM HEIC/JXL encoder
+  // slots in as a first-class output target.
+  const custom = findEncoder(format);
+  if (custom) {
+    const out = await custom.encode(img, opts);
+    return Buffer.isBuffer(out) ? out : Buffer.from(out);
+  }
 
   // Formats libvips cannot write are handled by this package's own encoders,
   // so the conversion matrix is square: anything readable is also writable.
@@ -111,8 +125,14 @@ export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promi
       return pipeline.gif({ effort: clamp(effort ?? 7, 1, 10) }).toBuffer();
 
     default: {
-      const never: never = format;
-      throw new Error(`Unsupported output format: ${String(never)}`);
+      // Reached only for a string outside the built-in union with no encoder
+      // registered for it. Name the escape hatch so the fix is obvious.
+      const registered = registeredFormats().encode;
+      const note = registered.length ? ` Registered: ${registered.join(', ')}.` : '';
+      throw new Error(
+        `Unsupported output format: ${String(format)}. ` +
+          `Register an encoder for it via pixvec/codecs, or use a built-in format.${note}`,
+      );
     }
   }
 }

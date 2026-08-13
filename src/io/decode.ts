@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import type { RasterImage, SourceMeta } from '../types.js';
 import { decodeFallback, decodeTgaFallback, type FallbackResult } from './formats/index.js';
+import { findDecoder, registeredFormats, type CustomDecoder } from '../codecs.js';
 
 export interface DecodeOptions {
   /**
@@ -72,6 +73,12 @@ export async function decodeRaster(
   const fallback = decodeFallback(bytes);
   if (fallback) return finishFallback(fallback, bytes, opts);
 
+  // A user-registered codec (e.g. a WASM HEIC/JXL decoder) gets the same
+  // signature-tier treatment as the built-in fallbacks, so once registered its
+  // format reads anywhere any other format does.
+  const custom = findDecoder(bytes);
+  if (custom) return finishCustomDecode(custom, bytes);
+
   const base = () => sharp(asBuffer(bytes), { limitInputPixels, unlimited: true, animated: false });
 
   let raw: sharp.Metadata;
@@ -82,9 +89,11 @@ export async function decodeRaster(
     // codec has declined — guessing earlier risks misreading another format.
     const tga = decodeTgaFallback(bytes);
     if (tga) return finishFallback(tga, bytes, opts);
+    const extra = registeredFormats().decode;
+    const registeredNote = extra.length ? `, plus registered: ${extra.join(', ')}` : '';
     throw new Error(
       `Could not read image metadata: ${(err as Error).message}. ` +
-        `Supported inputs: PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM/PPM, TGA.`,
+        `Supported inputs: PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM/PPM, TGA${registeredNote}.`,
     );
   }
 
@@ -123,6 +132,37 @@ export async function decodeRaster(
   };
 
   return { image, meta, bytes };
+}
+
+/** Run a user-registered decoder and package its result like any other decode. */
+async function finishCustomDecode(decoder: CustomDecoder, original: Uint8Array): Promise<Decoded> {
+  const image = await decoder.decode(original);
+  if (image.data.length !== image.width * image.height * 4) {
+    throw new Error(
+      `Registered '${decoder.format}' decoder returned ${image.data.length} bytes for a ` +
+        `${image.width}x${image.height} image; expected ${image.width * image.height * 4} (RGBA8).`,
+    );
+  }
+  let hasAlpha = false;
+  for (let o = 3; o < image.data.length; o += 4) {
+    if (image.data[o] !== 255) { hasAlpha = true; break; }
+  }
+  return {
+    image,
+    meta: {
+      format: decoder.format,
+      width: image.width,
+      height: image.height,
+      channels: hasAlpha ? 4 : 3,
+      depth: 'uchar',
+      hasAlpha,
+      space: 'srgb',
+      hasProfile: false,
+      frames: 1,
+      bytes: original.byteLength,
+    },
+    bytes: original,
+  };
 }
 
 /**

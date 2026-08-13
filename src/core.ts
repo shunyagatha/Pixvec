@@ -181,5 +181,21 @@ export { autoMinArea } from './vectorize/trace.js';
 // --- Byte helpers, useful when feeding the decoders ------------------------
 export { toBase64, fromBase64, bytesEqual, latin1 } from './io/formats/bytes.js';
 
+// --- Pluggable codec registry ----------------------------------------------
+// The socket for formats this package does not ship a codec for (HEIC, JPEG XL,
+// JPEG 2000): register your own WASM decoder/encoder and it plugs into the same
+// pipeline. Pure — it only holds functions — so it belongs in the core.
+export {
+  registerDecoder,
+  registerEncoder,
+  unregisterDecoder,
+  unregisterEncoder,
+  findDecoder,
+  findEncoder,
+  registeredFormats,
+  type CustomDecoder,
+  type CustomEncoder,
+} from './codecs.js';
+
 /** Version of the package this build came from. */
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';

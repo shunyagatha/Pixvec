@@ -20,6 +20,7 @@ const CORE_MODULES = [
   'image.ts',
   'background.ts',
   'preprocess.ts',
+  'codecs.ts',
   'core.ts',
   'svg/path.ts',
   'svg/build.ts',

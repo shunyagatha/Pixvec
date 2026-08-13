@@ -114,6 +114,7 @@ Node.js 18.17+. The native dependencies ([sharp](https://sharp.pixelplumbing.com
 | Just the pure-TS codecs | `import { encodeBmp } from 'pixvec/formats'` | **none** |
 | Everything portable | `import { vectorizeExact } from 'pixvec/core'` | **none** |
 | Image editing (resize, rotate…) | `import { editImage } from 'pixvec/ops'` | sharp only |
+| Register a custom codec | `import { registerDecoder } from 'pixvec/codecs'` | **none** |
 
 Install only what you use. Every `none` subpath imports in isolation with the native codecs omitted (`npm install pixvec --omit=optional`), and the package is `"sideEffects": false`, so a bundler drops everything you never import. `pixvec/core` is the vectorisation and measurement engine with **zero dependencies and no Node built-ins**. It takes a plain `{ width, height, data }` — byte-for-byte the layout of the browser's `ImageData` — so canvas pixels go straight in:
 
@@ -148,7 +149,26 @@ The BMP, ICO, PNM and TGA codecs are written from scratch in this package, so th
 
 BMP, ICO, PNM and TGA are decoded in pure TypeScript — libvips is not built with them, and each is simple and stable enough to implement completely rather than adding another native dependency. All four are lossless formats, so the test suite asserts **bit-exact** decoding rather than approximate agreement.
 
-**Not supported:** HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW. Each needs a patent-encumbered or heavyweight native codec, and shipping one would cost every user a large binary for a format most of them never touch. Convert those with ImageMagick or `libheif` first.
+**Not built in:** HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW. The prebuilt libvips that ships with `sharp` cannot read or write them — HEIC because HEVC is patent-encumbered, JXL and JP2 because they simply are not compiled in (verified: `heifsave: Unsupported compression`, `jxlsave_buffer not found`, `JP2 output requires OpenJPEG`). Bundling a WASM codec for each would add tens of megabytes to *every* install, for formats most users never touch.
+
+**But you can plug one in.** Rather than ship the codecs, Pixvec ships the socket. Install a WASM decoder yourself and register it, and that format then reads and writes everywhere any built-in format does:
+
+```ts
+import decodeJxl from '@jsquash/jxl/decode.js';
+import { registerDecoder } from 'pixvec/codecs';
+
+registerDecoder({
+  format: 'jxl',
+  canDecode: (b) => b.length > 2 && b[0] === 0xff && b[1] === 0x0a, // JXL signature
+  decode: async (bytes) => {
+    const { data, width, height } = await decodeJxl(bytes);
+    return { width, height, data: new Uint8ClampedArray(data.buffer) };
+  },
+});
+// pixvec can now vectorize, convert, and edit .jxl files.
+```
+
+Everyone who does not need it pays nothing. For a one-off, converting via ImageMagick or `libheif` first is still the simplest path.
 
 ## Quick start
 
@@ -393,7 +413,7 @@ Stated plainly, because you should know before you invest:
 - **16-bit sources are reduced to 8 bit** for `pixel` and `trace`, because SVG paint servers cannot express more. `embed` with `--embed-strategy preserve` keeps the original bit depth intact.
 - **Animation is not supported.** Multi-frame inputs use the first frame.
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
-- **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW do not decode.** See [Formats](#formats).
+- **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW are not built in** — the prebuilt libvips lacks the codecs. You can register your own via `pixvec/codecs`; see [Formats](#formats).
 - **`pixvec/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
 - **Tight-tolerance tracing favours accuracy over few smooth curves.** The retuned default (0.4px) makes a large smooth arc come out as a fine, pixel-accurate polygon rather than a handful of Béziers. That is the right call for photos and for pixel fidelity, but if you want a logo as a few editable curves, use `--preset logo` (tolerance 0.6) or raise `--tolerance` yourself. The two goals genuinely trade off; the default picks accuracy.
 - **Not compared against Illustrator or vtracer.** The [comparison](#compared-with-other-vectorizers) covers potrace and imagetracerjs, which are what is installable and scriptable. Commercial tracers remain unmeasured.
