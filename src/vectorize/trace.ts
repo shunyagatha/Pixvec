@@ -63,8 +63,16 @@ export const TRACE_DEFAULTS = {
   colors: 16,
   alphaLevels: 8,
   minArea: 0,
-  tolerance: 1,
-  fitError: 1,
+  // 0.4, not 1.0. A measured diagnosis (scripts/diagnose-photo.mjs) found the
+  // curve fitter, not quantisation, is the dominant loss on photographs — 0.11
+  // to 0.24 SSIM — and that a 1px tolerance is *strictly worse* than 0.4 on
+  // both accuracy and file size across flat art, logos and photos. The old
+  // default's curves drifted up to a pixel and flipped boundary pixels while
+  // producing *larger* files than a tighter fit. The one thing a large
+  // tolerance buys — few smooth curves on a big arc — is preserved by the
+  // `logo`/`lineart` presets, which keep a higher value on purpose.
+  tolerance: 0.4,
+  fitError: 0.4,
   cornerAngle: 75,
   polygonOnly: false,
   optimize: true,

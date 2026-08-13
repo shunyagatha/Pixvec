@@ -290,8 +290,10 @@ describe('curve optimisation', () => {
     const off = await roundTrip(source, trace(source, { colors: 8, optimize: false }).svg);
     const on = await roundTrip(source, trace(source, { colors: 8, optimize: true }).svg);
     // Merges are gated on the same error budget, so accuracy must not fall
-    // meaningfully. A little float noise either way is fine.
-    expect(on.psnr).toBeGreaterThan(off.psnr - 0.5);
+    // meaningfully. At the retuned default tolerance this fixture traces
+    // perfectly (PSNR infinity) either way, so compare through SSIM, which
+    // stays finite, rather than a subtraction that Infinity would defeat.
+    expect(on.ssim).toBeGreaterThanOrEqual(off.ssim - 1e-6);
   });
 
   it('is on by default', () => {

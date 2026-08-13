@@ -173,4 +173,4 @@ export { autoMinArea } from './vectorize/trace.js';
 export { toBase64, fromBase64, bytesEqual, latin1 } from './io/formats/bytes.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';

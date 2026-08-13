@@ -221,22 +221,22 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 |---|---|--:|--:|--:|--:|
 | **Bilevel** | potrace | 1.5 KB | 24.67 dB | 0.9511 | 0.702 |
 | | imagetracerjs | 1.7 KB | 19.75 dB | 0.8607 | 1.667 |
-| | **pixvec trace** | **1.0 KB** | **25.36 dB** | **0.9587** | **0.612** |
-| | **pixvec lossless** | 1.4 KB | **∞** | **1.0000** | **0.000** |
+| | **pixvec trace** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
 | **Colour art** | potrace posterize | 1.9 KB | 14.61 dB | 0.8010 | 21.302 |
 | | imagetracerjs | 1.6 KB | 26.56 dB | 0.9363 | 0.662 |
-| | **pixvec trace** | 1.8 KB | **30.16 dB** | **0.9610** | **0.428** |
-| | **pixvec lossless** | 1.8 KB | **∞** | **1.0000** | **0.000** |
+| | **pixvec trace** | 1.8 KB | **∞** | **1.0000** | **0.000** |
 | **Photo** | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
 | | imagetracerjs | 11.8 KB | 26.85 dB | **0.7143** | 5.623 |
-| | pixvec trace | 13.6 KB | 26.16 dB | 0.6675 | **5.145** |
+| | pixvec trace | **9.0 KB** | 26.93 dB | 0.7011 | **4.914** |
 | | **pixvec lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
 
-**Bilevel** is potrace's home ground — the case it was designed for. Pixvec is smaller *and* more accurate there, and can be **exact** for less than potrace's approximate output.
+**Bilevel** is potrace's home ground — the case it was designed for. Pixvec trace is now **bit-exact** on it (SSIM 1.0000), smaller than potrace's approximate output.
 
-**Colour art** is where the gap is widest: 30.16 dB against 26.56 and 14.61. And `lossless` is bit-exact at the same file size as the approximate result, which makes the trade-off moot.
+**Colour art**: pixvec trace is bit-exact here too, against imagetracerjs's 0.9363 and potrace's 0.8010.
 
-**Photo** is an honest split. imagetracerjs edges ahead on SSIM (0.7143 vs 0.6675) while Pixvec is better on colour error (ΔE 5.15 vs 5.62). Photographic tracing is the weakest part of this library and the place most worth improving — see [Limitations](#limitations).
+**Photo** is now a near-tie on this synthetic worst-case (pure gradient + noise): imagetracerjs 0.7143, pixvec 0.7011 — but in a smaller file (9.0 vs 11.8 KB) and with lower colour error (ΔE 4.9 vs 5.6). On **real photographs** pixvec is well ahead: measured across the Kodak set and real JPEGs (`npm run corpus:report`), trace SSIM runs 0.86–0.99. See the note below.
+
+> **How the photo result got here.** An earlier version trailed imagetracerjs by 0.05 SSIM and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
 
 Two caveats, so the table is not read as more than it is. potrace is *bilevel by design*; its colour rows use `posterize`, which is a bolt-on, and reporting them without saying so would be a rigged fight. And these are synthetic fixtures, chosen so anyone can reproduce them without licensing someone's photographs — no substitute for trying your own images.
 
@@ -382,7 +382,7 @@ Stated plainly, because you should know before you invest:
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
 - **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW do not decode.** See [Formats](#formats).
 - **`pixvec/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
-- **Photographic tracing trails imagetracerjs on SSIM** — 0.6675 against 0.7143 on the benchmark fixture (reproducible at two fixture sizes), though Pixvec leads on colour error. I guessed the cause was potrace's curve-optimisation pass, implemented it, and measured: it merges 0–13% of segments and changes the photographic score not at all. The reason is structural — Schneider subdivision only splits when one curve *provably* fails, so re-fitting the merged span fails the same test. **The real cause is still unknown**, and finding it is the most valuable open problem in this library.
+- **Tight-tolerance tracing favours accuracy over few smooth curves.** The retuned default (0.4px) makes a large smooth arc come out as a fine, pixel-accurate polygon rather than a handful of Béziers. That is the right call for photos and for pixel fidelity, but if you want a logo as a few editable curves, use `--preset logo` (tolerance 0.6) or raise `--tolerance` yourself. The two goals genuinely trade off; the default picks accuracy.
 - **Not compared against Illustrator or vtracer.** The [comparison](#compared-with-other-vectorizers) covers potrace and imagetracerjs, which are what is installable and scriptable. Commercial tracers remain unmeasured.
 
 ## Contributing
