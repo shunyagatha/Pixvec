@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { glob } from 'tinyglobby';
@@ -30,7 +31,7 @@ import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
 import { formatBatchSummary } from './io/batch-summary.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from './io/pdf.js';
-import { convertOffice } from './io/office.js';
+import { convertOffice, isOfficeDocument } from './io/office.js';
 import { imagesToPdf } from './io/images-pdf.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba } from './types.js';
 
@@ -1094,8 +1095,23 @@ async function runDoc(
     pages = [r.image];
     labels = [1];
     kind = 'SVG';
+  } else if (isOfficeDocument(input)) {
+    // Word/Excel/PowerPoint → PDF (LibreOffice) → images (mupdf), so an Office
+    // doc yields one image per page like any other document.
+    const tmp = await mkdtemp(join(tmpdir(), 'pixvec-doc-'));
+    try {
+      const tmpPdf = join(tmp, 'render.pdf');
+      await convertOffice(input, tmpPdf, {});
+      const pdfBytes = await readFile(tmpPdf);
+      const requested = parsePageSpec(o.pages);
+      pages = await renderPdfPages(pdfBytes, { dpi: o.dpi, scale: o.scale, pages: requested });
+      labels = resolvePageIndices(await countPdfPages(pdfBytes), requested).map((p) => p + 1);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+    kind = 'Office';
   } else {
-    fail('`doc` renders a PDF or SVG document to images. For a raster image use `pixvec vectorize` or `pixvec edit`.');
+    fail('`doc` renders a PDF, SVG or Office document (docx/xlsx/pptx/…) to images. For a raster image use `pixvec vectorize` or `pixvec edit`.');
     return;
   }
   if (pages.length === 0) fail('No pages to render (check --pages).');
@@ -1700,7 +1716,7 @@ program
 
 program
   .command('doc')
-  .description('Render a document (PDF or SVG) to images — one file per page')
+  .description('Render a document (PDF, SVG, or Office docx/xlsx/pptx) to images — one file per page')
   .argument('<input>', 'source PDF or SVG')
   .option('-o, --output <dir>', 'output directory (default: alongside the input)')
   .option('-f, --format <fmt>', 'output per page: png (default), jpeg, webp, avif, tiff — or svg to vectorise each page', 'png')

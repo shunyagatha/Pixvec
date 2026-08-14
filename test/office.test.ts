@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { writeFile, mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename, extname } from 'node:path';
-import { convertOffice, findSoffice, buildSofficeArgs, OFFICE_FORMATS } from '../src/io/office.js';
+import { convertOffice, findSoffice, buildSofficeArgs, isOfficeDocument, OFFICE_FORMATS } from '../src/io/office.js';
 
 /**
  * Faithful Office⇄PDF needs LibreOffice, which is not bundled and not present in
@@ -111,5 +111,18 @@ describe('convertOffice', () => {
 
   it('lists the common formats it bridges', () => {
     for (const f of ['pdf', 'docx', 'xlsx', 'pptx', 'odt']) expect(OFFICE_FORMATS).toContain(f);
+  });
+});
+
+describe('isOfficeDocument', () => {
+  it('recognises Office/ODF documents by extension, case-insensitively', () => {
+    for (const p of ['a.docx', 'b.XLSX', 'c.pptx', 'd.odt', 'e.rtf', '/x/y.ODS']) {
+      expect(isOfficeDocument(p)).toBe(true);
+    }
+  });
+  it('rejects images, PDF and SVG (handled by other paths)', () => {
+    for (const p of ['a.pdf', 'b.svg', 'c.png', 'd.jpg', 'e.txt', 'noext']) {
+      expect(isOfficeDocument(p)).toBe(false);
+    }
   });
 });

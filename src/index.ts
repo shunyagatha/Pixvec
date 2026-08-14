@@ -87,6 +87,7 @@ export {
   convertOffice,
   findSoffice,
   buildSofficeArgs,
+  isOfficeDocument,
   OFFICE_FORMATS,
   type OfficeConvertOptions,
   type OfficeConvertResult,

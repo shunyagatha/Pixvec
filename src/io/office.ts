@@ -25,6 +25,14 @@ export const OFFICE_FORMATS = [
   'xlsx', 'xls', 'ods', 'csv', 'pptx', 'ppt', 'odp',
 ] as const;
 
+/** Word/Excel/PowerPoint/ODF document extensions that render via LibreOffice. */
+const OFFICE_DOC_EXTS = new Set(['docx', 'doc', 'odt', 'rtf', 'xlsx', 'xls', 'ods', 'pptx', 'ppt', 'odp']);
+
+/** True when a path is an Office/ODF document (by extension) that needs LibreOffice to render. */
+export function isOfficeDocument(path: string): boolean {
+  return OFFICE_DOC_EXTS.has(extname(path).replace(/^\./, '').toLowerCase());
+}
+
 /** Locate a LibreOffice `soffice` binary, or `null` if none of the usual spots have one. */
 export function findSoffice(): string | null {
   const env = process.env.PIXVEC_SOFFICE || process.env.SOFFICE_PATH;
