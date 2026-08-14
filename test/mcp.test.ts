@@ -47,7 +47,28 @@ describe('MCP server', () => {
     expect(names).toContain('measure');
     expect(names).toContain('diff');
     expect(names).toContain('crop');
+    expect(names).toContain('doc_to_images');
+    expect(names).toContain('office_convert');
+    expect(names).toContain('images_to_pdf');
     for (const t of r.result.tools) expect(t.inputSchema.type).toBe('object');
+  });
+
+  it('runs images_to_pdf, writing a valid PDF', async () => {
+    const out = join(outDir, 'album.pdf');
+    const r = await rpc('tools/call', { name: 'images_to_pdf', arguments: { inputs: [pngPath, pngPath2], output: out } });
+    expect(r.result.content[0].text).toContain('2-page PDF');
+    const { readFile } = await import('node:fs/promises');
+    const bytes = new Uint8Array(await readFile(out));
+    expect(new TextDecoder('latin1').decode(bytes.subarray(0, 5))).toBe('%PDF-');
+  });
+
+  it('surfaces office_convert without LibreOffice as isError, not a crash', async () => {
+    const src = join(outDir, 'thing.docx');
+    const { writeFile: wf } = await import('node:fs/promises');
+    await wf(src, 'x');
+    const r = await rpc('tools/call', { name: 'office_convert', arguments: { input: src, output: join(outDir, 'thing.pdf') } });
+    // Either LibreOffice is present (unlikely in CI) or the error is actionable.
+    if (r.result.isError) expect(r.result.content[0].text).toMatch(/LibreOffice|not found/i);
   });
 
   it('runs the diff tool and reports the changed region', async () => {

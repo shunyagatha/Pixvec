@@ -12,18 +12,24 @@
  */
 
 import { createInterface } from 'node:readline';
-import { readFile, writeFile } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, extname, join } from 'node:path';
 import { loadRaster, vectorize, VERSION } from '../api.js';
 import { compareImages } from '../metrics/index.js';
 import { rasterizeSvg, baseDirFor } from '../io/rasterize.js';
 import { decodeRaster, looksLikeSvg } from '../io/decode.js';
+import { encodeRaster, formatFromExtension } from '../io/encode.js';
 import { centerlineTrace, centerlinePolylines } from '../vectorize/centerline.js';
 import { traceGeometry, toDxf, toEps, toPdf, toGcode } from '../io/export/index.js';
 import { extractPalette } from '../vectorize/quantize.js';
 import { blurHash } from '../placeholder/index.js';
 import { diffImages } from '../diff.js';
 import { smartCrop, cropImage } from '../crop.js';
+import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from '../io/pdf.js';
+import { isOfficeDocument, convertOffice } from '../io/office.js';
+import { imagesToPdf } from '../io/images-pdf.js';
+import type { RasterImage, RasterFormat } from '../types.js';
 
 interface Rpc { jsonrpc: '2.0'; id?: number | string | null; method?: string; params?: Record<string, unknown>; }
 
@@ -84,6 +90,28 @@ const TOOLS = [
     name: 'image_info',
     description: 'Inspect an image: dimensions, format, colour count, and the recommended vectorisation strategy.',
     inputSchema: s({ properties: { input: { type: 'string' } }, required: ['input'] }),
+  },
+  {
+    name: 'doc_to_images',
+    description: 'Render a document (PDF, SVG, or Office docx/xlsx/pptx) to one image per page. PDF needs the optional mupdf package; Office needs local LibreOffice.',
+    inputSchema: s({
+      properties: {
+        input: { type: 'string' }, outDir: { type: 'string', description: 'directory to write page images into' },
+        format: { type: 'string', description: 'png (default), jpeg, webp, avif' }, dpi: { type: 'number' },
+        pages: { type: 'string', description: '1-based page spec, e.g. "1,3-5" (PDF/Office)' },
+      },
+      required: ['input', 'outDir'],
+    }),
+  },
+  {
+    name: 'office_convert',
+    description: 'Convert an Office document ⇄ PDF (and between Office formats) via local LibreOffice. Target format is the output file extension.',
+    inputSchema: s({ properties: { input: { type: 'string' }, output: { type: 'string' } }, required: ['input', 'output'] }),
+  },
+  {
+    name: 'images_to_pdf',
+    description: 'Combine images into one multi-page PDF (one image per page).',
+    inputSchema: s({ properties: { inputs: { type: 'array', items: { type: 'string' } }, output: { type: 'string' }, dpi: { type: 'number' } }, required: ['inputs', 'output'] }),
   },
 ];
 
@@ -190,9 +218,79 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       const { image, meta } = await decodeRaster(await readFile(inPath));
       return JSON.stringify({ width: image.width, height: image.height, format: meta.format, hasAlpha: meta.hasAlpha }, null, 2);
     }
+    case 'doc_to_images': {
+      const bytes = new Uint8Array(await readFile(inPath));
+      const outDir = String(args.outDir);
+      const format = (args.format ? String(args.format) : 'png') as RasterFormat;
+      const dpi = args.dpi !== undefined ? Number(args.dpi) : undefined;
+      const requested = parsePageSpecRpc(args.pages !== undefined ? String(args.pages) : undefined);
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(outDir, { recursive: true });
+
+      let images: RasterImage[];
+      let labels: number[];
+      if (isPdf(bytes)) {
+        images = await renderPdfPages(bytes, { dpi, pages: requested });
+        labels = resolvePageIndices(await countPdfPages(bytes), requested).map((p) => p + 1);
+      } else if (looksLikeSvg(bytes)) {
+        images = [(await rasterizeSvg(new TextDecoder().decode(bytes), { baseDir: baseDirFor(inPath), scale: dpi ? dpi / 96 : 1 })).image];
+        labels = [1];
+      } else if (isOfficeDocument(inPath)) {
+        const tmp = await mkdtemp(join(tmpdir(), 'pixvec-mcp-doc-'));
+        try {
+          const tmpPdf = join(tmp, 'render.pdf');
+          await convertOffice(inPath, tmpPdf, {});
+          const pdfBytes = new Uint8Array(await readFile(tmpPdf));
+          images = await renderPdfPages(pdfBytes, { dpi, pages: requested });
+          labels = resolvePageIndices(await countPdfPages(pdfBytes), requested).map((p) => p + 1);
+        } finally {
+          await rm(tmp, { recursive: true, force: true });
+        }
+      } else {
+        throw new Error('doc_to_images accepts a PDF, SVG, or Office document.');
+      }
+      const stem = basename(inPath, extname(inPath));
+      const multi = images.length > 1;
+      const files: string[] = [];
+      for (let i = 0; i < images.length; i++) {
+        const name = multi ? `${stem}-${labels[i]}.${format}` : `${stem}.${format}`;
+        await writeFile(join(outDir, name), await encodeRaster(images[i], { format }));
+        files.push(name);
+      }
+      return JSON.stringify({ outDir, pages: files.length, files }, null, 2);
+    }
+    case 'office_convert': {
+      const res = await convertOffice(inPath, String(args.output), {});
+      return `Wrote ${res.output} (via LibreOffice).`;
+    }
+    case 'images_to_pdf': {
+      const inputs = (args.inputs as unknown[]).map(String);
+      const images: RasterImage[] = [];
+      for (const p of inputs) images.push((await loadRaster(await readFile(p))).image);
+      const pdf = await imagesToPdf(images, { dpi: args.dpi !== undefined ? Number(args.dpi) : undefined });
+      await writeFile(String(args.output), pdf);
+      return `Wrote ${args.output} — ${images.length}-page PDF (${pdf.length} bytes).`;
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+}
+
+/** Parse a 1-based page spec like "1,3-5" into 0-based indices (range-capped). */
+function parsePageSpecRpc(spec?: string): number[] | undefined {
+  if (!spec) return undefined;
+  const MAX = 100_000;
+  const out: number[] = [];
+  for (const part of spec.split(',')) {
+    const m = part.trim().match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) continue;
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    const lo = Math.max(1, Math.min(a, b));
+    const hi = Math.min(Math.max(a, b), lo + MAX);
+    for (let p = lo; p <= hi && out.length < MAX; p++) out.push(p - 1);
+  }
+  return out.length ? out : undefined;
 }
 
 /** Parse "16:9" / "1.5" into a width/height ratio, or derive it from w×h. */
