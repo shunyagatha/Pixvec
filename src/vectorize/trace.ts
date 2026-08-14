@@ -30,7 +30,13 @@ import { detectPrimitive, primitiveSvg } from './primitives.js';
 export interface TraceOptions {
   /** Maximum palette size. */
   colors?: number;
-  /** Distinct alpha levels to preserve. 1 means "flatten to fully opaque". */
+  /**
+   * Distinct partial-alpha levels to preserve between fully transparent and
+   * fully opaque. `1` collapses partial transparency to opaque, but fully
+   * transparent pixels are always kept as their own level, so an image with a
+   * transparent background still traces on transparency rather than being
+   * flattened onto black.
+   */
   alphaLevels?: number;
   /** Regions smaller than this many pixels are absorbed into their neighbours. */
   minArea?: number;

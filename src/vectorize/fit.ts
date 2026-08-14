@@ -182,6 +182,12 @@ function simplifyClosed(
 /**
  * Classic DP over a chain addressed through `map`, so the same routine handles
  * both the straight run and the run that wraps past the end of the array.
+ *
+ * Iterative with an explicit work stack, not recursive: a large component with a
+ * long, finely-serrated boundary can retain thousands of vertices in one loop,
+ * and a monotone split arrangement there would blow the call stack. The kept
+ * interior indices are collected and emitted in increasing order, which is
+ * exactly the in-order output the recursive form produced.
  */
 function douglasPeucker(
   px: Float64Array, py: Float64Array,
@@ -190,31 +196,38 @@ function douglasPeucker(
 ): void {
   if (last <= first + 1) return;
 
-  const ax = px[map(first)], ay = py[map(first)];
-  const bx = px[map(last)], by = py[map(last)];
-  const dx = bx - ax, dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
+  const keep: number[] = [];
+  const stack: Array<[number, number]> = [[first, last]];
+  while (stack.length > 0) {
+    const [f, l] = stack.pop()!;
+    if (l <= f + 1) continue;
 
-  let worst = -1;
-  let worstDist = tolerance;
+    const ax = px[map(f)], ay = py[map(f)];
+    const bx = px[map(l)], by = py[map(l)];
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
 
-  for (let i = first + 1; i < last; i++) {
-    const cx = px[map(i)], cy = py[map(i)];
-    let dist: number;
-    if (lenSq === 0) {
-      dist = Math.hypot(cx - ax, cy - ay);
-    } else {
-      // Perpendicular distance to the infinite line through a and b. The
-      // endpoints are fixed anchors, so clamping to the segment is unnecessary.
-      dist = Math.abs(dy * cx - dx * cy + bx * ay - by * ax) / Math.sqrt(lenSq);
+    let worst = -1;
+    let worstDist = tolerance;
+    for (let i = f + 1; i < l; i++) {
+      const cx = px[map(i)], cy = py[map(i)];
+      // Perpendicular distance to the infinite line through a and b (or to a
+      // when the segment is degenerate). Endpoints are fixed anchors, so no
+      // clamping to the segment is needed.
+      const dist = lenSq === 0
+        ? Math.hypot(cx - ax, cy - ay)
+        : Math.abs(dy * cx - dx * cy + bx * ay - by * ax) / Math.sqrt(lenSq);
+      if (dist > worstDist) { worstDist = dist; worst = i; }
     }
-    if (dist > worstDist) { worstDist = dist; worst = i; }
+
+    if (worst === -1) continue;
+    keep.push(worst);
+    stack.push([f, worst]);
+    stack.push([worst, l]);
   }
 
-  if (worst === -1) return;
-  douglasPeucker(px, py, first, worst, tolerance, out, map);
-  out.push(map(worst));
-  douglasPeucker(px, py, worst, last, tolerance, out, map);
+  keep.sort((a, b) => a - b);
+  for (const i of keep) out.push(map(i));
 }
 
 function dedupeOrdered(indices: number[], n: number): number[] {

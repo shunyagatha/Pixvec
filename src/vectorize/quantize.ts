@@ -496,6 +496,9 @@ function weightedMedian(values: number[], weights: number[], totalW: number): nu
 }
 
 function clamp255(v: number): number {
+  // NaN → 0, so a malformed fixedPalette channel (NaN/undefined) can't propagate
+  // into a NaN Oklab entry that NearestColor would then never select.
+  if (Number.isNaN(v)) return 0;
   return Math.min(255, Math.max(0, Math.round(v)));
 }
 
