@@ -67,4 +67,14 @@ describe.skipIf(!mupdfOk)('renderPdfPages (needs mupdf)', () => {
     const pages = await renderPdfPages(discPdf(), { pages: [0, 5] });
     expect(pages).toHaveLength(1);
   });
+
+  it('a rendered page vectorises to SVG (the pixvec doc -f svg path)', async () => {
+    const [img] = await renderPdfPages(discPdf(), { scale: 1 });
+    const { vectorize, loadRaster } = await import('../src/api.js');
+    const { encodeRaster } = await import('../src/io/encode.js');
+    const png = await encodeRaster(img, { format: 'png' });
+    const r = await vectorize(await loadRaster(png), { mode: 'auto' });
+    expect(r.svg).toContain('<svg');
+    expect(r.shapes).toBeGreaterThan(0);
+  });
 });

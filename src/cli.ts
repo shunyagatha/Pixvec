@@ -1054,7 +1054,8 @@ async function runDoc(
   }
   if (pages.length === 0) fail('No pages to render (check --pages).');
 
-  const format = o.format as RasterFormat;
+  const format = o.format;
+  const toSvg = format === 'svg';
   const outDir = o.output ?? dirname(resolve(input));
   await mkdir(outDir, { recursive: true });
   const stem = basename(input, extname(input));
@@ -1063,7 +1064,16 @@ async function runDoc(
   const written: Array<{ file: string; width: number; height: number }> = [];
   for (let i = 0; i < pages.length; i++) {
     const name = multi ? `${stem}-${i + 1}.${format}` : `${stem}.${format}`;
-    await writeOutput(join(outDir, name), await encodeRaster(pages[i], { format, quality: o.quality }));
+    if (toSvg) {
+      // Vectorise the rendered page — turn a raster/scanned PDF into real SVG.
+      // Round-trip through PNG so the vectoriser gets proper metadata and bytes
+      // (auto mode may pick embed on a photographic page, which needs them).
+      const png = await encodeRaster(pages[i], { format: 'png' });
+      const r = await vectorize(await loadRaster(png), { mode: 'auto' });
+      await writeOutput(join(outDir, name), r.svg);
+    } else {
+      await writeOutput(join(outDir, name), await encodeRaster(pages[i], { format: format as RasterFormat, quality: o.quality }));
+    }
     written.push({ file: name, width: pages[i].width, height: pages[i].height });
   }
 
@@ -1610,7 +1620,7 @@ program
   .description('Render a document (PDF or SVG) to images — one file per page')
   .argument('<input>', 'source PDF or SVG')
   .option('-o, --output <dir>', 'output directory (default: alongside the input)')
-  .option('-f, --format <fmt>', 'image format: png (default), jpeg, webp, avif, tiff', 'png')
+  .option('-f, --format <fmt>', 'output per page: png (default), jpeg, webp, avif, tiff — or svg to vectorise each page', 'png')
   .option('--dpi <n>', 'render resolution in DPI (overrides --scale)', intArg('--dpi', 12, 1200))
   .option('--scale <n>', 'scale relative to native size', floatArg('--scale', 0.1, 20))
   .option('--pages <spec>', 'pages to render, 1-based, e.g. "1,3-5" (PDF only)')
