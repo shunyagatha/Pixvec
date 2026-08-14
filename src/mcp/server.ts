@@ -22,6 +22,8 @@ import { centerlineTrace, centerlinePolylines } from '../vectorize/centerline.js
 import { traceGeometry, toDxf, toEps, toPdf, toGcode } from '../io/export/index.js';
 import { extractPalette } from '../vectorize/quantize.js';
 import { blurHash } from '../placeholder/index.js';
+import { diffImages } from '../diff.js';
+import { smartCrop, cropImage } from '../crop.js';
 
 interface Rpc { jsonrpc: '2.0'; id?: number | string | null; method?: string; params?: Record<string, unknown>; }
 
@@ -57,6 +59,16 @@ const TOOLS = [
     name: 'measure',
     description: 'Measure how close two images (raster or SVG) are: PSNR, SSIM, mean CIEDE2000, and whether they are pixel-identical.',
     inputSchema: s({ properties: { reference: { type: 'string' }, candidate: { type: 'string' } }, required: ['reference', 'candidate'] }),
+  },
+  {
+    name: 'diff',
+    description: 'Perceptual visual-regression diff. Paints a CIEDE2000 heatmap of what changed between two images (raster or SVG) and reports changed-pixel count/fraction, max & mean ΔE, and SSIM. Give an output path to save the heatmap.',
+    inputSchema: s({ properties: { reference: { type: 'string' }, candidate: { type: 'string' }, output: { type: 'string', description: 'Optional .png heatmap path' }, threshold: { type: 'number', description: 'CIEDE2000 above which a pixel counts as changed (default 2)' } }, required: ['reference', 'candidate'] }),
+  },
+  {
+    name: 'crop',
+    description: 'Content-aware crop to an aspect ratio, keeping the salient subject (edges + saturation) rather than the centre. aspect like "1:1", "16:9", "4:5".',
+    inputSchema: s({ properties: { input: { type: 'string' }, output: { type: 'string' }, aspect: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }, required: ['input', 'output'] }),
   },
   {
     name: 'palette',
@@ -132,6 +144,40 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       const q = compareImages(ref, cand);
       return JSON.stringify({ psnr: q.psnr === Infinity ? 'Infinity' : q.psnr, ssim: q.ssim, deltaE: q.deltaE.mean, lossless: q.lossless }, null, 2);
     }
+    case 'diff': {
+      const load = async (p: string) => {
+        const b = await readFile(p);
+        if (looksLikeSvg(b)) return (await rasterizeSvg(new TextDecoder().decode(b), { baseDir: baseDirFor(p) })).image;
+        return (await decodeRaster(b)).image;
+      };
+      const ref = await load(inPath);
+      const cand = await load(String(args.candidate));
+      if (ref.width !== cand.width || ref.height !== cand.height) {
+        throw new Error(`Size mismatch: ${ref.width}×${ref.height} vs ${cand.width}×${cand.height}. Render both at one size first.`);
+      }
+      const d = diffImages(ref, cand, { threshold: args.threshold !== undefined ? Number(args.threshold) : undefined });
+      const q = compareImages(ref, cand);
+      if (args.output) {
+        const { encodeRaster } = await import('../io/encode.js');
+        await writeFile(String(args.output), await encodeRaster(d.image, { format: 'png' }));
+      }
+      return JSON.stringify({
+        changedPixels: d.changedPixels, totalPixels: d.totalPixels,
+        changedFraction: +d.changedFraction.toFixed(6),
+        maxDeltaE: +d.maxDeltaE.toFixed(3), meanDeltaE: +d.meanDeltaE.toFixed(3),
+        ssim: q.ssim, heatmap: args.output ?? null,
+      }, null, 2);
+    }
+    case 'crop': {
+      const src = await loadRaster(await readFile(inPath));
+      const rect = smartCrop(src.image, { aspect: parseAspectArg(String(args.aspect ?? '1:1'), args.width, args.height) });
+      const cropped = cropImage(src.image, rect);
+      const out = String(args.output);
+      const { encodeRaster, formatFromExtension } = await import('../io/encode.js');
+      const fmt = formatFromExtension(extname(out)) ?? 'png';
+      await writeFile(out, await encodeRaster(cropped, { format: fmt }));
+      return `Wrote ${out} — content-aware crop ${rect.width}×${rect.height} at (${rect.x},${rect.y}) from ${src.image.width}×${src.image.height}.`;
+    }
     case 'palette': {
       const src = await loadRaster(await readFile(inPath));
       return JSON.stringify(extractPalette(src.image, Number(args.colors) || 6).map((e) => ({ hex: e.hex, weight: +e.weight.toFixed(3) })), null, 2);
@@ -147,6 +193,15 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+}
+
+/** Parse "16:9" / "1.5" into a width/height ratio, or derive it from w×h. */
+function parseAspectArg(spec: string, w?: unknown, h?: unknown): [number, number] {
+  if (w && h) return [Number(w), Number(h)];
+  const m = spec.match(/^\s*([\d.]+)\s*[:x/]\s*([\d.]+)\s*$/);
+  if (m) return [Number(m[1]), Number(m[2])];
+  const n = Number(spec);
+  return Number.isFinite(n) && n > 0 ? [n, 1] : [1, 1];
 }
 
 function reply(id: Rpc['id'], result?: unknown, error?: { code: number; message: string }): string {

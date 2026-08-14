@@ -3,7 +3,7 @@ import { writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleMcpMessage } from '../src/mcp/server.js';
-import { flatArtwork, encode } from './fixtures.js';
+import { flatArtwork, encode, setPixel } from './fixtures.js';
 
 /**
  * The MCP server is how AI agents drive pixvec. These tests exercise the JSON-RPC
@@ -12,10 +12,17 @@ import { flatArtwork, encode } from './fixtures.js';
  */
 
 let pngPath: string;
+let pngPath2: string;
+let outDir: string;
 beforeAll(async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pixvec-mcp-'));
-  pngPath = join(dir, 'art.png');
+  outDir = await mkdtemp(join(tmpdir(), 'pixvec-mcp-'));
+  pngPath = join(outDir, 'art.png');
   await writeFile(pngPath, await encode(flatArtwork(80, 60), 'png'));
+  // A second image, differing in a small block, for the diff tool.
+  const b = flatArtwork(80, 60);
+  for (let y = 5; y < 15; y++) for (let x = 5; x < 15; x++) setPixel(b, x, y, 12, 220, 40);
+  pngPath2 = join(outDir, 'art2.png');
+  await writeFile(pngPath2, await encode(b, 'png'));
 });
 
 async function rpc(method: string, params?: Record<string, unknown>, id: number | null = 1) {
@@ -38,7 +45,26 @@ describe('MCP server', () => {
     expect(names).toContain('convert');
     expect(names).toContain('centerline');
     expect(names).toContain('measure');
+    expect(names).toContain('diff');
+    expect(names).toContain('crop');
     for (const t of r.result.tools) expect(t.inputSchema.type).toBe('object');
+  });
+
+  it('runs the diff tool and reports the changed region', async () => {
+    const out = join(outDir, 'diff.png');
+    const r = await rpc('tools/call', { name: 'diff', arguments: { reference: pngPath, candidate: pngPath2, output: out } });
+    const stats = JSON.parse(r.result.content[0].text);
+    expect(stats.changedPixels).toBeGreaterThan(0);
+    expect(stats.totalPixels).toBe(80 * 60);
+    expect(stats.ssim).toBeLessThan(1);
+    expect(stats.heatmap).toBe(out);
+  });
+
+  it('runs the crop tool and writes a content-aware crop', async () => {
+    const out = join(outDir, 'crop.png');
+    const r = await rpc('tools/call', { name: 'crop', arguments: { input: pngPath, output: out, aspect: '1:1' } });
+    expect(r.result.content[0].text).toContain('content-aware crop');
+    expect(r.result.isError).toBeUndefined();
   });
 
   it('does not reply to the initialized notification', async () => {

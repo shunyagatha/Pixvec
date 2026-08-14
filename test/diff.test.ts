@@ -47,11 +47,36 @@ describe('diffImages', () => {
     expect(diffImages(a, b, { threshold: 0.01 }).changedPixels).toBe(16 * 16);
   });
 
-  it('counts an alpha flip as a change even at equal RGB', () => {
-    const a = solid(8, 8, 100, 100, 100, 255);
-    const b = solid(8, 8, 100, 100, 100, 0);
+  it('honours includeAlpha for pixels that look identical but carry different alpha', () => {
+    // Both composite to ~(200,200,200) over white, so ΔE alone sees no change —
+    // but the alpha differs, a difference only visible over another background.
+    const a = solid(8, 8, 200, 200, 200, 255);
+    const b = solid(8, 8, 145, 145, 145, 128); // ≈ composites to 200 over white
     expect(diffImages(a, b, { threshold: 2, includeAlpha: true }).changedPixels).toBe(64);
     expect(diffImages(a, b, { threshold: 2, includeAlpha: false }).changedPixels).toBe(0);
+  });
+
+  it('does not flag invisible pixels with different-but-unseen RGB', () => {
+    // Both fully transparent — they render identically (nothing), so no change.
+    const a = solid(6, 6, 255, 0, 0, 0);
+    const b = solid(6, 6, 0, 0, 255, 0);
+    const d = diffImages(a, b, { threshold: 2 });
+    expect(d.changedPixels).toBe(0);
+    expect(d.maxDeltaE).toBeCloseTo(0, 6);
+  });
+
+  it('still flags a genuine appear/disappear (alpha flip)', () => {
+    const a = solid(6, 6, 100, 100, 100, 255); // visible grey
+    const b = solid(6, 6, 100, 100, 100, 0);   // gone
+    expect(diffImages(a, b, { threshold: 2 }).changedPixels).toBe(36);
+  });
+
+  it('does not produce NaN for a zero-area image', () => {
+    const empty = { width: 0, height: 0, data: new Uint8ClampedArray(0) };
+    const d = diffImages(empty, empty);
+    expect(d.changedFraction).toBe(0);
+    expect(d.meanDeltaE).toBe(0);
+    expect(d.changedPixels).toBe(0);
   });
 
   it('throws on a size mismatch', () => {

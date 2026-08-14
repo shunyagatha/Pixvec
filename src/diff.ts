@@ -64,31 +64,39 @@ export function diffImages(a: RasterImage, b: RasterImage, opts: DiffOptions = {
 
   for (let i = 0; i < n; i++) {
     const o = i * 4;
-    const ar = a.data[o], ag = a.data[o + 1], ab = a.data[o + 2], aa = a.data[o + 3];
-    const br = b.data[o], bg = b.data[o + 1], bb = b.data[o + 2], ba = b.data[o + 3];
+    const aa = a.data[o + 3], ba = b.data[o + 3];
+    const af = aa / 255, bf = ba / 255;
 
-    srgbToLab(ar, ag, ab, lab1);
-    srgbToLab(br, bg, bb, lab2);
+    // Compare what is actually *seen*: composite each pixel over white before
+    // measuring ΔE. Straight RGB under transparency is tool-dependent junk —
+    // two fully-transparent pixels of different "colour" render identically and
+    // must read as unchanged, not light up the heatmap. (Matches the quality
+    // report, which also scores ΔE over a composited background.)
+    const car = Math.round(a.data[o] * af + 255 * (1 - af));
+    const cag = Math.round(a.data[o + 1] * af + 255 * (1 - af));
+    const cab = Math.round(a.data[o + 2] * af + 255 * (1 - af));
+    const cbr = Math.round(b.data[o] * bf + 255 * (1 - bf));
+    const cbg = Math.round(b.data[o + 1] * bf + 255 * (1 - bf));
+    const cbb = Math.round(b.data[o + 2] * bf + 255 * (1 - bf));
+
+    srgbToLab(car, cag, cab, lab1);
+    srgbToLab(cbr, cbg, cbb, lab2);
     const de = deltaE2000(lab1[0], lab1[1], lab1[2], lab2[0], lab2[1], lab2[2]);
     sumDE += de;
     if (de > maxDE) maxDE = de;
 
-    // A full alpha flip is unmistakably "changed" even at identical RGB; scale
-    // it onto the same rough ΔE axis so one threshold governs both.
+    // A full alpha flip is unmistakably "changed" even at identical composited
+    // colour (a pixel appearing/disappearing); scale it onto the same rough ΔE
+    // axis so one threshold governs both.
     const alphaDelta = includeAlpha ? (Math.abs(aa - ba) / 255) * 100 : 0;
 
     if (Math.max(de, alphaDelta) > threshold) {
       changed++;
       out[o] = dc.r; out[o + 1] = dc.g; out[o + 2] = dc.b; out[o + 3] = 255;
     } else {
-      // Faded backdrop: the base image composited over white, then washed out so
-      // the highlights read clearly against it.
-      const af = aa / 255;
-      const y = luma709(
-        ar * af + 255 * (1 - af),
-        ag * af + 255 * (1 - af),
-        ab * af + 255 * (1 - af),
-      );
+      // Faded backdrop: the base image (already composited over white above),
+      // washed out so the highlights read clearly against it.
+      const y = luma709(car, cag, cab);
       const g = Math.round(255 * (1 - keep) + y * keep);
       out[o] = g; out[o + 1] = g; out[o + 2] = g; out[o + 3] = 255;
     }
@@ -98,9 +106,9 @@ export function diffImages(a: RasterImage, b: RasterImage, opts: DiffOptions = {
     image: { width, height, data: out },
     changedPixels: changed,
     totalPixels: n,
-    changedFraction: changed / n,
+    changedFraction: n === 0 ? 0 : changed / n,
     maxDeltaE: maxDE,
-    meanDeltaE: sumDE / n,
+    meanDeltaE: n === 0 ? 0 : sumDE / n,
   };
 }
 
