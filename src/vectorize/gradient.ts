@@ -233,20 +233,39 @@ export function detectGradients(
     };
   }
 
-  // --- 4. Projection extent + flat-fill error, per candidate (one pass). ---
+  // Region centroid, computed for *every* candidate — the radial centre. This is
+  // independent of the linear fit, which matters because a radially-symmetric
+  // gradient has ~zero net linear slope (the +x and −x sides cancel) and so has
+  // no linear model at all: exactly the case the radial model must still handle.
+  const cxArr = new Float64Array(K);
+  const cyArr = new Float64Array(K);
+  for (let k = 0; k < K; k++) {
+    const count = M[k * 6] || 1;
+    cxArr[k] = M[k * 6 + 1] / count;
+    cyArr[k] = M[k * 6 + 2] / count;
+  }
+
+  // --- 4. Projection extent + flat-fill error, per candidate (one pass). Also
+  //        the radial extent: max distance from the region centroid, which is
+  //        the natural centre of a vignette / round highlight / spotlight. ---
   const tMin = new Float64Array(K).fill(Infinity);
   const tMax = new Float64Array(K).fill(-Infinity);
+  const radRMax = new Float64Array(K); // max radius from centroid; 0 stays unused
   const flatSum = new Float64Array(K);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
-      if (k < 0 || !models[k]) continue;
-      const mdl = models[k]!;
-      const t = mdl.dx * x + mdl.dy * y;
-      if (t < tMin[k]) tMin[k] = t;
-      if (t > tMax[k]) tMax[k] = t;
+      if (k < 0) continue;
+      const mdl = models[k];
+      if (mdl) {
+        const t = mdl.dx * x + mdl.dy * y;
+        if (t < tMin[k]) tMin[k] = t;
+        if (t > tMax[k]) tMax[k] = t;
+      }
+      const r = Math.hypot(x - cxArr[k], y - cyArr[k]);
+      if (r > radRMax[k]) radRMax[k] = r;
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
       const ci = colorIdx(classes[i]) * 3;
@@ -264,50 +283,59 @@ export function detectGradients(
   const fineA = new Float64Array(K * FINE);
   const fineB = new Float64Array(K * FINE);
   const fineN = new Float64Array(K * FINE);
+  // Parallel bins for the radial model, indexed by (radius / rMax) — which is
+  // exactly the offset an SVG <radialGradient> uses, so no re-mapping later.
+  const fineLR = new Float64Array(K * FINE);
+  const fineAR = new Float64Array(K * FINE);
+  const fineBR = new Float64Array(K * FINE);
+  const fineNR = new Float64Array(K * FINE);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
-      if (k < 0 || !models[k] || !(tMax[k] > tMin[k])) continue;
-      const mdl = models[k]!;
-      const u = clamp01((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
-      const j = Math.min(FINE - 1, Math.floor(u * FINE));
+      if (k < 0) continue;
+      const mdl = models[k];
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
-      const b = k * FINE + j;
-      fineL[b] += lab[0]; fineA[b] += lab[1]; fineB[b] += lab[2]; fineN[b] += 1;
+      if (mdl && tMax[k] > tMin[k]) {
+        const u = clamp01((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
+        const b = k * FINE + Math.min(FINE - 1, Math.floor(u * FINE));
+        fineL[b] += lab[0]; fineA[b] += lab[1]; fineB[b] += lab[2]; fineN[b] += 1;
+      }
+      if (radRMax[k] > 0) {
+        const uR = clamp01(Math.hypot(x - cxArr[k], y - cyArr[k]) / radRMax[k]);
+        const jR = k * FINE + Math.min(FINE - 1, Math.floor(uR * FINE));
+        fineLR[jR] += lab[0]; fineAR[jR] += lab[1]; fineBR[jR] += lab[2]; fineNR[jR] += 1;
+      }
     }
   }
 
   const maxStops = Math.max(2, opts.gradientStops);
-  const stopList: (number[][] | null)[] = new Array(K).fill(null); // [offset, r, g, b][]
+  const stopList: (number[][] | null)[] = new Array(K).fill(null);    // linear [offset, r, g, b][]
+  const stopListRad: (number[][] | null)[] = new Array(K).fill(null); // radial
   for (let k = 0; k < K; k++) {
-    if (!models[k] || !(tMax[k] > tMin[k])) { models[k] = null; continue; }
-    const curve = new Float64Array(FINE * 3);
-    const w = new Float64Array(FINE);
-    let last = -1;
-    for (let j = 0; j < FINE; j++) {
-      const b = k * FINE + j;
-      if (fineN[b] > 0) {
-        curve[j * 3] = fineL[b] / fineN[b];
-        curve[j * 3 + 1] = fineA[b] / fineN[b];
-        curve[j * 3 + 2] = fineB[b] / fineN[b];
-        w[j] = fineN[b];
-        if (last === -1) {
-          for (let t = 0; t < j; t++) { curve[t * 3] = curve[j * 3]; curve[t * 3 + 1] = curve[j * 3 + 1]; curve[t * 3 + 2] = curve[j * 3 + 2]; }
-        }
-        last = j;
-      } else if (last >= 0) {
-        curve[j * 3] = curve[last * 3]; curve[j * 3 + 1] = curve[last * 3 + 1]; curve[j * 3 + 2] = curve[last * 3 + 2];
-      }
+    const count = M[k * 6];
+    if (count <= 0) continue;
+    const target = (flatSum[k] / count) * (1 - opts.gradientMargin);
+    if (models[k] && tMax[k] > tMin[k]) {
+      const lin = buildCurve(fineL, fineA, fineB, fineN, k, FINE);
+      stopList[k] = selectStops(lin.curve, lin.w, FINE, maxStops, target);
+    } else {
+      models[k] = null; // no usable linear model (e.g. a symmetric radial ramp)
     }
-    const flatErr = flatSum[k] / M[k * 6];
-    stopList[k] = selectStops(curve, w, FINE, maxStops, flatErr * (1 - opts.gradientMargin));
+    if (radRMax[k] > 0) {
+      const rad = buildCurve(fineLR, fineAR, fineBR, fineNR, k, FINE);
+      stopListRad[k] = selectStops(rad.curve, rad.w, FINE, maxStops, target);
+    }
   }
 
-  // --- 6. The gate: rendered-gradient error vs flat error, over real pixels. ---
+  // --- 6. The gate: rendered-gradient error vs flat error, over real pixels.
+  //        Both models are rendered exactly as the SVG would (linear along its
+  //        axis, radial by distance/rMax from the centroid) and scored per
+  //        pixel; the better of the two competes against the flat bands. ---
   const gradSum = new Float64Array(K);
+  const gradSumRad = new Float64Array(K);
   const renderLab = new Float64Array(3);
   const rgbTmp: [number, number, number] = [0, 0, 0];
   for (let y = 0; y < height; y++) {
@@ -315,14 +343,22 @@ export function detectGradients(
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
-      if (k < 0 || !models[k] || !stopList[k]) continue;
-      const mdl = models[k]!;
-      const u = clamp01((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
-      renderStops(stopList[k]!, u, rgbTmp); // reproduce resvg's sRGB stop interpolation
-      srgbToOklab(Math.round(rgbTmp[0]), Math.round(rgbTmp[1]), Math.round(rgbTmp[2]), renderLab);
+      if (k < 0) continue;
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
-      gradSum[k] += sq(lab[0] - renderLab[0]) + sq(lab[1] - renderLab[1]) + sq(lab[2] - renderLab[2]);
+      const mdl = models[k];
+      if (mdl && stopList[k]) {
+        const u = clamp01((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
+        renderStops(stopList[k]!, u, rgbTmp); // reproduce resvg's sRGB stop interpolation
+        srgbToOklab(Math.round(rgbTmp[0]), Math.round(rgbTmp[1]), Math.round(rgbTmp[2]), renderLab);
+        gradSum[k] += sq(lab[0] - renderLab[0]) + sq(lab[1] - renderLab[1]) + sq(lab[2] - renderLab[2]);
+      }
+      if (stopListRad[k] && radRMax[k] > 0) {
+        const uR = clamp01(Math.hypot(x - cxArr[k], y - cyArr[k]) / radRMax[k]);
+        renderStops(stopListRad[k]!, uR, rgbTmp);
+        srgbToOklab(Math.round(rgbTmp[0]), Math.round(rgbTmp[1]), Math.round(rgbTmp[2]), renderLab);
+        gradSumRad[k] += sq(lab[0] - renderLab[0]) + sq(lab[1] - renderLab[1]) + sq(lab[2] - renderLab[2]);
+      }
     }
   }
 
@@ -331,13 +367,18 @@ export function detectGradients(
   const accepted = new Uint8Array(K);
   const floorSq = opts.gradientMaxError * opts.gradientMaxError;
   for (let k = 0; k < K; k++) {
-    if (!models[k]) continue;
+    if (!stopList[k] && !stopListRad[k]) continue;
     const count = M[k * 6];
-    const gradErr = gradSum[k] / count;
-    const flatErr = flatSum[k] / count;
-    if (gradErr < flatErr * (1 - opts.gradientMargin) && gradErr < floorSq) {
+    const target = (flatSum[k] / count) * (1 - opts.gradientMargin);
+    const linErr = (models[k] && stopList[k]) ? gradSum[k] / count : Infinity;
+    const radErr = (stopListRad[k] && radRMax[k] > 0) ? gradSumRad[k] / count : Infinity;
+    const radialWins = radErr < linErr;
+    const bestErr = radialWins ? radErr : linErr;
+    if (bestErr < target && bestErr < floorSq) {
       accepted[k] = 1;
-      paints.set(GRAD_BASE + k, buildPaint(kRoot[k], classes, alphaLevels, levelCount, models[k]!, tMin[k], tMax[k], stopList[k]!, k));
+      paints.set(GRAD_BASE + k, radialWins
+        ? buildRadialPaint(kRoot[k], classes, alphaLevels, levelCount, cxArr[k], cyArr[k], radRMax[k], stopListRad[k]!, k)
+        : buildPaint(kRoot[k], classes, alphaLevels, levelCount, models[k]!, tMin[k], tMax[k], stopList[k]!, k));
     }
   }
   if (paints.size === 0) return { classes, paints };
@@ -365,15 +406,7 @@ function buildPaint(
   const x2 = mdl.meanX + mdl.dx * (tMax - meanT);
   const y2 = mdl.meanY + mdl.dy * (tMax - meanT);
 
-  let body = '';
-  let prev = '';
-  for (let s = 0; s < stops.length; s++) {
-    const hex = shortHex(clamp255(stops[s][1]), clamp255(stops[s][2]), clamp255(stops[s][3]));
-    // Drop a stop whose colour equals its predecessor; it changes nothing.
-    if (hex === prev && s !== stops.length - 1) continue;
-    prev = hex;
-    body += `<stop offset="${round(stops[s][0], 3)}" stop-color="${hex}"/>`;
-  }
+  const body = emitStops(stops);
 
   const id = `pv-g${k}`;
   const def =
@@ -381,6 +414,62 @@ function buildPaint(
     `x1="${round(x1, 2)}" y1="${round(y1, 2)}" x2="${round(x2, 2)}" y2="${round(y2, 2)}">${body}</linearGradient>`;
   const alpha = alphaLevels[classes[root] % levelCount] / 255;
   return { def, ref: `url(#${id})`, alpha };
+}
+
+/**
+ * A `<radialGradient>` centred on the region's centroid with radius `rMax`. Stop
+ * offsets are already `distance / rMax`, which is exactly how SVG parameterises a
+ * radial gradient, so they drop straight in.
+ */
+function buildRadialPaint(
+  root: number, classes: Int32Array, alphaLevels: Uint8Array, levelCount: number,
+  cx: number, cy: number, rMax: number, stops: number[][], k: number,
+): GradientPaint {
+  const id = `pv-g${k}`;
+  const def =
+    `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" ` +
+    `cx="${round(cx, 2)}" cy="${round(cy, 2)}" r="${round(rMax, 2)}">${emitStops(stops)}</radialGradient>`;
+  const alpha = alphaLevels[classes[root] % levelCount] / 255;
+  return { def, ref: `url(#${id})`, alpha };
+}
+
+/** Serialise stops, dropping a stop whose colour repeats its predecessor. */
+function emitStops(stops: number[][]): string {
+  let body = '';
+  let prev = '';
+  for (let s = 0; s < stops.length; s++) {
+    const hex = shortHex(clamp255(stops[s][1]), clamp255(stops[s][2]), clamp255(stops[s][3]));
+    if (hex === prev && s !== stops.length - 1) continue;
+    prev = hex;
+    body += `<stop offset="${round(stops[s][0], 3)}" stop-color="${hex}"/>`;
+  }
+  return body;
+}
+
+/** Average the fine per-bin Oklab samples into a curve, back-filling empty bins. */
+function buildCurve(
+  fineL: Float64Array, fineA: Float64Array, fineB: Float64Array, fineN: Float64Array,
+  k: number, fine: number,
+): { curve: Float64Array; w: Float64Array } {
+  const curve = new Float64Array(fine * 3);
+  const w = new Float64Array(fine);
+  let last = -1;
+  for (let j = 0; j < fine; j++) {
+    const b = k * fine + j;
+    if (fineN[b] > 0) {
+      curve[j * 3] = fineL[b] / fineN[b];
+      curve[j * 3 + 1] = fineA[b] / fineN[b];
+      curve[j * 3 + 2] = fineB[b] / fineN[b];
+      w[j] = fineN[b];
+      if (last === -1) {
+        for (let t = 0; t < j; t++) { curve[t * 3] = curve[j * 3]; curve[t * 3 + 1] = curve[j * 3 + 1]; curve[t * 3 + 2] = curve[j * 3 + 2]; }
+      }
+      last = j;
+    } else if (last >= 0) {
+      curve[j * 3] = curve[last * 3]; curve[j * 3 + 1] = curve[last * 3 + 1]; curve[j * 3 + 2] = curve[last * 3 + 2];
+    }
+  }
+  return { curve, w };
 }
 
 /**

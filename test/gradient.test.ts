@@ -24,9 +24,24 @@ function ramp(w: number, h: number): RasterImage {
   return img;
 }
 
-/** Every `url(#id)` fill must resolve to a gradient defined in `<defs>`. */
+/** A radial vignette — bright centre to dark edge, the case a radial gradient
+ * should reconstruct. Few colours so the flat bands are visibly coarse. */
+function vignette(s: number): RasterImage {
+  const img = createImage(s, s);
+  const c = (s - 1) / 2;
+  const rMax = Math.hypot(c, c);
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      const t = Math.min(1, Math.hypot(x - c, y - c) / rMax);
+      setPixel(img, x, y, Math.round(250 - 210 * t), Math.round(240 - 200 * t), Math.round(255 - 120 * t));
+    }
+  }
+  return img;
+}
+
+/** Every `url(#id)` fill must resolve to a gradient (linear or radial) in `<defs>`. */
 function referencesResolve(svg: string): boolean {
-  const ids = new Set(Array.from(svg.matchAll(/<linearGradient id="([^"]+)"/g), (m) => m[1]));
+  const ids = new Set(Array.from(svg.matchAll(/<(?:linear|radial)Gradient id="([^"]+)"/g), (m) => m[1]));
   const refs = Array.from(svg.matchAll(/fill="url\(#([^)]+)\)"/g), (m) => m[1]);
   return refs.length > 0 && refs.every((r) => ids.has(r));
 }
@@ -46,6 +61,27 @@ describe('gradient output', () => {
   it('never emits a gradient reference without its definition', () => {
     const svg = trace(ramp(80, 40), { colors: 16, gradients: true }).svg;
     expect(referencesResolve(svg)).toBe(true);
+  });
+
+  it('reconstructs a vignette as a radial gradient, not a linear one', async () => {
+    const img = vignette(90);
+    const out = trace(img, { colors: 8, gradients: true });
+    expect(out.svg).toContain('<radialGradient');
+    expect(out.svg).not.toContain('<linearGradient'); // a symmetric ramp is not linear
+    expect(out.svg).toContain('gradientUnits="userSpaceOnUse"');
+    expect(referencesResolve(out.svg)).toBe(true);
+  });
+
+  it('the radial gradient beats the flat bands it replaces, and is far smaller', async () => {
+    const { rasterizeSvg } = await import('../src/io/rasterize.js');
+    const { compareImages } = await import('../src/metrics/index.js');
+    const img = vignette(90);
+    const grad = trace(img, { colors: 8, gradients: true });
+    const flat = trace(img, { colors: 8 });
+    const g = await rasterizeSvg(grad.svg, { width: 90 });
+    const f = await rasterizeSvg(flat.svg, { width: 90 });
+    expect(compareImages(img, g.image).ssim).toBeGreaterThan(compareImages(img, f.image).ssim);
+    expect(grad.svg.length).toBeLessThan(flat.svg.length / 2);
   });
 
   it('emits <defs> only when a gradient is present', () => {
