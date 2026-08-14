@@ -1,7 +1,7 @@
 {
   "name": "pixvec",
-  "version": "1.31.1",
-  "description": "Measurable raster <-> SVG conversion. Pixel-exact lossless vectorization, quality-targeted Bezier tracing, and exact SVG rasterization - with built-in PSNR/SSIM/CIEDE2000 verification. Reads PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM and TGA.",
+  "version": "1.31.2",
+  "description": "The measurable image + document toolkit for JavaScript. Raster <-> SVG (pixel-exact lossless or quality-targeted Bezier tracing, verified with PSNR/SSIM/CIEDE2000), plus PDF & Office (docx/xlsx/pptx) rendering and conversion, images-to-PDF, DXF/EPS/PDF/G-code export, content-aware crop, and image editing. Reads PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM, TGA.",
   "keywords": [
     "svg",
     "vectorize",
@@ -33,7 +33,18 @@
     "gradient",
     "avif",
     "webp",
-    "image-editing"
+    "image-editing",
+    "pdf",
+    "pdf-to-image",
+    "image-to-pdf",
+    "docx",
+    "office",
+    "document-conversion",
+    "centerline",
+    "dxf",
+    "gcode",
+    "blurhash",
+    "smart-crop"
   ],
   "license": "MIT",
   "repository": {

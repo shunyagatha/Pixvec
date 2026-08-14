@@ -1,6 +1,6 @@
 # Pixvec
 
-**Measurable raster ⇄ SVG conversion.** Eleven formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted.
+**Measurable raster ⇄ SVG conversion — and a broad image + document toolkit.** Eleven raster formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted; plus **PDF & Office** (docx/xlsx/pptx) rendering and conversion, **images → PDF**, **DXF/EPS/G-code** export for makers, and content-aware crop — most of it in a **zero-dependency** core that runs in the browser too.
 
 [![npm version](https://img.shields.io/npm/v/pixvec.svg)](https://www.npmjs.com/package/pixvec)
 [![npm downloads](https://img.shields.io/npm/dm/pixvec.svg)](https://www.npmjs.com/package/pixvec)
