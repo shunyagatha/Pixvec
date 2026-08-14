@@ -260,8 +260,7 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 | **Photo** (gradient + noise) | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
 | | imagetracerjs | 11.8 KB | 26.85 dB | 0.7143 | 5.623 |
 | | vtracer | 72.6 KB | **32.50 dB** | **0.7958** | 3.053 |
-| | vecline (auto) | **12 KB** | 31.13 dB | 0.7767 | 2.958 |
-| | vecline photo | 15 KB | 32.19 dB | 0.7923 | **2.704** |
+| | **vecline (auto / photo)** | 19 KB | 31.12 dB | 0.7750 | **2.940** |
 | | **vecline lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
 
 **Real photographs** — the Kodak set at 480px, the test that actually matters. `vecline (auto)` is the **zero-config default**: `vecline convert photo.png out.svg`, which scales the palette to the content on its own.
@@ -280,7 +279,9 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 
 **Bilevel** and **colour art** are bit-exact for vecline (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
 
-**The synthetic photo** — a pure gradient plus noise — is vtracer's best case: it takes the SSIM (0.7958) with fine colour-precision tracing. But vecline's default reaches 0.7767 (its `photo` preset 0.7923, all but tying) at **one-fifth to one-sixth the file size** (12–15 KB vs 72.6 KB), and already beats imagetracerjs (0.7143). More colours close the last gap; it is not worth 5× the bytes on a synthetic worst case.
+**The synthetic photo** — a pure gradient plus noise — is vtracer's best case, and it takes the SSIM (0.7958) with fine colour-precision tracing. vecline reaches 0.7750 at **a quarter of the file size** (19 KB vs 72.6 KB) and comfortably beats imagetracerjs (0.7143). More colours would close the last gap; it is not worth 4× the bytes on a synthetic worst case.
+
+> This row moved in v1.33.1, and downwards, so it is worth saying why. The `photo` preset used to score 0.7923 here — but `npm run compare` showed the same preset scoring *below plain auto on every real photograph*, and taking up to 136 seconds to do it, because it forced a despeckle threshold that erases the fine detail photographs are made of. Fixing that cost ~0.017 SSIM on this one synthetic fixture and gained **+0.25 SSIM at ~75× the speed** on the Kodak set below. A gradient-plus-noise pattern is not a photograph, and where the two disagree the real photographs win. `photo` and `auto` now resolve to the same measured-best configuration, so they are reported as one row.
 
 **On real photographs vecline is simply ahead — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.19**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7590 / 0.7588 / 0.7936 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR and ΔE, in a **smaller or comparable file every time** (parrots at half vtracer's size). The synthetic-worst-case story does not survive contact with actual photographs.
 
