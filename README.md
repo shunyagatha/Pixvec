@@ -418,7 +418,7 @@ pixvec sprite icons/*.svg -o sprite.svg    # pack many icons into one <symbol> s
 pixvec animate loading.gif -o loading.svg  # animated GIF/APNG → one CSS-animated SVG
 pixvec verify a.png b.svg          # measure any two images
 pixvec diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
-pixvec batch 'src/**/*.png' -o out/ --to svg
+pixvec batch 'src/**/*.png' -o out/ --to svg --summary "$GITHUB_STEP_SUMMARY"
 pixvec mcp                         # MCP server: expose pixvec as tools to AI agents/IDEs
 ```
 
@@ -435,6 +435,17 @@ import Logo from './logo.png?component';  // a React/Vue/Svelte/Solid component
 ```
 
 It returns the plain Vite/Rollup plugin object (no `unplugin` dependency), and the pure-TS core avoids the native-binary CI pain that sharp-based plugins carry.
+
+**CI-native.** A **GitHub Action** vectorises/optimises your image assets on every push and writes a size-savings table straight to the job summary:
+
+```yaml
+- uses: shunyagatha/Pixvec@v1
+  with:
+    files: 'assets/**/*.png'
+    to: svg
+```
+
+It's a thin composite action over `pixvec batch … --summary "$GITHUB_STEP_SUMMARY"`, so it inherits the pure-TS core's zero-native-binary install — no libvips to compile in CI. Run `pixvec batch … --summary <file>` anywhere for the same Markdown report (per-file in/out sizes and signed savings).
 
 **AI-native.** `pixvec mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call pixvec directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Nine tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["pixvec", "mcp"] }`.
 

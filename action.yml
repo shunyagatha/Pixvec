@@ -1,0 +1,49 @@
+name: 'pixvec — vectorize & optimize images'
+description: 'Convert raster assets to SVG (or between formats) in CI and post a size-savings summary to the job. Pure-TS, no native binaries.'
+author: 'shunyagatha'
+branding:
+  icon: 'image'
+  color: 'purple'
+
+inputs:
+  files:
+    description: 'Glob of source images, e.g. "assets/**/*.png".'
+    required: true
+  out-dir:
+    description: 'Directory to write converted files to.'
+    required: false
+    default: 'pixvec-out'
+  to:
+    description: 'Target extension: svg (default), or a raster format (png, webp, avif, …).'
+    required: false
+    default: 'svg'
+  mode:
+    description: 'Conversion strategy: auto, lossless, pixel, trace, or embed.'
+    required: false
+    default: 'auto'
+  preset:
+    description: 'Tuning profile: auto, logo, lineart, poster, photo, detailed, pixelart, exact.'
+    required: false
+    default: 'auto'
+  version:
+    description: 'pixvec version to run (npm dist-tag or exact version).'
+    required: false
+    default: 'latest'
+
+outputs:
+  out-dir:
+    description: 'The directory the converted files were written to.'
+    value: ${{ inputs.out-dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run pixvec
+      shell: bash
+      run: |
+        npx --yes "pixvec@${{ inputs.version }}" batch "${{ inputs.files }}" \
+          --out-dir "${{ inputs.out-dir }}" \
+          --to "${{ inputs.to }}" \
+          --mode "${{ inputs.mode }}" \
+          --preset "${{ inputs.preset }}" \
+          --summary "${GITHUB_STEP_SUMMARY:-$RUNNER_TEMP/pixvec-summary.md}"

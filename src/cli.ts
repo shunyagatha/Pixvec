@@ -28,6 +28,7 @@ import { optimizeSvg } from './svg/optimize.js';
 import { svgSprite } from './emit/sprite.js';
 import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
+import { formatBatchSummary } from './io/batch-summary.js';
 import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -1347,6 +1348,7 @@ interface BatchCliOptions extends SharedCliOptions {
   outDir: string;
   to: string;
   concurrency: number;
+  summary?: string;
 }
 
 async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
@@ -1367,6 +1369,7 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
   let done = 0;
   let failed = 0;
   const queue = [...files];
+  const rows: Array<{ file: string; target: string; inBytes: number; outBytes: number }> = [];
 
   const worker = async (): Promise<void> => {
     for (;;) {
@@ -1380,6 +1383,10 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
           await runRasterize(file, toRasterizeOptions(o, target));
         }
         done++;
+        if (o.summary) {
+          const [inS, outS] = await Promise.all([stat(file), stat(target)]);
+          rows.push({ file: basename(file), target: basename(target), inBytes: inS.size, outBytes: outS.size });
+        }
       } catch (err) {
         failed++;
         info(`${red('✗')} ${file}: ${(err as Error).message}`);
@@ -1389,8 +1396,10 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
 
   await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
   info(`\n${done} succeeded, ${failed} failed.`);
+  if (o.summary) await writeFile(o.summary, formatBatchSummary(rows, done, failed));
   if (failed > 0) process.exit(1);
 }
+
 
 // ---------------------------------------------------------------------------
 // Program
@@ -1814,6 +1823,7 @@ program
   .option('-t, --transparent [color]', 'make the background transparent; detects the colour when omitted')
   .option('--concurrency <n>', 'parallel workers', intArg('--concurrency', 1, 64), 4)
   .option('--verify', 'measure every result')
+  .option('--summary <file>', 'write a Markdown report (sizes + savings) — point it at $GITHUB_STEP_SUMMARY in CI')
   .option('--json', 'machine-readable output')
   .action((patterns: string[], opts: SharedCliOptions & { outDir: string; to: string; concurrency: number }) =>
     runBatch(patterns, opts as unknown as BatchCliOptions),
