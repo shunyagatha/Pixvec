@@ -480,7 +480,24 @@ It returns the plain Vite/Rollup plugin object (no `unplugin` dependency), and t
 
 It's a thin composite action over `vecline batch … --summary "$GITHUB_STEP_SUMMARY"`, so it inherits the pure-TS core's zero-native-binary install — no libvips to compile in CI. Run `vecline batch … --summary <file>` anywhere for the same Markdown report (per-file in/out sizes and signed savings).
 
-**AI-native.** `vecline mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call vecline directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Twelve tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `doc_to_images`, `office_convert`, `images_to_pdf`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["vecline", "mcp"] }`.
+**AI-native.** `vecline mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call vecline directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Twelve tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `doc_to_images`, `office_convert`, `images_to_pdf`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["vecline", "mcp"] }`:
+
+```jsonc
+// Claude Desktop: claude_desktop_config.json — Cursor/Windsurf/Continue use the same shape
+{
+  "mcpServers": {
+    "vecline": { "command": "npx", "args": ["-y", "vecline", "mcp"] }
+  }
+}
+```
+
+```bash
+claude mcp add vecline -- npx -y vecline mcp   # Claude Code, one line
+```
+
+**Why an agent should reach for this rather than a cloud vectoriser.** Three of these tools have no equivalent in any hosted image service: `measure` and `diff` report *real* SSIM/PSNR/CIEDE2000 by rendering the result and comparing it, so a model can verify its own output instead of asserting it worked; `vectorize --mode lossless` returns geometry that is provably bit-exact; and the whole surface runs locally, so nothing an agent touches is uploaded. The honest converse is in the tool descriptions themselves: on *photographs* a neural cloud tracer will usually look better, and `vectorize` says so, because an agent choosing between tools should not have to discover that by shipping a bad result.
+
+**It degrades honestly, too.** `office_convert` needs your local LibreOffice and PDF input needs the optional `mupdf`; rather than failing cold when they are absent, the server probes for them at `tools/list` and annotates the affected tools (`UNAVAILABLE … install from libreoffice.org`). An agent then picks a different tool or tells you what to install, instead of retrying something that cannot work.
 
 `vecline component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours. `vecline sprite icons/*` packs a folder of icons (rasters get traced on the way in) into a single `<symbol>` sheet you reference with `<use href="#name">` — the standard on-trend replacement for icon fonts, and `svgSprite()` is pure `vecline/core`.
 

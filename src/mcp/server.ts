@@ -27,7 +27,7 @@ import { blurHash } from '../placeholder/index.js';
 import { diffImages } from '../diff.js';
 import { smartCrop, cropImage } from '../crop.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from '../io/pdf.js';
-import { isOfficeDocument, convertOffice } from '../io/office.js';
+import { isOfficeDocument, convertOffice, findSoffice } from '../io/office.js';
 import { imagesToPdf } from '../io/images-pdf.js';
 import type { RasterImage, RasterFormat } from '../types.js';
 
@@ -39,7 +39,19 @@ const s = (o: Record<string, unknown>): { type: 'object'; properties: Record<str
 const TOOLS = [
   {
     name: 'vectorize',
-    description: 'Convert a raster image file (PNG/JPEG/WebP/…) to SVG. Auto-picks pixel/trace/embed, or force a mode. Writes to output if given, else returns the SVG.',
+    // Says what this is good at and what it is not, because an agent choosing
+    // between tools should not have to discover the limit by shipping a bad
+    // result. On flat art (logos, icons, UI, screenshots, pixel art) the output
+    // is provably bit-exact — a guarantee no neural vectoriser offers. On
+    // photographs it is a deterministic approximation, and a cloud ML tracer
+    // will usually look better; saying so here is cheaper than a wrong choice.
+    description:
+      'Convert a raster image (PNG/JPEG/WebP/…) to SVG, locally and deterministically. '
+      + 'BEST FOR flat art — logos, icons, UI, screenshots, pixel art — where `lossless` mode returns '
+      + 'vector geometry that rasterises back BIT-EXACT (verified, not asserted). '
+      + 'For photographs it produces a measured approximation; a neural cloud vectoriser will often '
+      + 'look better, so prefer this when determinism, privacy or provable exactness matter. '
+      + 'Auto-picks pixel/trace/embed, or force a mode. Writes to `output` if given, else returns the SVG.',
     inputSchema: s({
       properties: {
         input: { type: 'string', description: 'Path to the source raster image' },
@@ -114,6 +126,56 @@ const TOOLS = [
     inputSchema: s({ properties: { inputs: { type: 'array', items: { type: 'string' } }, output: { type: 'string' }, dpi: { type: 'number' } }, required: ['inputs', 'output'] }),
   },
 ];
+
+/**
+ * Which optional engines are actually present on this machine.
+ *
+ * Three of the tools need something this package deliberately does not bundle:
+ * PDF rendering needs the optional `mupdf`, and the Office paths need the user's
+ * own LibreOffice. In a registry's sandbox neither exists, so an agent that
+ * discovers the server there would call them and get a bare failure — which
+ * reads as "this server is broken" rather than "this machine lacks LibreOffice".
+ *
+ * Probing once and saying so in the tool description turns a confusing error
+ * into information the model can act on: it will pick a different tool, or tell
+ * the user what to install, instead of retrying something that cannot work.
+ */
+let capabilities: { pdf: boolean; office: boolean } | null = null;
+
+async function probeCapabilities(): Promise<{ pdf: boolean; office: boolean }> {
+  if (capabilities) return capabilities;
+  let pdf = false;
+  try {
+    await import('mupdf' as string);
+    pdf = true;
+  } catch { /* not installed; the tool will say so */ }
+  capabilities = { pdf, office: findSoffice() !== null };
+  return capabilities;
+}
+
+/** The tool list, annotated with what this machine can currently do. */
+async function describeTools(): Promise<typeof TOOLS> {
+  const cap = await probeCapabilities();
+  const missing = (tool: string): string | null => {
+    if (tool === 'office_convert' && !cap.office) {
+      return 'UNAVAILABLE on this machine: needs LibreOffice (install from libreoffice.org, or set VECLINE_SOFFICE).';
+    }
+    if (tool === 'doc_to_images' && !cap.pdf && !cap.office) {
+      return 'LIMITED on this machine: SVG input works; PDF needs the optional `mupdf` package (npm i mupdf) and Office needs LibreOffice.';
+    }
+    if (tool === 'doc_to_images' && !cap.pdf) {
+      return 'LIMITED on this machine: PDF input needs the optional `mupdf` package (npm i mupdf).';
+    }
+    if (tool === 'doc_to_images' && !cap.office) {
+      return 'LIMITED on this machine: Office input needs LibreOffice (install from libreoffice.org).';
+    }
+    return null;
+  };
+  return TOOLS.map((t) => {
+    const note = missing(t.name);
+    return note ? { ...t, description: `${t.description} [${note}]` } : t;
+  });
+}
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
   const inPath = String(args.input ?? args.reference ?? '');
@@ -320,7 +382,7 @@ export async function handleMcpMessage(msg: Rpc): Promise<string | null> {
     case 'ping':
       return reply(id, {});
     case 'tools/list':
-      return reply(id, { tools: TOOLS });
+      return reply(id, { tools: await describeTools() });
     case 'tools/call':
       try {
         const text = await callTool(String(params?.name), (params?.arguments as Record<string, unknown>) ?? {});

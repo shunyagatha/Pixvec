@@ -62,6 +62,36 @@ describe('MCP server', () => {
     expect(new TextDecoder('latin1').decode(bytes.subarray(0, 5))).toBe('%PDF-');
   });
 
+  it('annotates tools whose optional engine is missing, instead of failing cold', async () => {
+    // A registry sandbox has neither LibreOffice nor mupdf. An agent that
+    // discovers the server there must be told *why* a tool cannot run, or the
+    // failure reads as "this server is broken".
+    const r = await rpc('tools/list');
+    const byName = Object.fromEntries(
+      r.result.tools.map((t: { name: string; description: string }) => [t.name, t.description]),
+    );
+    const officeNote = byName.office_convert;
+    // Either LibreOffice is genuinely installed (no note), or the note explains
+    // exactly what to install — never a bare, unexplained tool.
+    if (/UNAVAILABLE/.test(officeNote)) {
+      expect(officeNote).toMatch(/LibreOffice/);
+      expect(officeNote).toMatch(/libreoffice\.org|VECLINE_SOFFICE/);
+    }
+    // Tools with no optional dependency must never be annotated.
+    expect(byName.measure).not.toMatch(/UNAVAILABLE|LIMITED/);
+    expect(byName.vectorize).not.toMatch(/UNAVAILABLE|LIMITED/);
+  });
+
+  it('describes vectorize honestly about where it wins and loses', async () => {
+    // The one task a deterministic tracer loses to a neural cloud service is
+    // photographs. Saying so in the description is cheaper than an agent
+    // discovering it by shipping a bad result.
+    const r = await rpc('tools/list');
+    const v = r.result.tools.find((t: { name: string }) => t.name === 'vectorize').description;
+    expect(v).toMatch(/bit-exact/i);
+    expect(v).toMatch(/photograph/i);
+  });
+
   it('images_to_pdf rejects a non-array "inputs" with an actionable error', async () => {
     const r = await rpc('tools/call', { name: 'images_to_pdf', arguments: { inputs: pngPath, output: join(outDir, 'x.pdf') } });
     expect(r.result.isError).toBe(true);
