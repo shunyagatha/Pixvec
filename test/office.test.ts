@@ -13,7 +13,14 @@ import { convertOffice, findSoffice, buildSofficeArgs, OFFICE_FORMATS } from '..
  */
 
 let dir: string;
-beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), 'pixvec-office-test-')); });
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pixvec-office-test-'));
+  // convertOffice checks the input exists before spawning; give the tests real
+  // (dummy) inputs — the stand-in engine ignores their contents.
+  for (const f of ['report.docx', 'scan.pdf', 'unsupp.docx', 'real.docx']) {
+    await writeFile(join(dir, f), 'x');
+  }
+});
 afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 
 /** A stand-in for soffice: writes the output file LibreOffice would produce. */
@@ -72,18 +79,33 @@ describe('convertOffice', () => {
   });
 
   it('rejects an output path without an extension', async () => {
-    await expect(convertOffice('a.docx', join(dir, 'noext'), { run: fakeSoffice })).rejects.toThrow(/extension/);
+    await expect(convertOffice(join(dir, 'real.docx'), join(dir, 'noext'), { run: fakeSoffice })).rejects.toThrow(/extension/);
+  });
+
+  it('reports a missing input clearly (not as an unsupported conversion)', async () => {
+    await expect(
+      convertOffice(join(dir, 'does-not-exist.docx'), join(dir, 'out.pdf'), { run: fakeSoffice }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it('creates the output parent directory if it does not exist', async () => {
+    const src = join(dir, 'src.docx');
+    await writeFile(src, 'x');
+    const out = join(dir, 'nested', 'deep', 'out.pdf');
+    await convertOffice(src, out, { run: fakeSoffice });
+    expect(await readFile(out, 'utf8')).toBe('converted:pdf');
   });
 
   it('reports an unsupported conversion when the engine produces nothing', async () => {
     const noop = async () => { /* engine wrote no file */ };
-    await expect(convertOffice('a.docx', join(dir, 'x.pdf'), { run: noop })).rejects.toThrow(/no PDF|unsupported/i);
+    await expect(convertOffice(join(dir, 'unsupp.docx'), join(dir, 'x.pdf'), { run: noop })).rejects.toThrow(/no PDF|unsupported/i);
   });
 
   it('gives an actionable error when LibreOffice is not installed', async () => {
-    // A bogus binary → ENOENT → the install-guidance message.
+    // A bogus binary → ENOENT → the install-guidance message. (Real input so the
+    // existence guard passes and we actually reach the spawn.)
     await expect(
-      convertOffice('a.docx', join(dir, 'y.pdf'), { soffice: join(dir, 'definitely-not-soffice') }),
+      convertOffice(join(dir, 'real.docx'), join(dir, 'y.pdf'), { soffice: join(dir, 'definitely-not-soffice') }),
     ).rejects.toThrow(/LibreOffice was not found/);
   });
 

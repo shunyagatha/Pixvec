@@ -74,6 +74,14 @@ export {
   type PdfRenderOptions,
 } from './io/pdf.js';
 
+// --- Images → one multi-page PDF (Node-only) -------------------------------
+export {
+  imagesToPdf,
+  assembleImagePdf,
+  type ImagePdfOptions,
+  type JpegPage,
+} from './io/images-pdf.js';
+
 // --- Office ⇄ PDF via the user's LibreOffice (nothing bundled; Node-only) ---
 export {
   convertOffice,

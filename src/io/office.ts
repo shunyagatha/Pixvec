@@ -15,9 +15,9 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, rm, mkdtemp } from 'node:fs/promises';
+import { readFile, writeFile, rm, mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, extname, join } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 
 /** A representative set of formats LibreOffice converts among (for help/validation). */
 export const OFFICE_FORMATS = [
@@ -77,21 +77,27 @@ export async function convertOffice(
   const targetExt = extname(outPath).replace(/^\./, '').toLowerCase();
   if (!targetExt) throw new Error('The output path needs an extension, e.g. -o out.pdf');
 
+  // Resolve to an absolute path so LibreOffice never mistakes a filename that
+  // starts with '-' for an option, and so relative inputs work from any cwd.
+  const absInput = resolve(input);
+  if (!existsSync(absInput)) throw new Error(`Input not found: ${input}`);
+
   const tmp = await mkdtemp(join(tmpdir(), 'pixvec-office-'));
   try {
-    const args = buildSofficeArgs(input, targetExt, tmp);
+    const args = buildSofficeArgs(absInput, targetExt, tmp);
     const run = opts.run ?? ((b, a) => spawnSoffice(b, a, opts.timeoutMs ?? 120_000));
     await run(bin, args);
 
     // LibreOffice writes `<inputStem>.<ext>` into the --outdir; move it to the
     // path the caller actually asked for.
-    const produced = join(tmp, `${basename(input, extname(input))}.${targetExt}`);
+    const produced = join(tmp, `${basename(absInput, extname(absInput))}.${targetExt}`);
     if (!existsSync(produced)) {
       throw new Error(
         `LibreOffice produced no ${targetExt.toUpperCase()} — the conversion from ` +
-          `${extname(input) || 'that format'} to .${targetExt} may be unsupported.`,
+          `${extname(absInput) || 'that format'} to .${targetExt} may be unsupported.`,
       );
     }
+    await mkdir(dirname(resolve(outPath)), { recursive: true });
     await writeFile(outPath, await readFile(produced));
     return { output: outPath, engine: bin };
   } finally {

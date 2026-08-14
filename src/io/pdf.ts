@@ -31,6 +31,17 @@ export function isPdf(bytes: Uint8Array): boolean {
   return false;
 }
 
+/**
+ * Which 0-based page indices a request resolves to: the given `pages` deduped,
+ * range-clamped to `count` and sorted, or every page when none are named.
+ * Exported so callers can label rendered pages by their real page number.
+ */
+export function resolvePageIndices(count: number, pages?: number[]): number[] {
+  return pages && pages.length
+    ? [...new Set(pages)].filter((p) => p >= 0 && p < count).sort((a, b) => a - b)
+    : Array.from({ length: count }, (_, i) => i);
+}
+
 /** Render selected PDF pages to straight-RGBA {@link RasterImage}s. */
 export async function renderPdfPages(bytes: Uint8Array, opts: PdfRenderOptions = {}): Promise<RasterImage[]> {
   const mupdf = await loadMupdf();
@@ -38,23 +49,26 @@ export async function renderPdfPages(bytes: Uint8Array, opts: PdfRenderOptions =
 
   const doc = mupdf.Document.openDocument(bytes, 'application/pdf');
   try {
-    const count = doc.countPages();
-    const wanted = opts.pages && opts.pages.length
-      ? [...new Set(opts.pages)].filter((p) => p >= 0 && p < count).sort((a, b) => a - b)
-      : Array.from({ length: count }, (_, i) => i);
-
+    const wanted = resolvePageIndices(doc.countPages(), opts.pages);
     const out: RasterImage[] = [];
     for (const p of wanted) {
-      const page = doc.loadPage(p);
-      const pix = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, true);
-      out.push({
-        width: pix.getWidth(),
-        height: pix.getHeight(),
-        // getPixels() is RGBA (alpha requested); copy into the owned buffer type.
-        data: new Uint8ClampedArray(pix.getPixels()),
-      });
-      pix.destroy?.();
-      page.destroy?.();
+      // Own each page/pixmap in its own scope so a mid-loop render failure on one
+      // page still frees that page's native (WASM) memory instead of leaking it.
+      let page: MupdfPage | undefined;
+      let pix: MupdfPixmap | undefined;
+      try {
+        page = doc.loadPage(p);
+        pix = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, true);
+        out.push({
+          width: pix.getWidth(),
+          height: pix.getHeight(),
+          // getPixels() is RGBA (alpha requested); copy into the owned buffer type.
+          data: new Uint8ClampedArray(pix.getPixels()),
+        });
+      } finally {
+        pix?.destroy?.();
+        page?.destroy?.();
+      }
     }
     return out;
   } finally {

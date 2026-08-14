@@ -412,6 +412,7 @@ pixvec extract keep.svg -o out.png --against original.png   # byte-identical rec
 pixvec convert in.png out.svg      # direction inferred from extensions
 pixvec doc report.pdf -o pages/ --dpi 150   # PDF (or SVG) → one image per page
 pixvec office report.docx -o report.pdf     # Word/Excel/PPT ⇄ PDF (uses your LibreOffice)
+pixvec pdf page1.png page2.jpg -o album.pdf # combine images into one multi-page PDF
 pixvec centerline drawing.png -o strokes.svg  # single-stroke medial-axis paths
 pixvec gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter G-code
 pixvec convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
@@ -462,6 +463,8 @@ The **asset pipelines** close the loop to what web devs deploy: `pixvec favicon`
 **Animated GIF/APNG → animated SVG** — `pixvec animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`pixvec/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
 
 **Documents to images** — `pixvec doc report.pdf -o pages/ --dpi 150` renders a **PDF** (or an SVG) to one raster per page, at any DPI or scale, in any output format (`--format png|jpeg|webp|avif`, `--pages "1,3-5"`). Pass `--format svg` to **vectorise each page** — turning a scanned or raster PDF into real, scalable SVG in one step. SVG rendering uses the bundled resvg; **PDF** rendering follows pixvec's bring-your-own-codec rule — it dynamically loads the optional, pure-WASM [`mupdf`](https://www.npmjs.com/package/mupdf) package (no native binary to compile) and prints a one-line install hint if it is not present, so the base install stays lean. `renderPdfPages()` / `isPdf()` are exported for programmatic use.
+
+**Images → one PDF** — `pixvec pdf scan1.png scan2.jpg -o album.pdf` stitches a stack of photos or scans into a single multi-page PDF, one image per page, sized at any `--dpi`. The PDF is assembled from raw bytes with a correct cross-reference table (each page embedded as a `DCTDecode` JPEG), so it stays small and opens everywhere — the natural complement to `pixvec doc` (PDF → images). `imagesToPdf()` / `assembleImagePdf()` are exported.
 
 **Office documents ⇄ PDF** — `pixvec office report.docx -o report.pdf` (and the reverse, `scan.pdf -o out.docx`, plus Excel, PowerPoint, ODF, RTF, HTML, CSV — any pair LibreOffice bridges). Faithfully rendering Word/Excel/PowerPoint needs a full office engine, so — exactly as with PDFs — pixvec **bundles nothing** and drives your **local LibreOffice** through a plain child process: **zero added dependencies, the install stays tiny, and your documents never leave the machine** (no cloud upload, unlike most converters). The target format is inferred from the output extension; if LibreOffice isn't found the error tells you how to install it or points `PIXVEC_SOFFICE` at the binary. `convertOffice()` is exported for programmatic use.
 

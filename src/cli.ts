@@ -29,8 +29,9 @@ import { svgSprite } from './emit/sprite.js';
 import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
 import { formatBatchSummary } from './io/batch-summary.js';
-import { isPdf, renderPdfPages } from './io/pdf.js';
+import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from './io/pdf.js';
 import { convertOffice } from './io/office.js';
+import { imagesToPdf } from './io/images-pdf.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -1030,6 +1031,28 @@ async function runAnimate(
 }
 
 // ---------------------------------------------------------------------------
+// pdf (combine images → one multi-page PDF)
+// ---------------------------------------------------------------------------
+
+async function runImagesToPdf(
+  inputs: string[],
+  o: { output: string; dpi: number; quality: number; json?: boolean },
+): Promise<void> {
+  const images: RasterImage[] = [];
+  for (const input of inputs) {
+    images.push((await loadRaster(await readInput(input))).image);
+  }
+  const pdf = await imagesToPdf(images, { dpi: o.dpi, quality: o.quality });
+  await writeOutput(o.output, pdf);
+
+  if (o.json) {
+    emitJson({ output: o.output, pages: images.length, outputBytes: pdf.length });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(o.output))}  ${dim(`${images.length} page${images.length === 1 ? '' : 's'}  ${formatBytes(pdf.length)}`)}`);
+}
+
+// ---------------------------------------------------------------------------
 // office (Office ⇄ PDF via the user's LibreOffice)
 // ---------------------------------------------------------------------------
 
@@ -1056,14 +1079,20 @@ async function runDoc(
   const bytes = await readInput(input);
 
   let pages: RasterImage[];
+  let labels: number[]; // 1-based page numbers aligned with `pages`, for filenames
   let kind: string;
   if (isPdf(bytes)) {
-    pages = await renderPdfPages(bytes, { dpi: o.dpi, scale: o.scale, pages: parsePageSpec(o.pages) });
+    const requested = parsePageSpec(o.pages);
+    pages = await renderPdfPages(bytes, { dpi: o.dpi, scale: o.scale, pages: requested });
+    // Label by the real page number, not the output index — so `--pages 3-5`
+    // writes doc-3/doc-4/doc-5, and a later `--pages 1-2` can't overwrite them.
+    labels = resolvePageIndices(await countPdfPages(bytes), requested).map((p) => p + 1);
     kind = 'PDF';
   } else if (looksLikeSvg(bytes)) {
     const scale = o.scale ?? (o.dpi ? o.dpi / 96 : 1); // SVG user units are 96 dpi
     const r = await rasterizeSvg(new TextDecoder().decode(bytes), { baseDir: baseDirFor(input), scale });
     pages = [r.image];
+    labels = [1];
     kind = 'SVG';
   } else {
     fail('`doc` renders a PDF or SVG document to images. For a raster image use `pixvec vectorize` or `pixvec edit`.');
@@ -1080,7 +1109,7 @@ async function runDoc(
 
   const written: Array<{ file: string; width: number; height: number }> = [];
   for (let i = 0; i < pages.length; i++) {
-    const name = multi ? `${stem}-${i + 1}.${format}` : `${stem}.${format}`;
+    const name = multi ? `${stem}-${labels[i]}.${format}` : `${stem}.${format}`;
     if (toSvg) {
       // Vectorise the rendered page — turn a raster/scanned PDF into real SVG.
       // Round-trip through PNG so the vectoriser gets proper metadata and bytes
@@ -1105,13 +1134,18 @@ async function runDoc(
 /** Parse a 1-based page spec like "1,3-5" into 0-based indices. */
 function parsePageSpec(spec?: string): number[] | undefined {
   if (!spec) return undefined;
+  // No real document has this many pages; the cap stops a typo like "1-9999999999"
+  // from materialising a multi-gigabyte array before the renderer clamps it.
+  const MAX = 100_000;
   const out: number[] = [];
   for (const part of spec.split(',')) {
     const m = part.trim().match(/^(\d+)(?:-(\d+))?$/);
     if (!m) continue;
     const a = Number(m[1]);
     const b = m[2] ? Number(m[2]) : a;
-    for (let p = Math.min(a, b); p <= Math.max(a, b); p++) if (p >= 1) out.push(p - 1);
+    const lo = Math.max(1, Math.min(a, b));
+    const hi = Math.min(Math.max(a, b), lo + MAX);
+    for (let p = lo; p <= hi && out.length < MAX; p++) out.push(p - 1);
   }
   return out.length ? out : undefined;
 }
@@ -1459,12 +1493,24 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
   let failed = 0;
   const queue = [...files];
   const rows: Array<{ file: string; target: string; inBytes: number; outBytes: number }> = [];
+  // A recursive glob can match same-named files in different directories; keying
+  // the output only on basename would silently overwrite. Reserve a unique target
+  // synchronously per file so concurrent workers never collide.
+  const usedTargets = new Set<string>();
+  const ext = o.to.replace(/^\./, '');
+  const uniqueTarget = (file: string): string => {
+    const stem = basename(file, extname(file));
+    let target = join(o.outDir, `${stem}.${ext}`);
+    for (let k = 2; usedTargets.has(target); k++) target = join(o.outDir, `${stem}-${k}.${ext}`);
+    usedTargets.add(target);
+    return target;
+  };
 
   const worker = async (): Promise<void> => {
     for (;;) {
       const file = queue.shift();
       if (!file) return;
-      const target = join(o.outDir, `${basename(file, extname(file))}.${o.to.replace(/^\./, '')}`);
+      const target = uniqueTarget(file);
       try {
         if (o.to.replace(/^\./, '') === 'svg') {
           await runVectorize(file, toVectorizeOptions(o, target));
@@ -1631,6 +1677,16 @@ program
   .option('--verify', 're-decode the encoded file and report what the encoder cost')
   .option('--json', 'machine-readable output on stdout')
   .action(runRasterize);
+
+program
+  .command('pdf')
+  .description('Combine images into one multi-page PDF — one image per page')
+  .argument('<inputs...>', 'source images (PNG/JPEG/WebP/…)')
+  .requiredOption('-o, --output <file>', 'output PDF path')
+  .option('--dpi <n>', 'page resolution used to size each page (pixels per inch)', intArg('--dpi', 12, 1200), 96)
+  .option('-q, --quality <n>', 'JPEG quality for the embedded page images', intArg('--quality', 1, 100), 85)
+  .option('--json', 'machine-readable output')
+  .action(runImagesToPdf);
 
 program
   .command('office')

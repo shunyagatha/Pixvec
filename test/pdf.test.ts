@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { traceGeometry, toPdf } from '../src/io/export/index.js';
-import { isPdf, renderPdfPages, countPdfPages } from '../src/io/pdf.js';
+import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from '../src/io/pdf.js';
 import { createImage, setPixel } from './fixtures.js';
 
 /**
@@ -27,6 +27,18 @@ function discPdf(): Uint8Array {
   }
   return toPdf(traceGeometry(img, { colors: 2 }));
 }
+
+describe('resolvePageIndices', () => {
+  it('returns every page when none are named', () => {
+    expect(resolvePageIndices(3)).toEqual([0, 1, 2]);
+  });
+  it('dedupes, sorts, and clamps to the page count', () => {
+    expect(resolvePageIndices(10, [0, 5])).toEqual([0, 5]);
+    expect(resolvePageIndices(3, [0, 5])).toEqual([0]);       // 5 is out of range
+    expect(resolvePageIndices(3, [2, 2, 0])).toEqual([0, 2]); // dedupe + sort
+    expect(resolvePageIndices(3, [])).toEqual([0, 1, 2]);     // empty → all
+  });
+});
 
 describe('isPdf', () => {
   it('detects the %PDF- signature', () => {
