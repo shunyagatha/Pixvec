@@ -42,4 +42,23 @@ describe('optimizeSvg', () => {
     const once = optimizeSvg(MESSY);
     expect(optimizeSvg(once)).toEqual(once);
   });
+
+  it('preserves gradient defs (linear and radial) render-identically', async () => {
+    const withGrad =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">' +
+      '<defs>' +
+      '<linearGradient id="a" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="60" y2="0">' +
+      '<stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient>' +
+      '<radialGradient id="b" gradientUnits="userSpaceOnUse" cx="30" cy="30" r="30">' +
+      '<stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#123"/></radialGradient>' +
+      '</defs>' +
+      '<rect width="30" height="60" fill="url(#a)"/><rect x="30" width="30" height="60" fill="url(#b)"/></svg>';
+    const out = optimizeSvg(withGrad);
+    expect(out).toContain('<radialGradient');
+    expect(out).toContain('<linearGradient');
+    expect((out.match(/<stop/g) ?? [])).toHaveLength(4);
+    const before = await rasterizeSvg(withGrad, { width: 60 });
+    const after = await rasterizeSvg(out, { width: 60 });
+    expect(compareImages(before.image, after.image).ssim).toBeGreaterThan(0.999);
+  });
 });
