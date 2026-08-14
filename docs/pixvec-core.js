@@ -596,6 +596,69 @@ function deltaEStats(reference, candidate, bg) {
   return { mean: pixels === 0 ? 0 : sum / pixels, p95, max };
 }
 
+// src/diff.ts
+function diffImages(a, b, opts = {}) {
+  if (a.width !== b.width || a.height !== b.height) {
+    throw new Error(
+      `diff needs two images of the same size: got ${a.width}\xD7${a.height} and ${b.width}\xD7${b.height}. Resize one to match first.`
+    );
+  }
+  const threshold = opts.threshold ?? 2;
+  const keep = clamp01(opts.baseAlpha ?? 0.1);
+  const dc = opts.diffColor ?? { r: 255, g: 40, b: 40, a: 255 };
+  const includeAlpha = opts.includeAlpha !== false;
+  const { width, height } = a;
+  const n2 = width * height;
+  const out = new Uint8ClampedArray(n2 * 4);
+  const lab1 = new Float64Array(3);
+  const lab2 = new Float64Array(3);
+  let changed = 0;
+  let maxDE = 0;
+  let sumDE = 0;
+  for (let i = 0; i < n2; i++) {
+    const o = i * 4;
+    const aa = a.data[o + 3], ba = b.data[o + 3];
+    const af = aa / 255, bf = ba / 255;
+    const car = Math.round(a.data[o] * af + 255 * (1 - af));
+    const cag = Math.round(a.data[o + 1] * af + 255 * (1 - af));
+    const cab = Math.round(a.data[o + 2] * af + 255 * (1 - af));
+    const cbr = Math.round(b.data[o] * bf + 255 * (1 - bf));
+    const cbg = Math.round(b.data[o + 1] * bf + 255 * (1 - bf));
+    const cbb = Math.round(b.data[o + 2] * bf + 255 * (1 - bf));
+    srgbToLab(car, cag, cab, lab1);
+    srgbToLab(cbr, cbg, cbb, lab2);
+    const de = deltaE2000(lab1[0], lab1[1], lab1[2], lab2[0], lab2[1], lab2[2]);
+    sumDE += de;
+    if (de > maxDE) maxDE = de;
+    const alphaDelta = includeAlpha ? Math.abs(aa - ba) / 255 * 100 : 0;
+    if (Math.max(de, alphaDelta) > threshold) {
+      changed++;
+      out[o] = dc.r;
+      out[o + 1] = dc.g;
+      out[o + 2] = dc.b;
+      out[o + 3] = 255;
+    } else {
+      const y = luma709(car, cag, cab);
+      const g = Math.round(255 * (1 - keep) + y * keep);
+      out[o] = g;
+      out[o + 1] = g;
+      out[o + 2] = g;
+      out[o + 3] = 255;
+    }
+  }
+  return {
+    image: { width, height, data: out },
+    changedPixels: changed,
+    totalPixels: n2,
+    changedFraction: n2 === 0 ? 0 : changed / n2,
+    maxDeltaE: maxDE,
+    meanDeltaE: n2 === 0 ? 0 : sumDE / n2
+  };
+}
+function clamp01(v) {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 // src/svg/path.ts
 function num(value, precision) {
   const f = 10 ** precision;
@@ -2658,19 +2721,31 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
       meanY: M[m + 2] / count
     };
   }
+  const cxArr = new Float64Array(K);
+  const cyArr = new Float64Array(K);
+  for (let k = 0; k < K; k++) {
+    const count = M[k * 6] || 1;
+    cxArr[k] = M[k * 6 + 1] / count;
+    cyArr[k] = M[k * 6 + 2] / count;
+  }
   const tMin = new Float64Array(K).fill(Infinity);
   const tMax = new Float64Array(K).fill(-Infinity);
+  const radRMax = new Float64Array(K);
   const flatSum = new Float64Array(K);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
-      if (k < 0 || !models[k]) continue;
+      if (k < 0) continue;
       const mdl = models[k];
-      const t = mdl.dx * x + mdl.dy * y;
-      if (t < tMin[k]) tMin[k] = t;
-      if (t > tMax[k]) tMax[k] = t;
+      if (mdl) {
+        const t = mdl.dx * x + mdl.dy * y;
+        if (t < tMin[k]) tMin[k] = t;
+        if (t > tMax[k]) tMax[k] = t;
+      }
+      const r = Math.hypot(x - cxArr[k], y - cyArr[k]);
+      if (r > radRMax[k]) radRMax[k] = r;
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
       const ci = colorIdx(classes[i]) * 3;
@@ -2682,59 +2757,57 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
   const fineA = new Float64Array(K * FINE);
   const fineB = new Float64Array(K * FINE);
   const fineN = new Float64Array(K * FINE);
+  const fineLR = new Float64Array(K * FINE);
+  const fineAR = new Float64Array(K * FINE);
+  const fineBR = new Float64Array(K * FINE);
+  const fineNR = new Float64Array(K * FINE);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
-      if (k < 0 || !models[k] || !(tMax[k] > tMin[k])) continue;
+      if (k < 0) continue;
       const mdl = models[k];
-      const u = clamp01((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
-      const j = Math.min(FINE - 1, Math.floor(u * FINE));
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
-      const b = k * FINE + j;
-      fineL[b] += lab[0];
-      fineA[b] += lab[1];
-      fineB[b] += lab[2];
-      fineN[b] += 1;
+      if (mdl && tMax[k] > tMin[k]) {
+        const u = clamp012((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
+        const b = k * FINE + Math.min(FINE - 1, Math.floor(u * FINE));
+        fineL[b] += lab[0];
+        fineA[b] += lab[1];
+        fineB[b] += lab[2];
+        fineN[b] += 1;
+      }
+      if (radRMax[k] > 0) {
+        const uR = clamp012(Math.hypot(x - cxArr[k], y - cyArr[k]) / radRMax[k]);
+        const jR = k * FINE + Math.min(FINE - 1, Math.floor(uR * FINE));
+        fineLR[jR] += lab[0];
+        fineAR[jR] += lab[1];
+        fineBR[jR] += lab[2];
+        fineNR[jR] += 1;
+      }
     }
   }
   const maxStops = Math.max(2, opts.gradientStops);
   const stopList = new Array(K).fill(null);
+  const stopListRad = new Array(K).fill(null);
   for (let k = 0; k < K; k++) {
-    if (!models[k] || !(tMax[k] > tMin[k])) {
+    const count = M[k * 6];
+    if (count <= 0) continue;
+    const target = flatSum[k] / count * (1 - opts.gradientMargin);
+    if (models[k] && tMax[k] > tMin[k]) {
+      const lin = buildCurve(fineL, fineA, fineB, fineN, k, FINE);
+      stopList[k] = selectStops(lin.curve, lin.w, FINE, maxStops, target);
+    } else {
       models[k] = null;
-      continue;
     }
-    const curve = new Float64Array(FINE * 3);
-    const w = new Float64Array(FINE);
-    let last = -1;
-    for (let j = 0; j < FINE; j++) {
-      const b = k * FINE + j;
-      if (fineN[b] > 0) {
-        curve[j * 3] = fineL[b] / fineN[b];
-        curve[j * 3 + 1] = fineA[b] / fineN[b];
-        curve[j * 3 + 2] = fineB[b] / fineN[b];
-        w[j] = fineN[b];
-        if (last === -1) {
-          for (let t = 0; t < j; t++) {
-            curve[t * 3] = curve[j * 3];
-            curve[t * 3 + 1] = curve[j * 3 + 1];
-            curve[t * 3 + 2] = curve[j * 3 + 2];
-          }
-        }
-        last = j;
-      } else if (last >= 0) {
-        curve[j * 3] = curve[last * 3];
-        curve[j * 3 + 1] = curve[last * 3 + 1];
-        curve[j * 3 + 2] = curve[last * 3 + 2];
-      }
+    if (radRMax[k] > 0) {
+      const rad = buildCurve(fineLR, fineAR, fineBR, fineNR, k, FINE);
+      stopListRad[k] = selectStops(rad.curve, rad.w, FINE, maxStops, target);
     }
-    const flatErr = flatSum[k] / M[k * 6];
-    stopList[k] = selectStops(curve, w, FINE, maxStops, flatErr * (1 - opts.gradientMargin));
   }
   const gradSum = new Float64Array(K);
+  const gradSumRad = new Float64Array(K);
   const renderLab = new Float64Array(3);
   const rgbTmp = [0, 0, 0];
   for (let y = 0; y < height; y++) {
@@ -2742,27 +2815,38 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
-      if (k < 0 || !models[k] || !stopList[k]) continue;
-      const mdl = models[k];
-      const u = clamp01((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
-      renderStops(stopList[k], u, rgbTmp);
-      srgbToOklab(Math.round(rgbTmp[0]), Math.round(rgbTmp[1]), Math.round(rgbTmp[2]), renderLab);
+      if (k < 0) continue;
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
-      gradSum[k] += sq(lab[0] - renderLab[0]) + sq(lab[1] - renderLab[1]) + sq(lab[2] - renderLab[2]);
+      const mdl = models[k];
+      if (mdl && stopList[k]) {
+        const u = clamp012((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
+        renderStops(stopList[k], u, rgbTmp);
+        srgbToOklab(Math.round(rgbTmp[0]), Math.round(rgbTmp[1]), Math.round(rgbTmp[2]), renderLab);
+        gradSum[k] += sq(lab[0] - renderLab[0]) + sq(lab[1] - renderLab[1]) + sq(lab[2] - renderLab[2]);
+      }
+      if (stopListRad[k] && radRMax[k] > 0) {
+        const uR = clamp012(Math.hypot(x - cxArr[k], y - cyArr[k]) / radRMax[k]);
+        renderStops(stopListRad[k], uR, rgbTmp);
+        srgbToOklab(Math.round(rgbTmp[0]), Math.round(rgbTmp[1]), Math.round(rgbTmp[2]), renderLab);
+        gradSumRad[k] += sq(lab[0] - renderLab[0]) + sq(lab[1] - renderLab[1]) + sq(lab[2] - renderLab[2]);
+      }
     }
   }
   const out = classes.slice();
   const accepted = new Uint8Array(K);
   const floorSq = opts.gradientMaxError * opts.gradientMaxError;
   for (let k = 0; k < K; k++) {
-    if (!models[k]) continue;
+    if (!stopList[k] && !stopListRad[k]) continue;
     const count = M[k * 6];
-    const gradErr = gradSum[k] / count;
-    const flatErr = flatSum[k] / count;
-    if (gradErr < flatErr * (1 - opts.gradientMargin) && gradErr < floorSq) {
+    const target = flatSum[k] / count * (1 - opts.gradientMargin);
+    const linErr = models[k] && stopList[k] ? gradSum[k] / count : Infinity;
+    const radErr = stopListRad[k] && radRMax[k] > 0 ? gradSumRad[k] / count : Infinity;
+    const radialWins = radErr < linErr;
+    const bestErr = radialWins ? radErr : linErr;
+    if (bestErr < target && bestErr < floorSq) {
       accepted[k] = 1;
-      paints.set(GRAD_BASE + k, buildPaint(kRoot[k], classes, alphaLevels, levelCount, models[k], tMin[k], tMax[k], stopList[k], k));
+      paints.set(GRAD_BASE + k, radialWins ? buildRadialPaint(kRoot[k], classes, alphaLevels, levelCount, cxArr[k], cyArr[k], radRMax[k], stopListRad[k], k) : buildPaint(kRoot[k], classes, alphaLevels, levelCount, models[k], tMin[k], tMax[k], stopList[k], k));
     }
   }
   if (paints.size === 0) return { classes, paints };
@@ -2779,6 +2863,19 @@ function buildPaint(root, classes, alphaLevels, levelCount, mdl, tMin, tMax, sto
   const y1 = mdl.meanY + mdl.dy * (tMin - meanT);
   const x2 = mdl.meanX + mdl.dx * (tMax - meanT);
   const y2 = mdl.meanY + mdl.dy * (tMax - meanT);
+  const body = emitStops(stops);
+  const id = `pv-g${k}`;
+  const def = `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${round(x1, 2)}" y1="${round(y1, 2)}" x2="${round(x2, 2)}" y2="${round(y2, 2)}">${body}</linearGradient>`;
+  const alpha = alphaLevels[classes[root] % levelCount] / 255;
+  return { def, ref: `url(#${id})`, alpha };
+}
+function buildRadialPaint(root, classes, alphaLevels, levelCount, cx, cy, rMax, stops, k) {
+  const id = `pv-g${k}`;
+  const def = `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${round(cx, 2)}" cy="${round(cy, 2)}" r="${round(rMax, 2)}">${emitStops(stops)}</radialGradient>`;
+  const alpha = alphaLevels[classes[root] % levelCount] / 255;
+  return { def, ref: `url(#${id})`, alpha };
+}
+function emitStops(stops) {
   let body = "";
   let prev = "";
   for (let s = 0; s < stops.length; s++) {
@@ -2787,10 +2884,34 @@ function buildPaint(root, classes, alphaLevels, levelCount, mdl, tMin, tMax, sto
     prev = hex3;
     body += `<stop offset="${round(stops[s][0], 3)}" stop-color="${hex3}"/>`;
   }
-  const id = `pv-g${k}`;
-  const def = `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${round(x1, 2)}" y1="${round(y1, 2)}" x2="${round(x2, 2)}" y2="${round(y2, 2)}">${body}</linearGradient>`;
-  const alpha = alphaLevels[classes[root] % levelCount] / 255;
-  return { def, ref: `url(#${id})`, alpha };
+  return body;
+}
+function buildCurve(fineL, fineA, fineB, fineN, k, fine) {
+  const curve = new Float64Array(fine * 3);
+  const w = new Float64Array(fine);
+  let last = -1;
+  for (let j = 0; j < fine; j++) {
+    const b = k * fine + j;
+    if (fineN[b] > 0) {
+      curve[j * 3] = fineL[b] / fineN[b];
+      curve[j * 3 + 1] = fineA[b] / fineN[b];
+      curve[j * 3 + 2] = fineB[b] / fineN[b];
+      w[j] = fineN[b];
+      if (last === -1) {
+        for (let t = 0; t < j; t++) {
+          curve[t * 3] = curve[j * 3];
+          curve[t * 3 + 1] = curve[j * 3 + 1];
+          curve[t * 3 + 2] = curve[j * 3 + 2];
+        }
+      }
+      last = j;
+    } else if (last >= 0) {
+      curve[j * 3] = curve[last * 3];
+      curve[j * 3 + 1] = curve[last * 3 + 1];
+      curve[j * 3 + 2] = curve[last * 3 + 2];
+    }
+  }
+  return { curve, w };
 }
 function selectStops(curve, weight, fine, maxStops, targetSq) {
   const chosen = [0, fine - 1];
@@ -2878,7 +2999,7 @@ function topEigenvector2(a, b, c) {
 function sq(v) {
   return v * v;
 }
-function clamp01(v) {
+function clamp012(v) {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 function clamp2552(v) {
@@ -2920,6 +3041,11 @@ function detectPrimitive(pts, opts = {}) {
       bestErr = ell.err;
     }
   }
+  const round3 = fitRoundRect(pts, n2, b, w, h);
+  if (round3 && round3.err <= maxError && round3.err < bestErr) {
+    best = round3.prim;
+    bestErr = round3.err;
+  }
   return best;
 }
 function primitiveSvg(prim, attrs, precision = 2) {
@@ -2931,6 +3057,8 @@ function primitiveSvg(prim, attrs, precision = 2) {
       return `<ellipse cx="${r(prim.cx)}" cy="${r(prim.cy)}" rx="${r(prim.rx)}" ry="${r(prim.ry)}"${attrs}/>`;
     case "rect":
       return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}"${attrs}/>`;
+    case "roundrect":
+      return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}" rx="${r(prim.r)}" ry="${r(prim.r)}"${attrs}/>`;
   }
 }
 function fitRect(pts, n2, b, w, h, area) {
@@ -2942,6 +3070,34 @@ function fitRect(pts, n2, b, w, h, area) {
     if (d > err) err = d;
   }
   return { prim: { kind: "rect", x: b.minX, y: b.minY, w, h }, err };
+}
+function fitRoundRect(pts, n2, b, w, h) {
+  const maxR = Math.min(w, h) / 2;
+  if (maxR < 2) return null;
+  const MIN_R = 2;
+  const STEPS = 48;
+  let bestR = 0;
+  let bestErr = Infinity;
+  for (let s = 0; s <= STEPS; s++) {
+    const r = MIN_R + (maxR - MIN_R) * s / STEPS;
+    const ix0 = b.minX + r, ix1 = b.maxX - r, iy0 = b.minY + r, iy1 = b.maxY - r;
+    let worst = 0;
+    for (let i = 0; i < n2; i++) {
+      const x = pts[i << 1], y = pts[(i << 1) + 1];
+      const qx = Math.max(ix0 - x, x - ix1, 0);
+      const qy = Math.max(iy0 - y, y - iy1, 0);
+      const res = Math.abs(Math.hypot(qx, qy) - r);
+      if (res > worst) worst = res;
+      if (worst >= bestErr) break;
+    }
+    if (worst < bestErr) {
+      bestErr = worst;
+      bestR = r;
+    }
+  }
+  if (bestR < MIN_R) return null;
+  if (bestR >= maxR - 0.75 && Math.abs(w - h) <= 1.5) return null;
+  return { prim: { kind: "roundrect", x: b.minX, y: b.minY, w, h, r: bestR }, err: bestErr };
 }
 function fitCircle(pts, n2, area) {
   if (n2 < 8) return null;
@@ -4692,7 +4848,7 @@ function framesToAnimatedSvg(frames, opts = {}) {
   const slot = 100 / n2;
   const eps = Math.min(1e-4, slot / 1e3);
   const keyframes = `@keyframes pv-flip{0%,${trim(slot)}%{opacity:1}${trim(slot + eps)}%,100%{opacity:0}}`;
-  const delays = Array.from({ length: n2 }, (_, k) => `.pv-f${k}{animation-delay:${trim(-(k * duration) / n2)}s${k === 0 ? ";opacity:1" : ""}}`).join("");
+  const delays = Array.from({ length: n2 }, (_, k) => `.pv-f${k}{animation-delay:${trim(-((n2 - k) % n2) * duration / n2)}s${k === 0 ? ";opacity:1" : ""}}`).join("");
   const reducedCss = reduced ? "@media(prefers-reduced-motion:reduce){.pv-f{animation:none}.pv-f0{opacity:1}}" : "";
   const style = `<style>.pv-f{opacity:0;animation:pv-flip ${trim(duration)}s linear infinite}` + delays + keyframes + reducedCss + `</style>`;
   const groups = frames.map((svg, k) => `<g class="pv-f pv-f${k}">${innerSvg(svg)}</g>`).join("");
@@ -5128,7 +5284,7 @@ function toGcode(polylines, opts = {}) {
 }
 
 // src/core.ts
-var VERSION = "1.18.0";
+var VERSION = "1.22.0";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,
@@ -5161,6 +5317,7 @@ export {
   detectBackgroundColor,
   detectGradients,
   detectPrimitive,
+  diffImages,
   dominantColor,
   encodeBmp,
   encodeIco,
