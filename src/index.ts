@@ -74,6 +74,16 @@ export {
   type PdfRenderOptions,
 } from './io/pdf.js';
 
+// --- Office ⇄ PDF via the user's LibreOffice (nothing bundled; Node-only) ---
+export {
+  convertOffice,
+  findSoffice,
+  buildSofficeArgs,
+  OFFICE_FORMATS,
+  type OfficeConvertOptions,
+  type OfficeConvertResult,
+} from './io/office.js';
+
 // --- Orchestration, including the verified lossless guarantee --------------
 export {
   PRESETS,

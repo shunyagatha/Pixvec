@@ -136,7 +136,7 @@ describe('pixvec/core portability', () => {
     // Files known to require Node. Everything else must be in CORE_MODULES.
     const nodeOnly = new Set([
       'index.ts', 'api.ts', 'cli.ts', 'ops.ts',
-      'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts', 'io/batch-summary.ts', 'io/pdf.ts',
+      'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts', 'io/batch-summary.ts', 'io/pdf.ts', 'io/office.ts',
       'vectorize/embed.ts',
       'pipelines/favicon.ts', 'pipelines/responsive.ts', 'pipelines/animate.ts',
       'mcp/server.ts', 'plugin/vite.ts',

@@ -30,6 +30,7 @@ import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
 import { formatBatchSummary } from './io/batch-summary.js';
 import { isPdf, renderPdfPages } from './io/pdf.js';
+import { convertOffice } from './io/office.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -1029,6 +1030,22 @@ async function runAnimate(
 }
 
 // ---------------------------------------------------------------------------
+// office (Office ⇄ PDF via the user's LibreOffice)
+// ---------------------------------------------------------------------------
+
+async function runOffice(
+  input: string,
+  o: { output: string; soffice?: string; timeout: number; json?: boolean },
+): Promise<void> {
+  const res = await convertOffice(input, o.output, { soffice: o.soffice, timeoutMs: o.timeout * 1000 });
+  if (o.json) {
+    emitJson({ input, output: res.output, engine: res.engine });
+    return;
+  }
+  info(`${green('✓')} ${bold(basename(input))} → ${bold(basename(res.output))}  ${dim('(via LibreOffice)')}`);
+}
+
+// ---------------------------------------------------------------------------
 // doc (PDF / SVG → images, one per page)
 // ---------------------------------------------------------------------------
 
@@ -1614,6 +1631,16 @@ program
   .option('--verify', 're-decode the encoded file and report what the encoder cost')
   .option('--json', 'machine-readable output on stdout')
   .action(runRasterize);
+
+program
+  .command('office')
+  .description('Convert Office documents ⇄ PDF (and between Office formats) via your local LibreOffice — nothing bundled, install stays tiny')
+  .argument('<input>', 'source document: docx, xlsx, pptx, odt, ods, odp, rtf, html, csv, txt, or pdf')
+  .requiredOption('-o, --output <file>', 'output path; the target format is its extension, e.g. out.pdf or out.docx')
+  .option('--soffice <path>', 'path to the LibreOffice soffice binary (else auto-detected, or set $PIXVEC_SOFFICE)')
+  .option('--timeout <s>', 'conversion timeout in seconds', intArg('--timeout', 1, 3600), 120)
+  .option('--json', 'machine-readable output')
+  .action(runOffice);
 
 program
   .command('doc')
