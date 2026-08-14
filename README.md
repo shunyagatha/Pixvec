@@ -288,6 +288,17 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 
 **Geometric primitives** (`--primitives`) do the opposite kind of clean-up: when a region genuinely *is* a circle, ellipse, rectangle or **rounded rectangle** (the workhorse UI/icon shape — emitted as `<rect rx>`), pixvec emits the true primitive instead of a four-curve Bézier approximation. On a plain disc that is a **68% smaller file** (a 42-px circle is `<circle cx="60" cy="60" r="42">`, not a path) — and, unlike every other JS tracer, the shape stays *editable as a shape* in Illustrator/Inkscape and becomes a true arc for CAD/DXF export. The swap is residual-gated: a region is only replaced when every boundary vertex lies within `--primitive-error` pixels (default 1.0) of the fitted shape, so it is render-preserving, never an organic blob rounded into a circle. `detectPrimitive()` is pure and in `pixvec/core`.
 
+**The numbers** (`npm run bench:features` reproduces them — every figure is the SVG rendered back to pixels and scored, never asserted):
+
+| Case | Baseline (SSIM / size) | pixvec feature (SSIM / size) |
+|---|---|---|
+| radial gradient · vignette · 8 colours | 0.7887 / 4.5 KB | **0.9646 / 759 B** |
+| radial gradient · vignette · 12 colours | 0.8745 / 7.9 KB | **0.9977 / 356 B** |
+| radial gradient · vignette · 16 colours | 0.9193 / 10.2 KB | **0.9977 / 356 B** |
+| primitive · disc → `<circle>` | 1.0000 / 681 B | 0.9897 / **182 B** |
+
+The gradient rows are *both* far more accurate **and** an order of magnitude smaller than the flat bands they replace; the primitive row trades a sub-2% render difference for a 73%-smaller, editable-as-a-shape file.
+
 > **How the photo result got here.** An earlier version trailed imagetracerjs on the synthetic photo and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
 
 Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a bolt-on, and reporting them without saying so would be a rigged fight. And the strongest *commercial* tracers (Illustrator Image Trace) and AI vectorisers remain unmeasured — pixvec is best-in-class here against the installable open-source field, not proven against everything.

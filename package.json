@@ -116,6 +116,7 @@
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
     "bench": "node scripts/bench.mjs",
+    "bench:features": "node scripts/bench-features.mjs",
     "cli": "node --enable-source-maps dist/esm/cli.js",
     "prepare": "npm run build",
     "build:esm": "tsc -p tsconfig.json",
