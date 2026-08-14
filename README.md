@@ -340,6 +340,22 @@ quantise → segment → trace contours → fit curves
 
 Same-coloured regions share one `<path>` with `fill-rule="evenodd"`. Because each region's path carries the boundaries of whatever it encloses, a region never paints over its own holes and nesting resolves correctly regardless of draw order.
 
+### Size budgets, with a receipt
+
+"Traced SVGs are too big" is the loudest complaint every vectorizer gets, and the usual answer is an opaque simplify slider that never tells you what it cost. Vecline already renders its own output and scores it, so a budget can come with a **receipt**:
+
+```bash
+vecline vectorize logo.png --max-bytes 40KB
+```
+
+```
+Budget  met  in 3 steps
+  size        92.0 KB → 38.4 KB (-58%)  target 39.1 KB
+  accuracy    0.9994 → 0.9971  −0.0023 SSIM paid
+```
+
+The search relaxes in *stages* — it coarsens the curve fit first (sub-pixel precision, the cheapest thing to lose) and only sacrifices whole features or palette entries once that is exhausted — then bisects back toward the target so you get the **most accurate result that still fits**, not the first one that happens to. `--max-nodes` targets anchor-point count instead, which is what an illustrator feels when editing; the two are separate because they don't move together (rounding coordinates cuts bytes without removing a node). If a budget is impossible, it says so and returns the closest real result rather than pretending.
+
 ### `--target-ssim` / `--target-psnr`
 
 Trace, render, measure, and escalate until the target is met. Each step doubles the palette *and* tightens the geometric tolerances, because the failure modes are different — too few colours shows up as banding, too loose a tolerance as rounded-off detail. The best attempt is kept, so an unreachable target still returns the closest result along with a note saying it fell short.
@@ -387,6 +403,8 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--precision <n>` | Decimals kept in path coordinates |
 | `--no-background` | Do not collapse the dominant colour into one rectangle |
 | `--target-ssim <v>` / `--target-psnr <db>` | Escalate until the target is reached |
+| `--max-bytes <size>` | **Size budget** — relax until the SVG fits (`40KB`, `1.5MB`, or plain bytes), and report the accuracy it cost |
+| `--max-nodes <n>` | **Complexity budget** — relax until the geometry has at most this many anchor points |
 | `--verify` | Render the result and measure it against the input |
 | `--embed-strategy <s>` | `auto`, `preserve`, `png`, `webp` |
 | `--xlink` | Use `xlink:href` for SVG 1.1 consumers |

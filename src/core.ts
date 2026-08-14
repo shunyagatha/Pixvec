@@ -39,6 +39,7 @@ export type {
   VectorizeResult,
   VectorizeMode,
   QualityReport,
+  SizeBudgetReport,
 } from './types.js';
 
 // --- Colour science --------------------------------------------------------
@@ -86,6 +87,7 @@ export { diffImages, type DiffOptions, type DiffResult } from './diff.js';
 export { PathBuilder, num } from './svg/path.js';
 export { SvgDoc, fillAttrs, escapeText, escapeAttr, type SvgDocOptions } from './svg/build.js';
 export { optimizeSvg, type OptimizeOptions } from './svg/optimize.js';
+export { measureSvgComplexity, countPathNodes, type SvgComplexity } from './svg/budget.js';
 
 // --- Vectorisation ---------------------------------------------------------
 export {
@@ -263,4 +265,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.32.0';
+export const VERSION = '1.33.0';

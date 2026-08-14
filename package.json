@@ -1,6 +1,6 @@
 {
   "name": "vecline",
-  "version": "1.32.0",
+  "version": "1.33.0",
   "description": "The measurable image + document toolkit for JavaScript. Raster <-> SVG (pixel-exact lossless or quality-targeted Bezier tracing, verified with PSNR/SSIM/CIEDE2000), plus PDF & Office (docx/xlsx/pptx) rendering and conversion, images-to-PDF, DXF/EPS/PDF/G-code export, content-aware crop, and image editing. Reads PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM, TGA.",
   "keywords": [
     "svg",

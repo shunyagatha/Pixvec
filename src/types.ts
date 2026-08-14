@@ -79,6 +79,39 @@ export interface VectorizeResult {
   elapsedMs: number;
   /** For `trace`: the parameters the refinement loop settled on. */
   settled?: Record<string, number | string | boolean>;
+  /** Populated when a size/complexity budget was requested. */
+  budget?: SizeBudgetReport;
+}
+
+/**
+ * What a size budget cost, measured rather than asserted.
+ *
+ * A budget without a receipt is just an opaque slider. This records the target,
+ * what was actually delivered, and — by rendering both the unconstrained and
+ * the final result — exactly how much accuracy was traded away to hit it.
+ */
+export interface SizeBudgetReport {
+  /** Byte ceiling requested, if any. */
+  targetBytes?: number;
+  /** Anchor-point ceiling requested, if any. */
+  targetNodes?: number;
+  /** Bytes actually produced. */
+  bytes: number;
+  /** Anchor points actually produced. */
+  nodes: number;
+  /** Whether every requested ceiling was met. */
+  met: boolean;
+  /** Relaxation steps taken (0 = the default settings already fit). */
+  steps: number;
+  /** Bytes/nodes before any relaxation, for comparison. */
+  baselineBytes: number;
+  baselineNodes: number;
+  /** Mean SSIM of the unconstrained output. */
+  baselineSsim?: number;
+  /** Mean SSIM actually delivered. */
+  ssim?: number;
+  /** `ssim - baselineSsim`: negative is what the budget cost you. */
+  ssimCost?: number;
 }
 
 export type VectorizeMode = 'embed' | 'pixel' | 'trace';

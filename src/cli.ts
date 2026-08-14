@@ -34,7 +34,7 @@ import { formatBatchSummary } from './io/batch-summary.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from './io/pdf.js';
 import { convertOffice, convertOfficeBatch, isOfficeDocument } from './io/office.js';
 import { imagesToPdf } from './io/images-pdf.js';
-import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba } from './types.js';
+import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba, SizeBudgetReport } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Terminal output
@@ -121,6 +121,20 @@ function intArg(name: string, min: number, max: number) {
     }
     return n;
   };
+}
+
+/**
+ * A byte size, written the way people say it: `40000`, `40KB`, `1.5MB`.
+ * Decimal units (KB = 1000) because that is what a "40 KB page budget" means.
+ */
+function byteSizeArg(value: string): number {
+  const m = value.trim().match(/^([\d.]+)\s*(b|kb|mb)?$/i);
+  const n = m ? Number(m[1]) : NaN;
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new InvalidArgumentError('--max-bytes must be a positive size, e.g. 40000, 40KB or 1.5MB.');
+  }
+  const scale = { b: 1, kb: 1000, mb: 1_000_000 }[(m![2] ?? 'b').toLowerCase()]!;
+  return Math.round(n * scale);
 }
 
 function floatArg(name: string, min: number, max: number) {
@@ -268,6 +282,8 @@ interface VectorizeCliOptions {
   precision?: number;
   background: boolean;
   targetSsim?: number;
+  maxBytes?: number;
+  maxNodes?: number;
   targetPsnr?: number;
   maxColors?: number;
   maxSteps?: number;
@@ -324,6 +340,8 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
     verify: o.verify,
     targetSsim: o.targetSsim,
     targetPsnr: o.targetPsnr,
+    maxBytes: o.maxBytes,
+    maxNodes: o.maxNodes,
     maxColors: o.maxColors,
     maxRefineSteps: o.maxSteps,
     title: o.title ?? suggestTitle(input),
@@ -394,8 +412,34 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
   );
 
   for (const note of result.notes) info(`  ${dim('·')} ${note}`);
+  if (result.budget) printBudget(result.budget);
   if (result.quality) printQuality(result.quality);
   else if (result.lossless) info(`\n${bold('Accuracy')}  ${green('bit-exact by construction')} ${dim('(pass --verify to prove it)')}`);
+}
+
+/**
+ * The budget receipt: what was asked, what was delivered, and what it cost.
+ * Printed as a ledger rather than a verdict — the whole point is that the
+ * trade-off is visible instead of hidden behind a slider.
+ */
+function printBudget(b: SizeBudgetReport): void {
+  const pct = (a: number, from: number): string =>
+    from === 0 ? '' : ` ${dim(`(${a > from ? '+' : ''}${Math.round(((a - from) / from) * 100)}%)`)}`;
+
+  info(`\n${bold('Budget')}  ${b.met ? green('met') : red('not reached')}${b.steps ? dim(`  in ${b.steps} step${b.steps === 1 ? '' : 's'}`) : dim('  (defaults already fit)')}`);
+  if (b.targetBytes !== undefined) {
+    info(`  size        ${formatBytes(b.baselineBytes)} → ${formatBytes(b.bytes)}${pct(b.bytes, b.baselineBytes)}  ${dim(`target ${formatBytes(b.targetBytes)}`)}`);
+  }
+  if (b.targetNodes !== undefined) {
+    info(`  nodes       ${b.baselineNodes} → ${b.nodes}${pct(b.nodes, b.baselineNodes)}  ${dim(`target ${b.targetNodes}`)}`);
+  }
+  if (b.ssim !== undefined && b.baselineSsim !== undefined) {
+    const cost = b.ssimCost ?? 0;
+    const costText = cost >= -1e-6
+      ? green('no accuracy lost')
+      : `${red(`−${Math.abs(cost).toFixed(4)} SSIM`)} ${dim('paid')}`;
+    info(`  accuracy    ${b.baselineSsim.toFixed(4)} → ${b.ssim.toFixed(4)}  ${costText}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1654,6 +1698,8 @@ program
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))
   .option('--target-psnr <db>', 'escalate settings until PSNR reaches this', floatArg('--target-psnr', 0, 200))
+  .option('--max-bytes <size>', 'size budget: relax until the SVG fits, and report the accuracy it cost (e.g. 40KB)', byteSizeArg)
+  .option('--max-nodes <n>', 'complexity budget: relax until the geometry has at most this many anchor points', intArg('--max-nodes', 4, 10_000_000))
   .option('--max-colors <n>', 'palette ceiling during refinement', intArg('--max-colors', 2, 256))
   .option('--max-steps <n>', 'refinement attempts', intArg('--max-steps', 1, 12))
   .option('-l, --lossless', 'guarantee a bit-exact result, or fail (same as --mode lossless)')
