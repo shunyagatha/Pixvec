@@ -66,6 +66,14 @@ export {
   type AnimationResult,
 } from './pipelines/animate.js';
 
+// --- Documents → images (PDF via the optional `mupdf`; Node-only) ----------
+export {
+  isPdf,
+  renderPdfPages,
+  countPdfPages,
+  type PdfRenderOptions,
+} from './io/pdf.js';
+
 // --- Orchestration, including the verified lossless guarantee --------------
 export {
   PRESETS,

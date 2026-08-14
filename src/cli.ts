@@ -29,7 +29,8 @@ import { svgSprite } from './emit/sprite.js';
 import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
 import { formatBatchSummary } from './io/batch-summary.js';
-import type { AlphaMode, QualityReport, RasterFormat, Rgba } from './types.js';
+import { isPdf, renderPdfPages } from './io/pdf.js';
+import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Terminal output
@@ -1028,6 +1029,67 @@ async function runAnimate(
 }
 
 // ---------------------------------------------------------------------------
+// doc (PDF / SVG → images, one per page)
+// ---------------------------------------------------------------------------
+
+async function runDoc(
+  input: string,
+  o: { output?: string; format: string; dpi?: number; scale?: number; pages?: string; quality?: number; json?: boolean },
+): Promise<void> {
+  const bytes = await readInput(input);
+
+  let pages: RasterImage[];
+  let kind: string;
+  if (isPdf(bytes)) {
+    pages = await renderPdfPages(bytes, { dpi: o.dpi, scale: o.scale, pages: parsePageSpec(o.pages) });
+    kind = 'PDF';
+  } else if (looksLikeSvg(bytes)) {
+    const scale = o.scale ?? (o.dpi ? o.dpi / 96 : 1); // SVG user units are 96 dpi
+    const r = await rasterizeSvg(new TextDecoder().decode(bytes), { baseDir: baseDirFor(input), scale });
+    pages = [r.image];
+    kind = 'SVG';
+  } else {
+    fail('`doc` renders a PDF or SVG document to images. For a raster image use `pixvec vectorize` or `pixvec edit`.');
+    return;
+  }
+  if (pages.length === 0) fail('No pages to render (check --pages).');
+
+  const format = o.format as RasterFormat;
+  const outDir = o.output ?? dirname(resolve(input));
+  await mkdir(outDir, { recursive: true });
+  const stem = basename(input, extname(input));
+  const multi = pages.length > 1;
+
+  const written: Array<{ file: string; width: number; height: number }> = [];
+  for (let i = 0; i < pages.length; i++) {
+    const name = multi ? `${stem}-${i + 1}.${format}` : `${stem}.${format}`;
+    await writeOutput(join(outDir, name), await encodeRaster(pages[i], { format, quality: o.quality }));
+    written.push({ file: name, width: pages[i].width, height: pages[i].height });
+  }
+
+  if (o.json) {
+    emitJson({ input, kind, pages: written.length, outDir, files: written });
+    return;
+  }
+  info(`${green('✓')} ${dim(kind)} ${bold(basename(input))} → ${bold(String(written.length))} image${written.length === 1 ? '' : 's'} ${dim(`in ${outDir}`)}`);
+  for (const w of written) info(`  ${dim(`${w.file}  ${w.width}×${w.height}`)}`);
+}
+
+/** Parse a 1-based page spec like "1,3-5" into 0-based indices. */
+function parsePageSpec(spec?: string): number[] | undefined {
+  if (!spec) return undefined;
+  const out: number[] = [];
+  for (const part of spec.split(',')) {
+    const m = part.trim().match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) continue;
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    for (let p = Math.min(a, b); p <= Math.max(a, b); p++) if (p >= 1) out.push(p - 1);
+  }
+  return out.length ? out : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // crop (content-aware)
 // ---------------------------------------------------------------------------
 
@@ -1542,6 +1604,19 @@ program
   .option('--verify', 're-decode the encoded file and report what the encoder cost')
   .option('--json', 'machine-readable output on stdout')
   .action(runRasterize);
+
+program
+  .command('doc')
+  .description('Render a document (PDF or SVG) to images — one file per page')
+  .argument('<input>', 'source PDF or SVG')
+  .option('-o, --output <dir>', 'output directory (default: alongside the input)')
+  .option('-f, --format <fmt>', 'image format: png (default), jpeg, webp, avif, tiff', 'png')
+  .option('--dpi <n>', 'render resolution in DPI (overrides --scale)', intArg('--dpi', 12, 1200))
+  .option('--scale <n>', 'scale relative to native size', floatArg('--scale', 0.1, 20))
+  .option('--pages <spec>', 'pages to render, 1-based, e.g. "1,3-5" (PDF only)')
+  .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100))
+  .option('--json', 'machine-readable output on stdout')
+  .action(runDoc);
 
 program
   .command('edit')

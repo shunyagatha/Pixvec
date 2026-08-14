@@ -410,6 +410,7 @@ pixvec placeholder hero.jpg -f blurhash   # BlurHash string (or -f svg for a tin
 pixvec palette art.png --css          # perceptual palette as CSS custom properties
 pixvec extract keep.svg -o out.png --against original.png   # byte-identical recovery
 pixvec convert in.png out.svg      # direction inferred from extensions
+pixvec doc report.pdf -o pages/ --dpi 150   # PDF (or SVG) → one image per page
 pixvec centerline drawing.png -o strokes.svg  # single-stroke medial-axis paths
 pixvec gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter G-code
 pixvec convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
@@ -458,6 +459,8 @@ It's a thin composite action over `pixvec batch … --summary "$GITHUB_STEP_SUMM
 The **asset pipelines** close the loop to what web devs deploy: `pixvec favicon` writes a complete favicon/PWA icon set (multi-size `.ico`, Apple touch icon, 192/512 + maskable PNGs), a `manifest.webmanifest`, and the `<head>` markup from one source; `pixvec responsive` writes an AVIF/WebP/fallback width-ladder with ready `<picture>`/`srcset` markup; `pixvec placeholder` emits a **BlurHash** string or a tiny **LQIP-SVG** (a zero-binary SQIP successor) for blur-up loading; and `pixvec palette` extracts a perceptual dominant-colour palette as JSON or CSS custom properties. All are pure-TS where they can be (`blurHash`, `lqipSvg`, `extractPalette` live in `pixvec/core`).
 
 **Animated GIF/APNG → animated SVG** — `pixvec animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`pixvec/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
+
+**Documents to images** — `pixvec doc report.pdf -o pages/ --dpi 150` renders a **PDF** (or an SVG) to one raster per page, at any DPI or scale, in any output format (`--format png|jpeg|webp|avif`, `--pages "1,3-5"`). SVG rendering uses the bundled resvg; **PDF** rendering follows pixvec's bring-your-own-codec rule — it dynamically loads the optional, pure-WASM [`mupdf`](https://www.npmjs.com/package/mupdf) package (no native binary to compile) and prints a one-line install hint if it is not present, so the base install stays lean. `renderPdfPages()` / `isPdf()` are exported for programmatic use.
 
 **Content-aware crop** — `pixvec crop photo.jpg -a 1:1` (or `16:9`, `4:5`, `-w 512 -h 512`) — reframes to a target aspect by **keeping the interesting subject, not the centre**. It scores every candidate window by the edge energy and colour saturation it captures (a Sobel importance map summed into an integral image, so every window scores in O(1)), the way the popular smartcrop.js does — but in pure, dependency-free TypeScript, so `smartCrop()` and `cropImage()` run in `pixvec/core` in the browser too. On a wide shot with the subject off to one side, a naïve centre crop drops it; this follows it.
 
