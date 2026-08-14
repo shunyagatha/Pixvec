@@ -15,7 +15,7 @@ try {
   mupdfOk = false;
 }
 
-/** A one-page PDF of a red disc, built with pixvec's own toPdf. */
+/** A one-page PDF of a red disc, built with graver's own toPdf. */
 function discPdf(): Uint8Array {
   const s = 100;
   const img = createImage(s, s);
@@ -80,7 +80,7 @@ describe.skipIf(!mupdfOk)('renderPdfPages (needs mupdf)', () => {
     expect(pages).toHaveLength(1);
   });
 
-  it('a rendered page vectorises to SVG (the pixvec doc -f svg path)', async () => {
+  it('a rendered page vectorises to SVG (the graver doc -f svg path)', async () => {
     const [img] = await renderPdfPages(discPdf(), { scale: 1 });
     const { vectorize, loadRaster } = await import('../src/api.js');
     const { encodeRaster } = await import('../src/io/encode.js');

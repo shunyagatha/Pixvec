@@ -107,7 +107,7 @@ describe('codec registry', () => {
 
   it('names the socket when encoding an unregistered format', async () => {
     await expect(encodeRaster(flatArtwork(4, 4), { format: 'jxl' }))
-      .rejects.toThrow(/pixvec\/codecs/);
+      .rejects.toThrow(/graver\/codecs/);
   });
 
   it('a misbehaving signature check does not sink the decode path', async () => {

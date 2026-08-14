@@ -10,7 +10,7 @@
  *
  * Install volume for image tooling concentrates at build-time integration (the
  * sharp+SVGO wrappers pull hundreds of thousands of weekly downloads), and
- * pixvec's pure-TS core avoids the native-binary CI pain those carry. Returns the
+ * graver's pure-TS core avoids the native-binary CI pain those carry. Returns the
  * plain Vite/Rollup plugin object — the two share this interface — so it needs no
  * `unplugin` dependency. Node-only (it reads files and runs the tracer).
  */
@@ -20,7 +20,7 @@ import { loadRaster, vectorize, type VectorizeOptions } from '../api.js';
 import { toComponent, type Framework } from '../emit/component.js';
 import { optimizeSvg } from '../svg/optimize.js';
 
-export interface PixvecPluginOptions {
+export interface GraverPluginOptions {
   /** Framework for `?component` imports. Default `react`. */
   framework?: Framework;
   /** Minify the emitted SVG. Default true. */
@@ -37,10 +37,10 @@ interface RollupPlugin {
 const RASTER = /\.(png|jpe?g|webp|avif|tiff?|gif|bmp|ico)$/i;
 
 /** A Vite/Rollup plugin that turns `image?svg` / `image?component` imports into vectors. */
-export function pixvecPlugin(options: PixvecPluginOptions = {}): RollupPlugin {
+export function graverPlugin(options: GraverPluginOptions = {}): RollupPlugin {
   const minify = options.minify !== false;
   return {
-    name: 'pixvec',
+    name: 'graver',
     async load(id: string): Promise<string | null> {
       const q = id.indexOf('?');
       if (q < 0) return null;
@@ -63,4 +63,4 @@ export function pixvecPlugin(options: PixvecPluginOptions = {}): RollupPlugin {
   };
 }
 
-export default pixvecPlugin;
+export default graverPlugin;

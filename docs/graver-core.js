@@ -1632,29 +1632,32 @@ function simplifyClosed(px, py, n2, tolerance) {
 }
 function douglasPeucker(px, py, first, last, tolerance, out, map) {
   if (last <= first + 1) return;
-  const ax = px[map(first)], ay = py[map(first)];
-  const bx = px[map(last)], by = py[map(last)];
-  const dx = bx - ax, dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  let worst = -1;
-  let worstDist = tolerance;
-  for (let i = first + 1; i < last; i++) {
-    const cx = px[map(i)], cy = py[map(i)];
-    let dist;
-    if (lenSq === 0) {
-      dist = Math.hypot(cx - ax, cy - ay);
-    } else {
-      dist = Math.abs(dy * cx - dx * cy + bx * ay - by * ax) / Math.sqrt(lenSq);
+  const keep = [];
+  const stack = [[first, last]];
+  while (stack.length > 0) {
+    const [f, l] = stack.pop();
+    if (l <= f + 1) continue;
+    const ax = px[map(f)], ay = py[map(f)];
+    const bx = px[map(l)], by = py[map(l)];
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    let worst = -1;
+    let worstDist = tolerance;
+    for (let i = f + 1; i < l; i++) {
+      const cx = px[map(i)], cy = py[map(i)];
+      const dist = lenSq === 0 ? Math.hypot(cx - ax, cy - ay) : Math.abs(dy * cx - dx * cy + bx * ay - by * ax) / Math.sqrt(lenSq);
+      if (dist > worstDist) {
+        worstDist = dist;
+        worst = i;
+      }
     }
-    if (dist > worstDist) {
-      worstDist = dist;
-      worst = i;
-    }
+    if (worst === -1) continue;
+    keep.push(worst);
+    stack.push([f, worst]);
+    stack.push([worst, l]);
   }
-  if (worst === -1) return;
-  douglasPeucker(px, py, first, worst, tolerance, out, map);
-  out.push(map(worst));
-  douglasPeucker(px, py, worst, last, tolerance, out, map);
+  keep.sort((a, b) => a - b);
+  for (const i of keep) out.push(map(i));
 }
 function dedupeOrdered(indices, n2) {
   const seen = new Uint8Array(n2);
@@ -2326,6 +2329,7 @@ function weightedMedian(values, weights, totalW) {
   return clamp255(values[order[order.length - 1]]);
 }
 function clamp255(v) {
+  if (Number.isNaN(v)) return 0;
   return Math.min(255, Math.max(0, Math.round(v)));
 }
 function computeLab(p) {
@@ -5168,7 +5172,7 @@ function toEps(geometry, opts = {}) {
   const out = [
     "%!PS-Adobe-3.0 EPSF-3.0",
     `%%BoundingBox: 0 0 ${Math.ceil(width)} ${Math.ceil(height)}`,
-    "%%Creator: pixvec",
+    "%%Creator: graver",
     "%%EndComments"
   ];
   for (const path of geometry.paths) {
@@ -5264,7 +5268,7 @@ function toGcode(polylines, opts = {}) {
   const toolOff = mode === "laser" ? "M5" : `G0 Z${n(opts.penUp ?? 5)}`;
   const toolOn = mode === "laser" ? `M3 S${power}` : `G1 Z${n(opts.penDown ?? 0)} F${feed}`;
   const lines = [
-    "; pixvec G-code",
+    "; graver G-code",
     `; mode=${mode} feed=${feed} ${opts.units ?? "mm"}`,
     opts.units === "in" ? "G20" : "G21",
     "G90",
@@ -5284,7 +5288,7 @@ function toGcode(polylines, opts = {}) {
 }
 
 // src/core.ts
-var VERSION = "1.22.0";
+var VERSION = "1.32.0";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,

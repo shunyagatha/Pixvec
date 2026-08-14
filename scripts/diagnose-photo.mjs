@@ -2,7 +2,7 @@
 /**
  * Isolate where the photographic SSIM loss actually comes from.
  *
- * Pixvec trails imagetracerjs on photo SSIM. A prior guess — that potrace's
+ * Graver trails imagetracerjs on photo SSIM. A prior guess — that potrace's
  * curve-merging pass was the cause — was implemented and measured to do nothing.
  * This script exists so the *next* fix is aimed by measurement, not by a hunch.
  *

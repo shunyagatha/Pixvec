@@ -1,7 +1,7 @@
 /**
  * Images → one multi-page PDF.
  *
- * The complement of `pixvec doc` (PDF → images): stitch a stack of photos or
+ * The complement of `graver doc` (PDF → images): stitch a stack of photos or
  * scans into a single PDF, one image per page. Each page embeds its image as a
  * JPEG stream (`DCTDecode`) sized to the page, so the file stays small and every
  * reader opens it. The PDF is assembled as raw bytes — a JPEG stream cannot

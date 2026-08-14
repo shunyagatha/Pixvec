@@ -93,7 +93,7 @@ async function encode(img, format) {
   return format === 'jpeg' ? p.jpeg({ quality: 95 }).toBuffer() : p.png({ compressionLevel: 9 }).toBuffer();
 }
 
-const dir = await mkdtemp(join(tmpdir(), 'pixvec-bench-'));
+const dir = await mkdtemp(join(tmpdir(), 'graver-bench-'));
 const results = [];
 
 try {

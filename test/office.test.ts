@@ -14,7 +14,7 @@ import { convertOffice, convertOfficeBatch, findSoffice, buildSofficeArgs, isOff
 
 let dir: string;
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'pixvec-office-test-'));
+  dir = await mkdtemp(join(tmpdir(), 'graver-office-test-'));
   // convertOffice checks the input exists before spawning; give the tests real
   // (dummy) inputs — the stand-in engine ignores their contents.
   for (const f of ['report.docx', 'scan.pdf', 'unsupp.docx', 'real.docx']) {
@@ -40,26 +40,26 @@ describe('buildSofficeArgs', () => {
 });
 
 describe('findSoffice', () => {
-  it('honours PIXVEC_SOFFICE when it points at a real file', async () => {
+  it('honours GRAVER_SOFFICE when it points at a real file', async () => {
     const fake = join(dir, 'soffice-marker');
     await writeFile(fake, '');
-    const prev = process.env.PIXVEC_SOFFICE;
-    process.env.PIXVEC_SOFFICE = fake;
+    const prev = process.env.GRAVER_SOFFICE;
+    process.env.GRAVER_SOFFICE = fake;
     try {
       expect(findSoffice()).toBe(fake);
     } finally {
-      if (prev === undefined) delete process.env.PIXVEC_SOFFICE; else process.env.PIXVEC_SOFFICE = prev;
+      if (prev === undefined) delete process.env.GRAVER_SOFFICE; else process.env.GRAVER_SOFFICE = prev;
     }
   });
 
   it('returns null or a real path, never throws', () => {
-    const prev = process.env.PIXVEC_SOFFICE;
-    delete process.env.PIXVEC_SOFFICE;
+    const prev = process.env.GRAVER_SOFFICE;
+    delete process.env.GRAVER_SOFFICE;
     try {
       const r = findSoffice();
       expect(r === null || typeof r === 'string').toBe(true);
     } finally {
-      if (prev !== undefined) process.env.PIXVEC_SOFFICE = prev;
+      if (prev !== undefined) process.env.GRAVER_SOFFICE = prev;
     }
   });
 });

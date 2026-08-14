@@ -1,5 +1,5 @@
 /**
- * Core data types shared across Pixvec.
+ * Core data types shared across Graver.
  *
  * The canonical in-memory representation is **straight (non-premultiplied) RGBA8
  * in the sRGB colour space**. Every decoder normalises to it and every encoder

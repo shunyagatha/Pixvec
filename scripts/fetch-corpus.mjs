@@ -72,7 +72,7 @@ const SOURCES = [
 
 // Wikimedia rejects requests without a descriptive User-Agent.
 const HEADERS = {
-  'User-Agent': 'pixvec-test-corpus/1.0 (https://github.com/shunyagatha/Pixvec)',
+  'User-Agent': 'graver-test-corpus/1.0 (https://github.com/shunyagatha/Graver)',
 };
 
 await mkdir(OUT, { recursive: true });
@@ -109,7 +109,7 @@ for (const source of SOURCES) {
 
 await writeFile(
   join('corpus', 'MANIFEST.json'),
-  `${JSON.stringify({ fetchedFor: 'pixvec quality testing', sources: manifest }, null, 2)}\n`,
+  `${JSON.stringify({ fetchedFor: 'graver quality testing', sources: manifest }, null, 2)}\n`,
 );
 
 console.log(`\n${ok} fetched, ${failed} failed. Provenance written to corpus/MANIFEST.json`);

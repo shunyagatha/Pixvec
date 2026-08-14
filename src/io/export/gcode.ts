@@ -47,7 +47,7 @@ export function toGcode(polylines: Point[][], opts: GcodeOptions = {}): string {
   const toolOn = mode === 'laser' ? `M3 S${power}` : `G1 Z${n(opts.penDown ?? 0)} F${feed}`;
 
   const lines: string[] = [
-    '; pixvec G-code',
+    '; graver G-code',
     `; mode=${mode} feed=${feed} ${opts.units ?? 'mm'}`,
     opts.units === 'in' ? 'G20' : 'G21',
     'G90',

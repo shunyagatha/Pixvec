@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pixvec playground — raster → SVG, measured</title>
+<title>graver playground — raster → SVG, measured</title>
 <style>
   :root {
     --bg: #0e1116; --panel: #161b22; --border: #2b333d; --text: #e6edf3;
@@ -44,9 +44,9 @@
 </head>
 <body>
 <header>
-  <h1>pixvec</h1>
+  <h1>graver</h1>
   <span class="tag">raster → SVG, measured — runs entirely in your browser</span>
-  <a href="https://github.com/shunyagatha/Pixvec" target="_blank" rel="noopener">GitHub ↗</a>
+  <a href="https://github.com/shunyagatha/Graver" target="_blank" rel="noopener">GitHub ↗</a>
 </header>
 <main>
   <section class="controls">
@@ -103,12 +103,12 @@
       <div class="metric"><div class="k">Shapes</div><div class="v" id="mShapes">—</div></div>
       <div class="metric"><div class="k">Trace time</div><div class="v" id="mTime">—</div></div>
     </div>
-    <p class="hint">Every number is measured in-browser: the output SVG is rendered back and compared to the source with the same SSIM / PSNR / CIEDE2000 pixvec uses internally. Nothing leaves your machine.</p>
+    <p class="hint">Every number is measured in-browser: the output SVG is rendered back and compared to the source with the same SSIM / PSNR / CIEDE2000 graver uses internally. Nothing leaves your machine.</p>
   </section>
 </main>
 
 <script type="module">
-import { trace, vectorizeExact, centerlineTrace, compareImages, optimizeSvg } from './pixvec-core.js';
+import { trace, vectorizeExact, centerlineTrace, compareImages, optimizeSvg } from './graver-core.js';
 
 const $ = (id) => document.getElementById(id);
 let source = null; // { width, height, data }
@@ -182,7 +182,7 @@ async function run() {
   $('download').onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-    a.download = 'pixvec.svg'; a.click();
+    a.download = 'graver.svg'; a.click();
   };
 
   // Measured quality: render the SVG back and compare to the source.

@@ -1,14 +1,14 @@
 /**
  * Lazy-load placeholders — the tiny previews shown while the real image loads.
  *
- * Two flavours, from the same decode pass the rest of pixvec already does:
+ * Two flavours, from the same decode pass the rest of graver already does:
  *
  * - **BlurHash** — a ~20–30 char string that decodes to a blurred preview.
  *   The de-facto standard (Unsplash, Wolt); implemented here to spec so any
  *   BlurHash decoder renders it.
  * - **LQIP-SVG** — a tiny self-contained SVG (an SQIP successor) that renders a
  *   blurred vector preview and scales cleanly. SQIP is unmaintained and ships a
- *   Go binary; this reuses pixvec's own subsample + blur + trace, so it needs
+ *   Go binary; this reuses graver's own subsample + blur + trace, so it needs
  *   nothing external and stays in the portable core.
  */
 

@@ -5,7 +5,7 @@
  * `favicon.ico`, Apple touch icon, 192/512 PWA icons (plus a maskable one), a
  * `manifest.webmanifest`, and the `<head>` HTML — so the tedious, error-prone
  * hand-assembly of an icon set collapses to one call. Node-only: it uses the
- * resize pipeline and the pure-TS ICO encoder pixvec already ships.
+ * resize pipeline and the pure-TS ICO encoder graver already ships.
  */
 
 import { editImage } from '../ops.js';

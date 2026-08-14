@@ -1,13 +1,13 @@
 /**
- * Pixvec — measurable raster ⇄ SVG conversion.
+ * Graver — measurable raster ⇄ SVG conversion.
  *
  * This is the **Node entry point**. It re-exports everything from
- * `pixvec/core` and adds the parts that need real codecs: reading image files,
+ * `graver/core` and adds the parts that need real codecs: reading image files,
  * rendering SVG back to pixels, re-encoding bitmaps, and the verified lossless
  * guarantee that depends on being able to render.
  *
  * If you are targeting a browser, Deno, Bun, an edge runtime, or you simply do
- * not want a native dependency, import `pixvec/core` instead. It is the same
+ * not want a native dependency, import `graver/core` instead. It is the same
  * vectorisation and measurement code with no dependencies at all.
  */
 
@@ -114,7 +114,7 @@ export {
 } from './api.js';
 
 // --- Build-tool plugin (Vite/Rollup) --------------------------------------
-export { pixvecPlugin, type PixvecPluginOptions } from './plugin/vite.js';
+export { graverPlugin, type GraverPluginOptions } from './plugin/vite.js';
 
 // `api.ts` is the source of truth for the version stamped into generated files.
 export { VERSION } from './api.js';

@@ -1,12 +1,12 @@
-# Contributing to Pixvec
+# Contributing to Graver
 
 Thanks for considering it. This document covers the things that are specific to this project; the usual open-source etiquette applies otherwise.
 
 ## Getting set up
 
 ```bash
-git clone https://github.com/shunyagatha/Pixvec.git
-cd Pixvec
+git clone https://github.com/shunyagatha/Graver.git
+cd Graver
 npm install
 npm run build
 npm test

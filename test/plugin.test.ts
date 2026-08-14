@@ -2,18 +2,18 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { writeFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pixvecPlugin } from '../src/plugin/vite.js';
+import { graverPlugin } from '../src/plugin/vite.js';
 import { flatArtwork, encode } from './fixtures.js';
 
 let png: string;
 beforeAll(async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'pixvec-vite-'));
+  const dir = await mkdtemp(join(tmpdir(), 'graver-vite-'));
   png = join(dir, 'logo.png');
   await writeFile(png, await encode(flatArtwork(64, 48), 'png'));
 });
 
-describe('pixvecPlugin (Vite/Rollup)', () => {
-  const plugin = pixvecPlugin();
+describe('graverPlugin (Vite/Rollup)', () => {
+  const plugin = graverPlugin();
 
   it('turns image?svg into a default-exported SVG string', async () => {
     const code = await plugin.load(`${png}?svg`);
@@ -22,7 +22,7 @@ describe('pixvecPlugin (Vite/Rollup)', () => {
   });
 
   it('turns image?component into component source', async () => {
-    const code = await pixvecPlugin({ framework: 'react' }).load(`${png}?component`);
+    const code = await graverPlugin({ framework: 'react' }).load(`${png}?component`);
     expect(code).toContain('export function Icon');
     expect(code).toContain('<svg');
   });

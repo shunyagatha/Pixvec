@@ -1,7 +1,7 @@
 /**
  * Feature benchmarks — measured, not asserted.
  *
- * Prints a small Markdown table quantifying two of pixvec's differentiators on
+ * Prints a small Markdown table quantifying two of graver's differentiators on
  * synthetic-but-honest inputs: radial-gradient de-banding (a vignette) and
  * geometric-primitive recognition (a disc). Every number here is produced by
  * rendering the actual SVG output back to pixels and scoring it — run
@@ -77,7 +77,7 @@ async function main() {
     `${(await score(dsc, prim.svg)).toFixed(4)} / ${fmtB(prim.svg.length)}`,
   ]);
 
-  console.log('| Case | Baseline (SSIM / size) | pixvec feature (SSIM / size) |');
+  console.log('| Case | Baseline (SSIM / size) | graver feature (SSIM / size) |');
   console.log('|---|---|---|');
   for (const [c, base, feat] of rows) console.log(`| ${c} | ${base} | ${feat} |`);
 }

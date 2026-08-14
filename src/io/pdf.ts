@@ -1,7 +1,7 @@
 /**
  * PDF → raster pages.
  *
- * Rendering a PDF needs a full PDF engine, which pixvec does not bundle — the
+ * Rendering a PDF needs a full PDF engine, which graver does not bundle — the
  * zero-dependency promise would not survive it. Instead this follows the same
  * bring-your-own pattern as the WASM codec registry: it dynamically loads the
  * optional [`mupdf`](https://www.npmjs.com/package/mupdf) package (pure WASM, no

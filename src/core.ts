@@ -1,12 +1,12 @@
 /**
- * Pixvec core — the portable half.
+ * Graver core — the portable half.
  *
  * Everything exported here is plain TypeScript with **no dependencies and no
  * Node built-ins**. It runs unchanged in Node, Deno, Bun, a browser, a service
  * worker, or an edge runtime, and bundles without native modules.
  *
  * ```ts
- * import { vectorizeExact } from 'pixvec/core';
+ * import { vectorizeExact } from 'graver/core';
  *
  * // In a browser, straight from a canvas:
  * const { data, width, height } = ctx.getImageData(0, 0, w, h);
@@ -20,7 +20,7 @@
  *
  * **What is not here, and why.** Reading PNG/JPEG/WebP files, rendering an SVG
  * back to pixels, and re-encoding a bitmap all require real codecs. Those live
- * in the main `pixvec` entry point, which pulls in libvips and resvg and
+ * in the main `graver` entry point, which pulls in libvips and resvg and
  * therefore only runs on Node. Verification (`--verify`, the lossless
  * guarantee) needs a renderer, so it lives there too.
  *
@@ -176,7 +176,7 @@ export {
 // --- Format codecs written from scratch, so they need no libvips -----------
 //
 // The decoders *and* the matching encoders both live here, so a browser or edge
-// consumer of pixvec/core can round-trip BMP, ICO, PNM and TGA with no native
+// consumer of graver/core can round-trip BMP, ICO, PNM and TGA with no native
 // dependency. Exporting only the decoders (as an earlier version did) made the
 // "square conversion matrix" claim false for the portable build: those callers
 // could read the four formats but not write them.
@@ -263,4 +263,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.31.2';
+export const VERSION = '1.32.0';

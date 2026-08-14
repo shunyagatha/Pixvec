@@ -4,7 +4,7 @@
  * One source image becomes a width ladder in modern formats (AVIF/WebP with a
  * JPEG/PNG fallback) plus ready-to-paste `<picture>` markup with `srcset`, so a
  * developer stops hand-writing the boilerplate that Core Web Vitals demands.
- * Node-only: it uses the resize + encode pipeline pixvec already ships.
+ * Node-only: it uses the resize + encode pipeline graver already ships.
  */
 
 import { editImage } from '../ops.js';

@@ -6,7 +6,7 @@ import { handleMcpMessage } from '../src/mcp/server.js';
 import { flatArtwork, encode, setPixel } from './fixtures.js';
 
 /**
- * The MCP server is how AI agents drive pixvec. These tests exercise the JSON-RPC
+ * The MCP server is how AI agents drive graver. These tests exercise the JSON-RPC
  * handshake and a couple of real tool calls directly through the handler, so the
  * protocol contract is verified without spawning a process.
  */
@@ -15,7 +15,7 @@ let pngPath: string;
 let pngPath2: string;
 let outDir: string;
 beforeAll(async () => {
-  outDir = await mkdtemp(join(tmpdir(), 'pixvec-mcp-'));
+  outDir = await mkdtemp(join(tmpdir(), 'graver-mcp-'));
   pngPath = join(outDir, 'art.png');
   await writeFile(pngPath, await encode(flatArtwork(80, 60), 'png'));
   // A second image, differing in a small block, for the diff tool.
@@ -33,7 +33,7 @@ async function rpc(method: string, params?: Record<string, unknown>, id: number 
 describe('MCP server', () => {
   it('completes the initialize handshake', async () => {
     const r = await rpc('initialize', {});
-    expect(r.result.serverInfo.name).toBe('pixvec');
+    expect(r.result.serverInfo.name).toBe('graver');
     expect(r.result.protocolVersion).toBeTruthy();
     expect(r.result.capabilities.tools).toBeTruthy();
   });

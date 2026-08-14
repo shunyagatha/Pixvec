@@ -9,7 +9,7 @@ const rows: BatchRow[] = [
 describe('formatBatchSummary', () => {
   it('renders a Markdown table with a headline', () => {
     const md = formatBatchSummary(rows, 2, 0);
-    expect(md).toContain('## pixvec');
+    expect(md).toContain('## graver');
     expect(md).toContain('| File | Output | In | Out | Change |');
     expect(md).toContain('| logo.png | logo.svg |');
     expect(md).toContain('| hero.png | hero.svg |');
@@ -32,7 +32,7 @@ describe('formatBatchSummary', () => {
 
   it('handles an empty run without dividing by zero', () => {
     const md = formatBatchSummary([], 0, 0);
-    expect(md).toContain('## pixvec');
+    expect(md).toContain('## graver');
     expect(md).toContain('0 converted');
     expect(md).not.toContain('NaN');
   });

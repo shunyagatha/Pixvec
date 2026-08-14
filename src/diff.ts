@@ -9,7 +9,7 @@
  * does not light up the whole frame while a genuine hue shift goes unnoticed.
  *
  * Pure: two {@link RasterImage}s in, a heatmap image and statistics out. No
- * dependencies, so it runs in `pixvec/core` in the browser as well as in Node.
+ * dependencies, so it runs in `graver/core` in the browser as well as in Node.
  */
 
 import { srgbToLab, deltaE2000, luma709 } from './color.js';
