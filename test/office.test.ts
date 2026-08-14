@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { writeFile, mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename, extname } from 'node:path';
-import { convertOffice, findSoffice, buildSofficeArgs, isOfficeDocument, OFFICE_FORMATS } from '../src/io/office.js';
+import { convertOffice, convertOfficeBatch, findSoffice, buildSofficeArgs, isOfficeDocument, OFFICE_FORMATS } from '../src/io/office.js';
 
 /**
  * Faithful Office⇄PDF needs LibreOffice, which is not bundled and not present in
@@ -111,6 +111,34 @@ describe('convertOffice', () => {
 
   it('lists the common formats it bridges', () => {
     for (const f of ['pdf', 'docx', 'xlsx', 'pptx', 'odt']) expect(OFFICE_FORMATS).toContain(f);
+  });
+});
+
+describe('convertOfficeBatch', () => {
+  it('converts every input into the output directory as <stem>.<ext>', async () => {
+    const a = join(dir, 'batch', 'a.docx');
+    const b = join(dir, 'batch', 'b.xlsx');
+    const { mkdir, writeFile: wf } = await import('node:fs/promises');
+    await mkdir(join(dir, 'batch'), { recursive: true });
+    await wf(a, 'x'); await wf(b, 'x');
+    const outDir = join(dir, 'batch-out');
+    const results = await convertOfficeBatch([a, b], outDir, 'pdf', { run: fakeSoffice });
+    expect(results.map((r) => basename(r.output)).sort()).toEqual(['a.pdf', 'b.pdf']);
+    expect(await readFile(join(outDir, 'a.pdf'), 'utf8')).toBe('converted:pdf');
+  });
+
+  it('disambiguates same-named inputs from different folders (no overwrite)', async () => {
+    const { mkdir, writeFile: wf } = await import('node:fs/promises');
+    const d1 = join(dir, 'src1'); const d2 = join(dir, 'src2');
+    await mkdir(d1, { recursive: true }); await mkdir(d2, { recursive: true });
+    await wf(join(d1, 'report.docx'), 'x'); await wf(join(d2, 'report.docx'), 'x');
+    const outDir = join(dir, 'dedup-out');
+    const results = await convertOfficeBatch([join(d1, 'report.docx'), join(d2, 'report.docx')], outDir, 'pdf', { run: fakeSoffice });
+    expect(results.map((r) => basename(r.output)).sort()).toEqual(['report-2.pdf', 'report.pdf']);
+  });
+
+  it('requires a target format', async () => {
+    await expect(convertOfficeBatch(['a.docx'], join(dir, 'o'), '', { run: fakeSoffice })).rejects.toThrow(/target format/i);
   });
 });
 

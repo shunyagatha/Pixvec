@@ -113,6 +113,34 @@ export async function convertOffice(
   }
 }
 
+/**
+ * Convert many documents into `outDir`, one output each, named `<stem>.<ext>`.
+ * Same-named inputs from different folders are disambiguated so none is
+ * silently overwritten. Conversions run sequentially — LibreOffice serialises
+ * on a single user profile anyway.
+ */
+export async function convertOfficeBatch(
+  inputs: string[],
+  outDir: string,
+  targetExt: string,
+  opts: OfficeConvertOptions = {},
+): Promise<OfficeConvertResult[]> {
+  const ext = targetExt.replace(/^\./, '').toLowerCase();
+  if (!ext) throw new Error('A target format is required, e.g. --to pdf');
+  await mkdir(outDir, { recursive: true });
+
+  const used = new Set<string>();
+  const results: OfficeConvertResult[] = [];
+  for (const input of inputs) {
+    const stem = basename(input, extname(input));
+    let out = join(outDir, `${stem}.${ext}`);
+    for (let k = 2; used.has(out); k++) out = join(outDir, `${stem}-${k}.${ext}`);
+    used.add(out);
+    results.push(await convertOffice(input, out, opts));
+  }
+  return results;
+}
+
 function spawnSoffice(bin: string, args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout: timeoutMs, windowsHide: true }, (err) => {

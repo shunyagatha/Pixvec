@@ -85,6 +85,7 @@ export {
 // --- Office ⇄ PDF via the user's LibreOffice (nothing bundled; Node-only) ---
 export {
   convertOffice,
+  convertOfficeBatch,
   findSoffice,
   buildSofficeArgs,
   isOfficeDocument,

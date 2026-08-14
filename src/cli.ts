@@ -31,7 +31,7 @@ import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
 import { formatBatchSummary } from './io/batch-summary.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from './io/pdf.js';
-import { convertOffice, isOfficeDocument } from './io/office.js';
+import { convertOffice, convertOfficeBatch, isOfficeDocument } from './io/office.js';
 import { imagesToPdf } from './io/images-pdf.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba } from './types.js';
 
@@ -1058,15 +1058,31 @@ async function runImagesToPdf(
 // ---------------------------------------------------------------------------
 
 async function runOffice(
-  input: string,
-  o: { output: string; soffice?: string; timeout: number; json?: boolean },
+  inputs: string[],
+  o: { output: string; to?: string; soffice?: string; timeout: number; json?: boolean },
 ): Promise<void> {
-  const res = await convertOffice(input, o.output, { soffice: o.soffice, timeoutMs: o.timeout * 1000 });
-  if (o.json) {
-    emitJson({ input, output: res.output, engine: res.engine });
+  const opts = { soffice: o.soffice, timeoutMs: o.timeout * 1000 };
+
+  // Single-file mode: one input, no --to, and -o is the output file.
+  if (!o.to && inputs.length === 1 && !inputs[0].match(/[*?[\]{}]/)) {
+    const res = await convertOffice(inputs[0], o.output, opts);
+    if (o.json) { emitJson({ input: inputs[0], output: res.output, engine: res.engine }); return; }
+    info(`${green('✓')} ${bold(basename(inputs[0]))} → ${bold(basename(res.output))}  ${dim('(via LibreOffice)')}`);
     return;
   }
-  info(`${green('✓')} ${bold(basename(input))} → ${bold(basename(res.output))}  ${dim('(via LibreOffice)')}`);
+
+  // Batch mode: expand globs, convert each into the output directory as <stem>.<to>.
+  if (!o.to) fail('Converting multiple inputs needs --to <fmt> and an output directory, e.g. office "docs/*.docx" --to pdf -o out/');
+  const files = await glob(inputs.map((p) => p.replace(/\\/g, '/')), { absolute: true, onlyFiles: true });
+  if (files.length === 0) fail(`No files matched: ${inputs.join(', ')}`);
+  const results = await convertOfficeBatch(files, o.output, o.to!, opts);
+
+  if (o.json) {
+    emitJson({ outDir: o.output, to: o.to, converted: results.length, files: results.map((r) => basename(r.output)) });
+    return;
+  }
+  info(`${green('✓')} ${bold(String(results.length))} document${results.length === 1 ? '' : 's'} → ${o.to} ${dim(`in ${o.output}  (via LibreOffice)`)}`);
+  for (const r of results) info(`  ${dim(basename(r.output))}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1707,8 +1723,9 @@ program
 program
   .command('office')
   .description('Convert Office documents ⇄ PDF (and between Office formats) via your local LibreOffice — nothing bundled, install stays tiny')
-  .argument('<input>', 'source document: docx, xlsx, pptx, odt, ods, odp, rtf, html, csv, txt, or pdf')
-  .requiredOption('-o, --output <file>', 'output path; the target format is its extension, e.g. out.pdf or out.docx')
+  .argument('<inputs...>', 'source document(s) or glob(s): docx, xlsx, pptx, odt, ods, odp, rtf, html, csv, txt, or pdf')
+  .requiredOption('-o, --output <path>', 'output file (single) — or output directory when --to is given (batch)')
+  .option('--to <fmt>', 'target format for batch mode (e.g. pdf, docx); writes <outdir>/<stem>.<fmt> for each input')
   .option('--soffice <path>', 'path to the LibreOffice soffice binary (else auto-detected, or set $PIXVEC_SOFFICE)')
   .option('--timeout <s>', 'conversion timeout in seconds', intArg('--timeout', 1, 3600), 120)
   .option('--json', 'machine-readable output')
