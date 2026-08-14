@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.shunyagatha/vecline",
+  "description": "Verified, deterministic, local-first image and document toolkit. Converts raster to SVG (bit-exact on flat art), measures its own output with real SSIM/PSNR/CIEDE2000, diffs images perceptually, traces centrelines and exports DXF/EPS/PDF/G-code for CNC, and renders PDF/Office documents to images — all on your machine, nothing uploaded.",
+  "repository": {
+    "url": "https://github.com/shunyagatha/Vecline",
+    "source": "github"
+  },
+  "version": "1.34.1",
+  "websiteUrl": "https://vecline.xyz",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "vecline",
+      "version": "1.34.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "npx",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "valueHint": "subcommand",
+          "value": "mcp",
+          "isRequired": true,
+          "description": "Starts the MCP server. `vecline` is a full toolkit; `mcp` is the subcommand that speaks JSON-RPC over stdio."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "VECLINE_SOFFICE",
+          "description": "Optional. Path to a LibreOffice `soffice` binary, used only by the Office conversion tools. Left unset, they are auto-detected; if LibreOffice is absent the affected tools report themselves as unavailable rather than failing.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

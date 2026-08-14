@@ -1,0 +1,32 @@
+# Smithery listing for the Vecline MCP server.
+#
+# `target: local` is deliberate and is the whole point: this server runs on the
+# user's own machine, so the images and documents an agent works on are never
+# uploaded anywhere. A hosted deployment would quietly break that guarantee.
+target: local
+
+startCommand:
+  type: stdio
+
+  configSchema:
+    type: object
+    properties:
+      soffice:
+        type: string
+        title: LibreOffice path
+        description: >-
+          Optional. Full path to a LibreOffice `soffice` binary, used only by the
+          Office conversion tools. Leave blank to auto-detect. If LibreOffice is
+          not installed, those tools report themselves as unavailable at
+          tools/list rather than failing when called.
+    required: []
+    additionalProperties: false
+
+  # `vecline` is a whole toolkit; `mcp` is the subcommand that speaks JSON-RPC
+  # over stdio. `-y` so npx runs it without an install prompt.
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'vecline', 'mcp'],
+      env: config && config.soffice ? { VECLINE_SOFFICE: config.soffice } : {}
+    })
