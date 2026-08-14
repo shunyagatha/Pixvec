@@ -263,4 +263,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.30.0';
+export const VERSION = '1.31.0';

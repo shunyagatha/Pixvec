@@ -48,6 +48,9 @@ export async function imagesToPdf(images: RasterImage[], opts: ImagePdfOptions =
 export function assembleImagePdf(pages: JpegPage[], opts: { dpi?: number } = {}): Uint8Array {
   if (pages.length === 0) throw new Error('assembleImagePdf needs at least one page.');
   const dpi = opts.dpi ?? 96;
+  // Guard against 0 / negative / NaN dpi, which would put Infinity or NaN in the
+  // page MediaBox and produce a structurally-invalid PDF. (0 slips past `??`.)
+  if (!Number.isFinite(dpi) || dpi <= 0) throw new Error(`dpi must be a positive finite number, got ${dpi}.`);
   const enc = new TextEncoder();
 
   const chunks: Uint8Array[] = [];

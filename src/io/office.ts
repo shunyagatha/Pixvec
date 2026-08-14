@@ -113,30 +113,56 @@ export async function convertOffice(
   }
 }
 
+/** One entry in a {@link convertOfficeBatch} run: an output path, or an error. */
+export interface OfficeBatchResult {
+  input: string;
+  /** Written path on success. */
+  output?: string;
+  /** Failure message; the batch continues past a failed file. */
+  error?: string;
+}
+
 /**
  * Convert many documents into `outDir`, one output each, named `<stem>.<ext>`.
- * Same-named inputs from different folders are disambiguated so none is
- * silently overwritten. Conversions run sequentially — LibreOffice serialises
- * on a single user profile anyway.
+ * A file that fails to convert is recorded and the batch continues — a 50-file
+ * run never dies on file #30. Same-named inputs from different folders are
+ * disambiguated so none is silently overwritten, *and* a real `<stem>-2` input
+ * keeps its natural name (the suffix skips names another input already owns).
+ * Sequential — LibreOffice serialises on one user profile anyway.
  */
 export async function convertOfficeBatch(
   inputs: string[],
   outDir: string,
   targetExt: string,
   opts: OfficeConvertOptions = {},
-): Promise<OfficeConvertResult[]> {
+): Promise<OfficeBatchResult[]> {
   const ext = targetExt.replace(/^\./, '').toLowerCase();
   if (!ext) throw new Error('A target format is required, e.g. --to pdf');
   await mkdir(outDir, { recursive: true });
 
+  const natural = inputs.map((i) => `${basename(i, extname(i))}.${ext}`);
+  const naturalSet = new Set(natural);
   const used = new Set<string>();
-  const results: OfficeConvertResult[] = [];
-  for (const input of inputs) {
-    const stem = basename(input, extname(input));
-    let out = join(outDir, `${stem}.${ext}`);
-    for (let k = 2; used.has(out); k++) out = join(outDir, `${stem}-${k}.${ext}`);
-    used.add(out);
-    results.push(await convertOffice(input, out, opts));
+  const results: OfficeBatchResult[] = [];
+
+  for (let idx = 0; idx < inputs.length; idx++) {
+    let name = natural[idx];
+    if (used.has(name)) {
+      const stem = basename(inputs[idx], extname(inputs[idx]));
+      // Skip a suffixed name that some *other* input claims as its natural name.
+      let k = 2;
+      let cand = `${stem}-${k}.${ext}`;
+      while (used.has(cand) || (naturalSet.has(cand) && cand !== natural[idx])) cand = `${stem}-${++k}.${ext}`;
+      name = cand;
+    }
+    used.add(name);
+    const out = join(outDir, name);
+    try {
+      const res = await convertOffice(inputs[idx], out, opts);
+      results.push({ input: inputs[idx], output: res.output });
+    } catch (e) {
+      results.push({ input: inputs[idx], error: (e as Error).message });
+    }
   }
   return results;
 }

@@ -115,6 +115,8 @@ describe('convertOffice', () => {
 });
 
 describe('convertOfficeBatch', () => {
+  const names = (results: Array<{ output?: string }>) => results.map((r) => (r.output ? basename(r.output) : '(failed)')).sort();
+
   it('converts every input into the output directory as <stem>.<ext>', async () => {
     const a = join(dir, 'batch', 'a.docx');
     const b = join(dir, 'batch', 'b.xlsx');
@@ -123,7 +125,7 @@ describe('convertOfficeBatch', () => {
     await wf(a, 'x'); await wf(b, 'x');
     const outDir = join(dir, 'batch-out');
     const results = await convertOfficeBatch([a, b], outDir, 'pdf', { run: fakeSoffice });
-    expect(results.map((r) => basename(r.output)).sort()).toEqual(['a.pdf', 'b.pdf']);
+    expect(names(results)).toEqual(['a.pdf', 'b.pdf']);
     expect(await readFile(join(outDir, 'a.pdf'), 'utf8')).toBe('converted:pdf');
   });
 
@@ -134,7 +136,33 @@ describe('convertOfficeBatch', () => {
     await wf(join(d1, 'report.docx'), 'x'); await wf(join(d2, 'report.docx'), 'x');
     const outDir = join(dir, 'dedup-out');
     const results = await convertOfficeBatch([join(d1, 'report.docx'), join(d2, 'report.docx')], outDir, 'pdf', { run: fakeSoffice });
-    expect(results.map((r) => basename(r.output)).sort()).toEqual(['report-2.pdf', 'report.pdf']);
+    expect(names(results)).toEqual(['report-2.pdf', 'report.pdf']);
+  });
+
+  it("does not steal a real <stem>-2 input's natural name", async () => {
+    const { mkdir, writeFile: wf } = await import('node:fs/promises');
+    const d1 = join(dir, 'n1'); const d2 = join(dir, 'n2');
+    await mkdir(d1, { recursive: true }); await mkdir(d2, { recursive: true });
+    await wf(join(d1, 'report.docx'), 'x'); await wf(join(d2, 'report.docx'), 'x'); await wf(join(dir, 'report-2.docx'), 'x');
+    const outDir = join(dir, 'natural-out');
+    const results = await convertOfficeBatch(
+      [join(d1, 'report.docx'), join(d2, 'report.docx'), join(dir, 'report-2.docx')], outDir, 'pdf', { run: fakeSoffice },
+    );
+    // The genuine report-2.docx keeps report-2.pdf; the duplicate is bumped past it.
+    expect(names(results)).toEqual(['report-2.pdf', 'report-3.pdf', 'report.pdf']);
+  });
+
+  it('records a failed document and keeps converting the rest', async () => {
+    const { mkdir, writeFile: wf } = await import('node:fs/promises');
+    const bad = join(dir, 'bad.docx'); const good = join(dir, 'good.docx');
+    await mkdir(dir, { recursive: true }); await wf(bad, 'x'); await wf(good, 'x');
+    const flaky = async (b: string, a: string[]): Promise<void> => {
+      if (basename(a[a.length - 1]).startsWith('bad')) throw new Error('boom');
+      await fakeSoffice(b, a);
+    };
+    const results = await convertOfficeBatch([bad, good], join(dir, 'flaky-out'), 'pdf', { run: flaky });
+    expect(results.find((r) => r.input === bad)?.error).toMatch(/boom|LibreOffice/);
+    expect(results.find((r) => r.input === good)?.output).toBeTruthy();
   });
 
   it('requires a target format', async () => {

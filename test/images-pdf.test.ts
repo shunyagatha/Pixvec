@@ -33,6 +33,14 @@ describe('assembleImagePdf (pure)', () => {
   it('throws on no pages', () => {
     expect(() => assembleImagePdf([])).toThrow(/at least one/);
   });
+
+  it('rejects a non-positive or non-finite dpi (would corrupt the MediaBox)', () => {
+    const jp = { jpeg: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), width: 10, height: 10 };
+    expect(() => assembleImagePdf([jp], { dpi: 0 })).toThrow(/dpi/);
+    expect(() => assembleImagePdf([jp], { dpi: -5 })).toThrow(/dpi/);
+    expect(() => assembleImagePdf([jp], { dpi: NaN })).toThrow(/dpi/);
+    expect(() => assembleImagePdf([jp], { dpi: Infinity })).toThrow(/dpi/);
+  });
 });
 
 describe.skipIf(!mupdfOk)('imagesToPdf round-trip (needs mupdf)', () => {

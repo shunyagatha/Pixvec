@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { Command, InvalidArgumentError, Option } from 'commander';
@@ -1063,26 +1064,42 @@ async function runOffice(
 ): Promise<void> {
   const opts = { soffice: o.soffice, timeoutMs: o.timeout * 1000 };
 
-  // Single-file mode: one input, no --to, and -o is the output file.
-  if (!o.to && inputs.length === 1 && !inputs[0].match(/[*?[\]{}]/)) {
+  // The shape of -o decides the mode: a path with an extension is a single output
+  // file; a bare name / directory is batch mode (with --to). This keeps a real
+  // filename that contains glob metacharacters (report[1].docx) convertable, and
+  // stops `--to pdf -o result.pdf` from creating a *directory* called result.pdf.
+  if (extname(o.output)) {
+    if (inputs.length !== 1) {
+      fail('Writing to a single file (-o with an extension) needs exactly one input. For many inputs, give a directory as -o with --to <fmt>.');
+    }
     const res = await convertOffice(inputs[0], o.output, opts);
     if (o.json) { emitJson({ input: inputs[0], output: res.output, engine: res.engine }); return; }
     info(`${green('✓')} ${bold(basename(inputs[0]))} → ${bold(basename(res.output))}  ${dim('(via LibreOffice)')}`);
     return;
   }
 
-  // Batch mode: expand globs, convert each into the output directory as <stem>.<to>.
-  if (!o.to) fail('Converting multiple inputs needs --to <fmt> and an output directory, e.g. office "docs/*.docx" --to pdf -o out/');
-  const files = await glob(inputs.map((p) => p.replace(/\\/g, '/')), { absolute: true, onlyFiles: true });
+  // Batch mode: -o is a directory, --to is the target format.
+  if (!o.to) fail('When -o is a directory, give a target format with --to <fmt>, e.g. office "docs/*.docx" --to pdf -o out/');
+  // Use an input literally when it exists on disk (so a real filename with
+  // [ ] { } converts); only treat it as a glob when the literal does not resolve.
+  const files: string[] = [];
+  for (const inp of inputs) {
+    if (existsSync(inp)) files.push(inp);
+    else files.push(...await glob(inp.replace(/\\/g, '/'), { absolute: true, onlyFiles: true }));
+  }
   if (files.length === 0) fail(`No files matched: ${inputs.join(', ')}`);
-  const results = await convertOfficeBatch(files, o.output, o.to!, opts);
+
+  const results = await convertOfficeBatch(files, o.output, o.to, opts);
+  const ok = results.filter((r) => !r.error);
+  const failed = results.filter((r) => r.error);
 
   if (o.json) {
-    emitJson({ outDir: o.output, to: o.to, converted: results.length, files: results.map((r) => basename(r.output)) });
-    return;
+    emitJson({ outDir: o.output, to: o.to, converted: ok.length, failed: failed.length, files: results });
+  } else {
+    info(`${green('✓')} ${bold(String(ok.length))} document${ok.length === 1 ? '' : 's'} → ${o.to}${failed.length ? `, ${red(`${failed.length} failed`)}` : ''} ${dim(`in ${o.output}  (via LibreOffice)`)}`);
+    for (const r of results) info(`  ${r.error ? red(`✗ ${basename(r.input)}: ${r.error}`) : dim(basename(r.output!))}`);
   }
-  info(`${green('✓')} ${bold(String(results.length))} document${results.length === 1 ? '' : 's'} → ${o.to} ${dim(`in ${o.output}  (via LibreOffice)`)}`);
-  for (const r of results) info(`  ${dim(basename(r.output))}`);
+  if (failed.length) process.exit(1);
 }
 
 // ---------------------------------------------------------------------------

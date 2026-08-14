@@ -264,6 +264,9 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       return `Wrote ${res.output} (via LibreOffice).`;
     }
     case 'images_to_pdf': {
+      if (!Array.isArray(args.inputs) || args.inputs.length === 0) {
+        throw new Error('images_to_pdf needs a non-empty "inputs" array of image paths.');
+      }
       const inputs = (args.inputs as unknown[]).map(String);
       const images: RasterImage[] = [];
       for (const p of inputs) images.push((await loadRaster(await readFile(p))).image);

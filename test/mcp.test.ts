@@ -62,6 +62,12 @@ describe('MCP server', () => {
     expect(new TextDecoder('latin1').decode(bytes.subarray(0, 5))).toBe('%PDF-');
   });
 
+  it('images_to_pdf rejects a non-array "inputs" with an actionable error', async () => {
+    const r = await rpc('tools/call', { name: 'images_to_pdf', arguments: { inputs: pngPath, output: join(outDir, 'x.pdf') } });
+    expect(r.result.isError).toBe(true);
+    expect(r.result.content[0].text).toMatch(/inputs.*array/i);
+  });
+
   it('surfaces office_convert without LibreOffice as isError, not a crash', async () => {
     const src = join(outDir, 'thing.docx');
     const { writeFile: wf } = await import('node:fs/promises');

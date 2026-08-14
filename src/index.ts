@@ -92,6 +92,7 @@ export {
   OFFICE_FORMATS,
   type OfficeConvertOptions,
   type OfficeConvertResult,
+  type OfficeBatchResult,
 } from './io/office.js';
 
 // --- Orchestration, including the verified lossless guarantee --------------
