@@ -1,12 +1,12 @@
 /**
- * Graver core — the portable half.
+ * Vecline core — the portable half.
  *
  * Everything exported here is plain TypeScript with **no dependencies and no
  * Node built-ins**. It runs unchanged in Node, Deno, Bun, a browser, a service
  * worker, or an edge runtime, and bundles without native modules.
  *
  * ```ts
- * import { vectorizeExact } from 'graver/core';
+ * import { vectorizeExact } from 'vecline/core';
  *
  * // In a browser, straight from a canvas:
  * const { data, width, height } = ctx.getImageData(0, 0, w, h);
@@ -20,7 +20,7 @@
  *
  * **What is not here, and why.** Reading PNG/JPEG/WebP files, rendering an SVG
  * back to pixels, and re-encoding a bitmap all require real codecs. Those live
- * in the main `graver` entry point, which pulls in libvips and resvg and
+ * in the main `vecline` entry point, which pulls in libvips and resvg and
  * therefore only runs on Node. Verification (`--verify`, the lossless
  * guarantee) needs a renderer, so it lives there too.
  *
@@ -176,7 +176,7 @@ export {
 // --- Format codecs written from scratch, so they need no libvips -----------
 //
 // The decoders *and* the matching encoders both live here, so a browser or edge
-// consumer of graver/core can round-trip BMP, ICO, PNM and TGA with no native
+// consumer of vecline/core can round-trip BMP, ICO, PNM and TGA with no native
 // dependency. Exporting only the decoders (as an earlier version did) made the
 // "square conversion matrix" claim false for the portable build: those callers
 // could read the four formats but not write them.

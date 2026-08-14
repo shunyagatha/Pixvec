@@ -1,18 +1,18 @@
-# Graver
+# Vecline
 
 **Measurable raster ⇄ SVG conversion — and a broad image + document toolkit.** Eleven raster formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted; plus **PDF & Office** (docx/xlsx/pptx) rendering and conversion, **images → PDF**, **DXF/EPS/G-code** export for makers, and content-aware crop — most of it in a **zero-dependency** core that runs in the browser too.
 
-[![npm version](https://img.shields.io/npm/v/graver.svg)](https://www.npmjs.com/package/graver)
-[![npm downloads](https://img.shields.io/npm/dm/graver.svg)](https://www.npmjs.com/package/graver)
-[![CI](https://github.com/shunyagatha/Graver/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/Graver/actions/workflows/ci.yml)
-[![types](https://img.shields.io/npm/types/graver.svg)](https://www.npmjs.com/package/graver)
+[![npm version](https://img.shields.io/npm/v/vecline.svg)](https://www.npmjs.com/package/vecline)
+[![npm downloads](https://img.shields.io/npm/dm/vecline.svg)](https://www.npmjs.com/package/vecline)
+[![CI](https://github.com/shunyagatha/Vecline/actions/workflows/ci.yml/badge.svg)](https://github.com/shunyagatha/Vecline/actions/workflows/ci.yml)
+[![types](https://img.shields.io/npm/types/vecline.svg)](https://www.npmjs.com/package/vecline)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
-**▶ [Try it in your browser](https://shunyagatha.github.io/Graver/)** — a zero-install playground that runs the real `graver/core` client-side and shows live SSIM / PSNR / CIEDE2000. Nothing leaves your machine.
+**▶ [Try it in your browser](https://shunyagatha.github.io/Vecline/)** — a zero-install playground that runs the real `vecline/core` client-side and shows live SSIM / PSNR / CIEDE2000. Nothing leaves your machine.
 
 ```bash
-graver vectorize logo.png --verify
+vecline vectorize logo.png --verify
 ```
 
 ```
@@ -30,7 +30,7 @@ Accuracy  bit-exact (lossless)
 ## The lossless guarantee
 
 ```bash
-graver vectorize anything.png --lossless
+vecline vectorize anything.png --lossless
 ```
 
 `--lossless` returns a **bit-exact** SVG or it **fails**. It never silently gives you a near-miss.
@@ -48,8 +48,8 @@ Measured across every fixture in the test suite — flat artwork, pixel art, sof
 When the original file is preserved, the SVG records its SHA-256. `extract` hands the file back and checks the digest:
 
 ```bash
-graver vectorize logo.png -o keep.svg --mode embed --embed-strategy preserve
-graver extract keep.svg -o recovered.png --against logo.png
+vecline vectorize logo.png -o keep.svg --mode embed --embed-strategy preserve
+vecline extract keep.svg -o recovered.png --against logo.png
 ```
 
 ```
@@ -84,7 +84,7 @@ Most vectorizers claim perfect accuracy. Here is what is actually true, because 
 | **Raster → SVG, lossless** | **Yes** | Two different ways, both bit-exact. See `pixel` and `embed` below. |
 | **Raster → SVG, traced into curves** | **No, and it never can be** | A photograph holds more independent information than any compact set of Bézier curves can encode. Tracing is approximation by definition. |
 
-Anyone promising exact photo-to-curves vectorization is either embedding a bitmap and calling it vector, or is wrong. **Graver does both exact conversions properly, does the approximate one well, and always tells you which one you got and how close it landed.**
+Anyone promising exact photo-to-curves vectorization is either embedding a bitmap and calling it vector, or is wrong. **Vecline does both exact conversions properly, does the approximate one well, and always tells you which one you got and how close it landed.**
 
 ## Three strategies, and when each is right
 
@@ -102,8 +102,8 @@ Anyone promising exact photo-to-curves vectorization is either embedding a bitma
 ## Install
 
 ```bash
-npm install -g graver        # the CLI
-npm install graver           # the library
+npm install -g vecline        # the CLI
+npm install vecline           # the library
 ```
 
 Node.js 18.17+. The native dependencies ([sharp](https://sharp.pixelplumbing.com/), [resvg](https://github.com/yisibl/resvg-js)) ship prebuilt binaries for Linux, macOS and Windows.
@@ -112,25 +112,25 @@ Node.js 18.17+. The native dependencies ([sharp](https://sharp.pixelplumbing.com
 
 | You want | Import | Native deps |
 |---|---|:--:|
-| The full Node toolkit | `import { vectorize } from 'graver'` | yes |
-| … from CommonJS | `const { vectorize } = require('graver')` | yes |
-| Just the vectoriser | `import { trace } from 'graver/vectorize'` | **none** |
-| Just the metrics | `import { compareImages } from 'graver/metrics'` | **none** |
-| Just the pure-TS codecs | `import { encodeBmp } from 'graver/formats'` | **none** |
-| Everything portable | `import { vectorizeExact } from 'graver/core'` | **none** |
-| Image editing (resize, rotate…) | `import { editImage } from 'graver/ops'` | sharp only |
-| Register a custom codec | `import { registerDecoder } from 'graver/codecs'` | **none** |
+| The full Node toolkit | `import { vectorize } from 'vecline'` | yes |
+| … from CommonJS | `const { vectorize } = require('vecline')` | yes |
+| Just the vectoriser | `import { trace } from 'vecline/vectorize'` | **none** |
+| Just the metrics | `import { compareImages } from 'vecline/metrics'` | **none** |
+| Just the pure-TS codecs | `import { encodeBmp } from 'vecline/formats'` | **none** |
+| Everything portable | `import { vectorizeExact } from 'vecline/core'` | **none** |
+| Image editing (resize, rotate…) | `import { editImage } from 'vecline/ops'` | sharp only |
+| Register a custom codec | `import { registerDecoder } from 'vecline/codecs'` | **none** |
 
-Install only what you use. Every `none` subpath imports in isolation with the native codecs omitted (`npm install graver --omit=optional`), and the package is `"sideEffects": false`, so a bundler drops everything you never import. `graver/core` is the vectorisation and measurement engine with **zero dependencies and no Node built-ins**. It takes a plain `{ width, height, data }` — byte-for-byte the layout of the browser's `ImageData` — so canvas pixels go straight in:
+Install only what you use. Every `none` subpath imports in isolation with the native codecs omitted (`npm install vecline --omit=optional`), and the package is `"sideEffects": false`, so a bundler drops everything you never import. `vecline/core` is the vectorisation and measurement engine with **zero dependencies and no Node built-ins**. It takes a plain `{ width, height, data }` — byte-for-byte the layout of the browser's `ImageData` — so canvas pixels go straight in:
 
 ```js
-import { vectorizeExact } from 'graver/core';
+import { vectorizeExact } from 'vecline/core';
 
 const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
 const { svg } = vectorizeExact({ width, height, data });   // bit-exact, no codec needed
 ```
 
-Install without the optional native packages (`npm install graver --omit=optional`) and core still works, at **2 MB instead of ~100 MB**. Reading image files, rendering SVG back to pixels, and the verified lossless guarantee all need real codecs, so those live in the main entry point.
+Install without the optional native packages (`npm install vecline --omit=optional`) and core still works, at **2 MB instead of ~100 MB**. Reading image files, rendering SVG back to pixels, and the verified lossless guarantee all need real codecs, so those live in the main entry point.
 
 The BMP, ICO, PNM and TGA codecs are written from scratch in this package, so they work in core too — no libvips required to read or write any of them.
 
@@ -156,11 +156,11 @@ BMP, ICO, PNM and TGA are decoded in pure TypeScript — libvips is not built wi
 
 **Not built in:** HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW. The prebuilt libvips that ships with `sharp` cannot read or write them — HEIC because HEVC is patent-encumbered, JXL and JP2 because they simply are not compiled in (verified: `heifsave: Unsupported compression`, `jxlsave_buffer not found`, `JP2 output requires OpenJPEG`). Bundling a WASM codec for each would add tens of megabytes to *every* install, for formats most users never touch.
 
-**But you can plug one in.** Rather than ship the codecs, Graver ships the socket. Install a WASM decoder yourself and register it, and that format then reads and writes everywhere any built-in format does:
+**But you can plug one in.** Rather than ship the codecs, Vecline ships the socket. Install a WASM decoder yourself and register it, and that format then reads and writes everywhere any built-in format does:
 
 ```ts
 import decodeJxl from '@jsquash/jxl/decode.js';
-import { registerDecoder } from 'graver/codecs';
+import { registerDecoder } from 'vecline/codecs';
 
 registerDecoder({
   format: 'jxl',
@@ -170,7 +170,7 @@ registerDecoder({
     return { width, height, data: new Uint8ClampedArray(data.buffer) };
   },
 });
-// graver can now vectorize, convert, and edit .jxl files.
+// vecline can now vectorize, convert, and edit .jxl files.
 ```
 
 Everyone who does not need it pays nothing. For a one-off, converting via ImageMagick or `libheif` first is still the simplest path.
@@ -178,30 +178,30 @@ Everyone who does not need it pays nothing. For a one-off, converting via ImageM
 ## Quick start
 
 ```bash
-# Convert, letting graver choose the strategy
-graver vectorize logo.png
+# Convert, letting vecline choose the strategy
+vecline vectorize logo.png
 
 # Prove the result is what it claims
-graver vectorize logo.png --verify
+vecline vectorize logo.png --verify
 
 # Guarantee a bit-exact result whatever the input, or fail
-graver vectorize photo.jpg --lossless
+vecline vectorize photo.jpg --lossless
 
 # Trace to curves, escalating settings until it hits a quality target
-graver vectorize portrait.jpg --target-ssim 0.95
+vecline vectorize portrait.jpg --target-ssim 0.95
 
 # SVG back to raster at any size
-graver rasterize logo.svg -o logo@4x.png --scale 4
-graver rasterize logo.svg -o hero.webp --width 2400 --lossless
+vecline rasterize logo.svg -o logo@4x.png --scale 4
+vecline rasterize logo.svg -o hero.webp --width 2400 --lossless
 
 # Ask what a file is and what to do with it
-graver info photo.jpg
+vecline info photo.jpg
 
 # Measure any two images against each other — raster or SVG, in any combination
-graver verify original.png result.svg
+vecline verify original.png result.svg
 
 # Whole directories
-graver batch 'assets/**/*.png' -o dist/ --to svg
+vecline batch 'assets/**/*.png' -o dist/ --to svg
 ```
 
 ## Transparent output
@@ -209,9 +209,9 @@ graver batch 'assets/**/*.png' -o dist/ --to svg
 `--transparent` removes a solid background and leaves real transparency behind:
 
 ```bash
-graver vectorize logo.png --transparent             # detect the background colour
-graver vectorize logo.png --transparent '#ffffff'   # or name it
-graver rasterize icon.svg -o icon.png --transparent
+vecline vectorize logo.png --transparent             # detect the background colour
+vecline vectorize logo.png --transparent '#ffffff'   # or name it
+vecline rasterize icon.svg -o icon.png --transparent
 ```
 
 Two details make this safe rather than destructive:
@@ -239,12 +239,12 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 
 Two rows deserve comment, because glossing over them is how tools mislead you:
 
-- **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. Graver reports the measurement, not the claim.
+- **Photo + `embed` is not 100% exact**, even though the original JPEG bytes are preserved *verbatim* inside the SVG. The residual (max 3/255 per channel) is the SVG renderer's JPEG decoder rounding its inverse DCT differently from the reference decoder. No data was lost; two decoders simply disagree in the last bit. Vecline reports the measurement, not the claim.
 - **Photo + `trace` is genuinely approximate.** 0.01% pixels exact is not a bug — it is what tracing a photograph means. If that number matters to you, you want `embed`.
 
 ## Compared with other vectorizers
 
-Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Graver's own view of quality. The field is potrace, imagetracerjs, and — the strongest modern open-source rival — **vtracer** (VisionCortex, Rust; an optional dev dependency, `npm install --no-save @neplex/vectorizer`).
+Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Vecline's own view of quality. The field is potrace, imagetracerjs, and — the strongest modern open-source rival — **vtracer** (VisionCortex, Rust; an optional dev dependency, `npm install --no-save @neplex/vectorizer`).
 
 **Synthetic fixtures** — reproducible without licensing anyone's photographs:
 
@@ -252,45 +252,45 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 |---|---|--:|--:|--:|--:|
 | **Bilevel** | potrace | 1.5 KB | 24.67 dB | 0.9511 | 0.702 |
 | | imagetracerjs | 1.7 KB | 19.75 dB | 0.8607 | 1.667 |
-| | **graver (auto)** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
+| | **vecline (auto)** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
 | **Colour art** | potrace posterize | 1.9 KB | 14.61 dB | 0.8010 | 21.302 |
 | | imagetracerjs | 1.6 KB | 26.56 dB | 0.9363 | 0.662 |
 | | vtracer | 2.0 KB | 27.88 dB | 0.9490 | 0.583 |
-| | **graver (auto)** | 1.8 KB | **∞** | **1.0000** | **0.000** |
+| | **vecline (auto)** | 1.8 KB | **∞** | **1.0000** | **0.000** |
 | **Photo** (gradient + noise) | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
 | | imagetracerjs | 11.8 KB | 26.85 dB | 0.7143 | 5.623 |
 | | vtracer | 72.6 KB | **32.50 dB** | **0.7958** | 3.053 |
-| | graver (auto) | **12 KB** | 31.13 dB | 0.7767 | 2.958 |
-| | graver photo | 15 KB | 32.19 dB | 0.7923 | **2.704** |
-| | **graver lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
+| | vecline (auto) | **12 KB** | 31.13 dB | 0.7767 | 2.958 |
+| | vecline photo | 15 KB | 32.19 dB | 0.7923 | **2.704** |
+| | **vecline lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
 
-**Real photographs** — the Kodak set at 480px, the test that actually matters. `graver (auto)` is the **zero-config default**: `graver convert photo.png out.svg`, which scales the palette to the content on its own.
+**Real photographs** — the Kodak set at 480px, the test that actually matters. `vecline (auto)` is the **zero-config default**: `vecline convert photo.png out.svg`, which scales the palette to the content on its own.
 
 | Photo | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
 |---|---|--:|--:|--:|--:|
 | **Portrait** (skin, soft) | imagetracerjs | 1621 KB | 25.47 dB | 0.7093 | 5.957 |
 | | vtracer | 1661 KB | 25.79 dB | 0.7590 | 4.774 |
-| | **graver (auto)** | **1338 KB** | **34.80 dB** | **0.9140** | **2.663** |
+| | **vecline (auto)** | **1338 KB** | **34.80 dB** | **0.9140** | **2.663** |
 | **Lighthouse** (sky) | imagetracerjs | 2010 KB | 24.58 dB | 0.7465 | 4.900 |
 | | vtracer | 1769 KB | 24.23 dB | 0.7588 | 5.678 |
-| | **graver (auto)** | **1743 KB** | **36.26 dB** | **0.9453** | **2.575** |
+| | **vecline (auto)** | **1743 KB** | **36.26 dB** | **0.9453** | **2.575** |
 | **Parrots** (fine detail) | imagetracerjs | 301 KB | 25.81 dB | 0.7615 | 6.317 |
 | | vtracer | 605 KB | 23.16 dB | 0.7936 | 7.735 |
-| | **graver (auto)** | **309 KB** | **31.18 dB** | **0.8460** | **3.686** |
+| | **vecline (auto)** | **309 KB** | **31.18 dB** | **0.8460** | **3.686** |
 
-**Bilevel** and **colour art** are bit-exact for graver (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
+**Bilevel** and **colour art** are bit-exact for vecline (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
 
-**The synthetic photo** — a pure gradient plus noise — is vtracer's best case: it takes the SSIM (0.7958) with fine colour-precision tracing. But graver's default reaches 0.7767 (its `photo` preset 0.7923, all but tying) at **one-fifth to one-sixth the file size** (12–15 KB vs 72.6 KB), and already beats imagetracerjs (0.7143). More colours close the last gap; it is not worth 5× the bytes on a synthetic worst case.
+**The synthetic photo** — a pure gradient plus noise — is vtracer's best case: it takes the SSIM (0.7958) with fine colour-precision tracing. But vecline's default reaches 0.7767 (its `photo` preset 0.7923, all but tying) at **one-fifth to one-sixth the file size** (12–15 KB vs 72.6 KB), and already beats imagetracerjs (0.7143). More colours close the last gap; it is not worth 5× the bytes on a synthetic worst case.
 
-**On real photographs graver is simply ahead — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.19**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7590 / 0.7588 / 0.7936 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR and ΔE, in a **smaller or comparable file every time** (parrots at half vtracer's size). The synthetic-worst-case story does not survive contact with actual photographs.
+**On real photographs vecline is simply ahead — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.19**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7590 / 0.7588 / 0.7936 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR and ΔE, in a **smaller or comparable file every time** (parrots at half vtracer's size). The synthetic-worst-case story does not survive contact with actual photographs.
 
 **Gradient output** (`--gradients`, and on by default in auto mode for photos) reconstructs smooth colour ramps — skies, skin — as SVG gradients instead of flat bands. Both **`<linearGradient>`** (a directional ramp) and **`<radialGradient>`** (a vignette, a round highlight, a spotlight) are fit per region and the one that renders closer is kept — a radially-symmetric ramp has no linear direction at all, so it is fit from the region centroid outward by distance. On a synthetic vignette that is a **0.998 SSIM reconstruction in ~350 bytes** where the flat bands take 3–8 KB at 0.73–0.88. It **can only help**: a region becomes a gradient only when the gradient's *actual rendered output* (the renderer's sRGB stop interpolation, reproduced and scored per pixel in Oklab) beats the flat bands it would replace, so flat art stays byte-for-byte identical and hard edges are untouched — a concentrated de-banding win, never a regression.
 
-**Geometric primitives** (`--primitives`) do the opposite kind of clean-up: when a region genuinely *is* a circle, ellipse, rectangle or **rounded rectangle** (the workhorse UI/icon shape — emitted as `<rect rx>`), graver emits the true primitive instead of a four-curve Bézier approximation. On a plain disc that is a **68% smaller file** (a 42-px circle is `<circle cx="60" cy="60" r="42">`, not a path) — and, unlike every other JS tracer, the shape stays *editable as a shape* in Illustrator/Inkscape and becomes a true arc for CAD/DXF export. The swap is residual-gated: a region is only replaced when every boundary vertex lies within `--primitive-error` pixels (default 1.0) of the fitted shape, so it is render-preserving, never an organic blob rounded into a circle. `detectPrimitive()` is pure and in `graver/core`.
+**Geometric primitives** (`--primitives`) do the opposite kind of clean-up: when a region genuinely *is* a circle, ellipse, rectangle or **rounded rectangle** (the workhorse UI/icon shape — emitted as `<rect rx>`), vecline emits the true primitive instead of a four-curve Bézier approximation. On a plain disc that is a **68% smaller file** (a 42-px circle is `<circle cx="60" cy="60" r="42">`, not a path) — and, unlike every other JS tracer, the shape stays *editable as a shape* in Illustrator/Inkscape and becomes a true arc for CAD/DXF export. The swap is residual-gated: a region is only replaced when every boundary vertex lies within `--primitive-error` pixels (default 1.0) of the fitted shape, so it is render-preserving, never an organic blob rounded into a circle. `detectPrimitive()` is pure and in `vecline/core`.
 
 **The numbers** (`npm run bench:features` reproduces them — every figure is the SVG rendered back to pixels and scored, never asserted):
 
-| Case | Baseline (SSIM / size) | graver feature (SSIM / size) |
+| Case | Baseline (SSIM / size) | vecline feature (SSIM / size) |
 |---|---|---|
 | radial gradient · vignette · 8 colours | 0.7887 / 4.5 KB | **0.9646 / 759 B** |
 | radial gradient · vignette · 12 colours | 0.8745 / 7.9 KB | **0.9977 / 356 B** |
@@ -301,9 +301,9 @@ The gradient rows are *both* far more accurate **and** an order of magnitude sma
 
 > **How the photo result got here.** An earlier version trailed imagetracerjs on the synthetic photo and the cause was, honestly, unknown. `scripts/diagnose-photo.mjs` decomposed the pipeline and found it: the curve fitter, not quantisation, was the dominant loss (0.11–0.24 SSIM), and a 1px fitting tolerance was *strictly worse* than 0.4 on both accuracy and file size. Retuning the default closed most of the gap. The diagnosis script is kept so the next such claim is measured, not guessed.
 
-Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a bolt-on, and reporting them without saying so would be a rigged fight. And the strongest *commercial* tracers (Illustrator Image Trace) and AI vectorisers remain unmeasured — graver is best-in-class here against the installable open-source field, not proven against everything.
+Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a bolt-on, and reporting them without saying so would be a rigged fight. And the strongest *commercial* tracers (Illustrator Image Trace) and AI vectorisers remain unmeasured — vecline is best-in-class here against the installable open-source field, not proven against everything.
 
-**On tuning knobs, not just accuracy.** Beyond the numbers, graver now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` seam hiding, and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); `--gradients` output that neither potrace nor imagetracerjs offers at all; and sharp's editing pipeline behind `graver edit` and the `graver/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — graver's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
+**On tuning knobs, not just accuracy.** Beyond the numbers, vecline now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` seam hiding, and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); `--gradients` output that neither potrace nor imagetracerjs offers at all; and sharp's editing pipeline behind `vecline edit` and the `vecline/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — vecline's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
 
 ## Metrics
 
@@ -346,7 +346,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 
 ## CLI
 
-### `graver vectorize <input>`
+### `vecline vectorize <input>`
 
 | Option | Description |
 |---|---|
@@ -392,7 +392,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--xlink` | Use `xlink:href` for SVG 1.1 consumers |
 | `--json` | Machine-readable output on stdout |
 
-### `graver rasterize <input.svg>`
+### `vecline rasterize <input.svg>`
 
 | Option | Description |
 |---|---|
@@ -412,36 +412,36 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 ### Other commands
 
 ```bash
-graver edit photo.jpg -o small.png --resize 800x --grayscale  # resize, rotate, crop, tone
-graver crop photo.jpg -a 1:1 -o avatar.jpg    # content-aware crop — keeps the subject
-graver component logo.png -o Logo.tsx -f react --current-color # raster → typed component
-graver favicon logo.png -o public/    # full favicon/PWA set + manifest + <head> HTML
-graver responsive hero.jpg -o img/    # AVIF/WebP/fallback ladder + <picture> markup
-graver placeholder hero.jpg -f blurhash   # BlurHash string (or -f svg for a tiny LQIP-SVG)
-graver palette art.png --css          # perceptual palette as CSS custom properties
-graver extract keep.svg -o out.png --against original.png   # byte-identical recovery
-graver convert in.png out.svg      # direction inferred from extensions
-graver doc report.pdf -o pages/ --dpi 150   # PDF (or SVG) → one image per page
-graver office report.docx -o report.pdf     # Word/Excel/PPT ⇄ PDF (uses your LibreOffice)
-graver pdf page1.png page2.jpg -o album.pdf # combine images into one multi-page PDF
-graver centerline drawing.png -o strokes.svg  # single-stroke medial-axis paths
-graver gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter G-code
-graver convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
-graver optimize icon.svg -o icon.min.svg   # render-preserving SVG minify
-graver sprite icons/*.svg -o sprite.svg    # pack many icons into one <symbol> sheet
-graver animate loading.gif -o loading.svg  # animated GIF/APNG → one CSS-animated SVG
-graver verify a.png b.svg          # measure any two images
-graver diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
-graver batch 'src/**/*.png' -o out/ --to svg --summary "$GITHUB_STEP_SUMMARY"
-graver mcp                         # MCP server: expose graver as tools to AI agents/IDEs
+vecline edit photo.jpg -o small.png --resize 800x --grayscale  # resize, rotate, crop, tone
+vecline crop photo.jpg -a 1:1 -o avatar.jpg    # content-aware crop — keeps the subject
+vecline component logo.png -o Logo.tsx -f react --current-color # raster → typed component
+vecline favicon logo.png -o public/    # full favicon/PWA set + manifest + <head> HTML
+vecline responsive hero.jpg -o img/    # AVIF/WebP/fallback ladder + <picture> markup
+vecline placeholder hero.jpg -f blurhash   # BlurHash string (or -f svg for a tiny LQIP-SVG)
+vecline palette art.png --css          # perceptual palette as CSS custom properties
+vecline extract keep.svg -o out.png --against original.png   # byte-identical recovery
+vecline convert in.png out.svg      # direction inferred from extensions
+vecline doc report.pdf -o pages/ --dpi 150   # PDF (or SVG) → one image per page
+vecline office report.docx -o report.pdf     # Word/Excel/PPT ⇄ PDF (uses your LibreOffice)
+vecline pdf page1.png page2.jpg -o album.pdf # combine images into one multi-page PDF
+vecline centerline drawing.png -o strokes.svg  # single-stroke medial-axis paths
+vecline gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter G-code
+vecline convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
+vecline optimize icon.svg -o icon.min.svg   # render-preserving SVG minify
+vecline sprite icons/*.svg -o sprite.svg    # pack many icons into one <symbol> sheet
+vecline animate loading.gif -o loading.svg  # animated GIF/APNG → one CSS-animated SVG
+vecline verify a.png b.svg          # measure any two images
+vecline diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
+vecline batch 'src/**/*.png' -o out/ --to svg --summary "$GITHUB_STEP_SUMMARY"
+vecline mcp                         # MCP server: expose vecline as tools to AI agents/IDEs
 ```
 
 **Build-time.** A Vite/Rollup plugin vectorises assets in your build — import an image with a query suffix and get the vector back, no CLI step:
 
 ```ts
 // vite.config.ts
-import graver from 'graver/vite';
-export default { plugins: [graver()] };
+import vecline from 'vecline/vite';
+export default { plugins: [vecline()] };
 ```
 ```ts
 import logo from './logo.png?svg';        // the traced SVG string
@@ -453,42 +453,42 @@ It returns the plain Vite/Rollup plugin object (no `unplugin` dependency), and t
 **CI-native.** A **GitHub Action** vectorises/optimises your image assets on every push and writes a size-savings table straight to the job summary:
 
 ```yaml
-- uses: shunyagatha/Graver@v1
+- uses: shunyagatha/Vecline@v1
   with:
     files: 'assets/**/*.png'
     to: svg
 ```
 
-It's a thin composite action over `graver batch … --summary "$GITHUB_STEP_SUMMARY"`, so it inherits the pure-TS core's zero-native-binary install — no libvips to compile in CI. Run `graver batch … --summary <file>` anywhere for the same Markdown report (per-file in/out sizes and signed savings).
+It's a thin composite action over `vecline batch … --summary "$GITHUB_STEP_SUMMARY"`, so it inherits the pure-TS core's zero-native-binary install — no libvips to compile in CI. Run `vecline batch … --summary <file>` anywhere for the same Markdown report (per-file in/out sizes and signed savings).
 
-**AI-native.** `graver mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call graver directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Twelve tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `doc_to_images`, `office_convert`, `images_to_pdf`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["graver", "mcp"] }`.
+**AI-native.** `vecline mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call vecline directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Twelve tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `doc_to_images`, `office_convert`, `images_to_pdf`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["vecline", "mcp"] }`.
 
-`graver component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours. `graver sprite icons/*` packs a folder of icons (rasters get traced on the way in) into a single `<symbol>` sheet you reference with `<use href="#name">` — the standard on-trend replacement for icon fonts, and `svgSprite()` is pure `graver/core`.
+`vecline component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours. `vecline sprite icons/*` packs a folder of icons (rasters get traced on the way in) into a single `<symbol>` sheet you reference with `<use href="#name">` — the standard on-trend replacement for icon fonts, and `svgSprite()` is pure `vecline/core`.
 
-**Centerline (single-stroke) tracing** — `graver centerline drawing.png` — is the most-requested tracer feature neither potrace nor vtracer ships. Instead of outlining *both* edges of every stroke (which doubles the geometry and makes a pen/laser run each line twice), it extracts the **medial axis**: one open `<path fill="none">` down the middle of each stroke, via Zhang–Suen thinning → skeleton-graph walking → Douglas–Peucker. Exactly what a plotter, laser engraver, CNC router, vinyl cutter, or signature-vectorisation needs. `centerlineTrace()` is pure and in `graver/core`. And `graver gcode drawing.png --tool laser|pen` takes it the last mile — **ready-to-run GRBL-style G-code toolpaths** (feed/power/units/scale, Y-flipped to bed space), a rare end-to-end image→machine pipeline in JS where other tools stop at SVG and leave you hunting for a separate svg2gcode.
+**Centerline (single-stroke) tracing** — `vecline centerline drawing.png` — is the most-requested tracer feature neither potrace nor vtracer ships. Instead of outlining *both* edges of every stroke (which doubles the geometry and makes a pen/laser run each line twice), it extracts the **medial axis**: one open `<path fill="none">` down the middle of each stroke, via Zhang–Suen thinning → skeleton-graph walking → Douglas–Peucker. Exactly what a plotter, laser envecline, CNC router, vinyl cutter, or signature-vectorisation needs. `centerlineTrace()` is pure and in `vecline/core`. And `vecline gcode drawing.png --tool laser|pen` takes it the last mile — **ready-to-run GRBL-style G-code toolpaths** (feed/power/units/scale, Y-flipped to bed space), a rare end-to-end image→machine pipeline in JS where other tools stop at SVG and leave you hunting for a separate svg2gcode.
 
-**Vector export beyond SVG** is the maker/CAD lane no other JS tracer serves: `graver convert in.png out.dxf` writes a **DXF** (closed `LWPOLYLINE`s with true colour, Y-up) that LightBurn, LibreCAD, Fusion, and every laser/router/vinyl cutter imports; `out.eps` writes **EPS/PostScript** with native curves; `out.pdf` writes a print-ready **PDF**, with `--cmyk` for prepress (free/JS tools all collapse to sRGB — graver doesn't). And the DXF is **arc-aware**: a round hole or a circular boss is written as a real `CIRCLE`/`ELLIPSE` entity — one arc the machine cuts in a single smooth move — not a ring of short chords a polyline would force. (Primitive recognition runs by default for the exporters; pass `primitives: false` for raw polylines.) The `traceGeometry()`/`toDxf`/`toEps`/`toPdf` API (all pure, in `graver/core`) exposes the same structured Bézier geometry — now with a `primitives` annotation per sub-path — for custom pipelines.
+**Vector export beyond SVG** is the maker/CAD lane no other JS tracer serves: `vecline convert in.png out.dxf` writes a **DXF** (closed `LWPOLYLINE`s with true colour, Y-up) that LightBurn, LibreCAD, Fusion, and every laser/router/vinyl cutter imports; `out.eps` writes **EPS/PostScript** with native curves; `out.pdf` writes a print-ready **PDF**, with `--cmyk` for prepress (free/JS tools all collapse to sRGB — vecline doesn't). And the DXF is **arc-aware**: a round hole or a circular boss is written as a real `CIRCLE`/`ELLIPSE` entity — one arc the machine cuts in a single smooth move — not a ring of short chords a polyline would force. (Primitive recognition runs by default for the exporters; pass `primitives: false` for raw polylines.) The `traceGeometry()`/`toDxf`/`toEps`/`toPdf` API (all pure, in `vecline/core`) exposes the same structured Bézier geometry — now with a `primitives` annotation per sub-path — for custom pipelines.
 
-The **asset pipelines** close the loop to what web devs deploy: `graver favicon` writes a complete favicon/PWA icon set (multi-size `.ico`, Apple touch icon, 192/512 + maskable PNGs), a `manifest.webmanifest`, and the `<head>` markup from one source; `graver responsive` writes an AVIF/WebP/fallback width-ladder with ready `<picture>`/`srcset` markup; `graver placeholder` emits a **BlurHash** string or a tiny **LQIP-SVG** (a zero-binary SQIP successor) for blur-up loading; and `graver palette` extracts a perceptual dominant-colour palette as JSON or CSS custom properties. All are pure-TS where they can be (`blurHash`, `lqipSvg`, `extractPalette` live in `graver/core`).
+The **asset pipelines** close the loop to what web devs deploy: `vecline favicon` writes a complete favicon/PWA icon set (multi-size `.ico`, Apple touch icon, 192/512 + maskable PNGs), a `manifest.webmanifest`, and the `<head>` markup from one source; `vecline responsive` writes an AVIF/WebP/fallback width-ladder with ready `<picture>`/`srcset` markup; `vecline placeholder` emits a **BlurHash** string or a tiny **LQIP-SVG** (a zero-binary SQIP successor) for blur-up loading; and `vecline palette` extracts a perceptual dominant-colour palette as JSON or CSS custom properties. All are pure-TS where they can be (`blurHash`, `lqipSvg`, `extractPalette` live in `vecline/core`).
 
-**Animated GIF/APNG → animated SVG** — `graver animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`graver/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
+**Animated GIF/APNG → animated SVG** — `vecline animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`vecline/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
 
-**Documents to images** — `graver doc report.pdf -o pages/ --dpi 150` renders a **PDF**, an **SVG**, or an **Office document** (`.docx`/`.xlsx`/`.pptx`/ODF — via your LibreOffice) to one raster per page, at any DPI or scale, in any output format (`--format png|jpeg|webp|avif`, `--pages "1,3-5"`). Pass `--format svg` to **vectorise each page** — turning a scanned or raster page into real, scalable SVG in one step. So `graver doc slides.pptx -o thumbs/ -f webp` gives you a WebP thumbnail per slide. SVG rendering uses the bundled resvg; **PDF** rendering follows graver's bring-your-own-codec rule — it dynamically loads the optional, pure-WASM [`mupdf`](https://www.npmjs.com/package/mupdf) package (no native binary to compile) and prints a one-line install hint if it is not present, so the base install stays lean. `renderPdfPages()` / `isPdf()` are exported for programmatic use.
+**Documents to images** — `vecline doc report.pdf -o pages/ --dpi 150` renders a **PDF**, an **SVG**, or an **Office document** (`.docx`/`.xlsx`/`.pptx`/ODF — via your LibreOffice) to one raster per page, at any DPI or scale, in any output format (`--format png|jpeg|webp|avif`, `--pages "1,3-5"`). Pass `--format svg` to **vectorise each page** — turning a scanned or raster page into real, scalable SVG in one step. So `vecline doc slides.pptx -o thumbs/ -f webp` gives you a WebP thumbnail per slide. SVG rendering uses the bundled resvg; **PDF** rendering follows vecline's bring-your-own-codec rule — it dynamically loads the optional, pure-WASM [`mupdf`](https://www.npmjs.com/package/mupdf) package (no native binary to compile) and prints a one-line install hint if it is not present, so the base install stays lean. `renderPdfPages()` / `isPdf()` are exported for programmatic use.
 
-**Images → one PDF** — `graver pdf scan1.png scan2.jpg -o album.pdf` stitches a stack of photos or scans into a single multi-page PDF, one image per page, sized at any `--dpi`. The PDF is assembled from raw bytes with a correct cross-reference table (each page embedded as a `DCTDecode` JPEG), so it stays small and opens everywhere — the natural complement to `graver doc` (PDF → images). `imagesToPdf()` / `assembleImagePdf()` are exported.
+**Images → one PDF** — `vecline pdf scan1.png scan2.jpg -o album.pdf` stitches a stack of photos or scans into a single multi-page PDF, one image per page, sized at any `--dpi`. The PDF is assembled from raw bytes with a correct cross-reference table (each page embedded as a `DCTDecode` JPEG), so it stays small and opens everywhere — the natural complement to `vecline doc` (PDF → images). `imagesToPdf()` / `assembleImagePdf()` are exported.
 
-**Office documents ⇄ PDF** — `graver office report.docx -o report.pdf` (and the reverse, `scan.pdf -o out.docx`, plus Excel, PowerPoint, ODF, RTF, HTML, CSV — any pair LibreOffice bridges). Faithfully rendering Word/Excel/PowerPoint needs a full office engine, so — exactly as with PDFs — graver **bundles nothing** and drives your **local LibreOffice** through a plain child process: **zero added dependencies, the install stays tiny, and your documents never leave the machine** (no cloud upload, unlike most converters). The target format is inferred from the output extension; if LibreOffice isn't found the error tells you how to install it or points `GRAVER_SOFFICE` at the binary. Convert a whole folder at once with a glob and `--to`: `graver office "docs/**/*.docx" --to pdf -o out/` writes one PDF per document (same-named files from different folders are disambiguated, never overwritten). `convertOffice()` / `convertOfficeBatch()` are exported for programmatic use.
+**Office documents ⇄ PDF** — `vecline office report.docx -o report.pdf` (and the reverse, `scan.pdf -o out.docx`, plus Excel, PowerPoint, ODF, RTF, HTML, CSV — any pair LibreOffice bridges). Faithfully rendering Word/Excel/PowerPoint needs a full office engine, so — exactly as with PDFs — vecline **bundles nothing** and drives your **local LibreOffice** through a plain child process: **zero added dependencies, the install stays tiny, and your documents never leave the machine** (no cloud upload, unlike most converters). The target format is inferred from the output extension; if LibreOffice isn't found the error tells you how to install it or points `VECLINE_SOFFICE` at the binary. Convert a whole folder at once with a glob and `--to`: `vecline office "docs/**/*.docx" --to pdf -o out/` writes one PDF per document (same-named files from different folders are disambiguated, never overwritten). `convertOffice()` / `convertOfficeBatch()` are exported for programmatic use.
 
-**Content-aware crop** — `graver crop photo.jpg -a 1:1` (or `16:9`, `4:5`, `-w 512 -h 512`) — reframes to a target aspect by **keeping the interesting subject, not the centre**. It scores every candidate window by the edge energy and colour saturation it captures (a Sobel importance map summed into an integral image, so every window scores in O(1)), the way the popular smartcrop.js does — but in pure, dependency-free TypeScript, so `smartCrop()` and `cropImage()` run in `graver/core` in the browser too. On a wide shot with the subject off to one side, a naïve centre crop drops it; this follows it.
+**Content-aware crop** — `vecline crop photo.jpg -a 1:1` (or `16:9`, `4:5`, `-w 512 -h 512`) — reframes to a target aspect by **keeping the interesting subject, not the centre**. It scores every candidate window by the edge energy and colour saturation it captures (a Sobel importance map summed into an integral image, so every window scores in O(1)), the way the popular smartcrop.js does — but in pure, dependency-free TypeScript, so `smartCrop()` and `cropImage()` run in `vecline/core` in the browser too. On a wide shot with the subject off to one side, a naïve centre crop drops it; this follows it.
 
-`graver edit` wraps sharp's pipeline behind one command, in a fixed, sensible order (geometry → tone → colour → morphology → compositing → finish): `--resize`/`--fit`, `--rotate`, `--flip`/`--flop`, `--crop`, `--trim`; `--blur`, `--sharpen`, `--median`, `--clahe <WxH>`, `--gamma`, `--normalize`; `--grayscale`, `--negate`, `--sepia`, `--tint <color>`, `--threshold <0-255>`, `--brightness`/`--saturation`/`--hue`/`--lightness`; `--dilate`/`--erode`; `--unflatten`; `-b, --background` to flatten. Arbitrary affine warps, edge padding (`extend`), per-channel `linear` levels, custom `convolve` kernels, 3×3 `recomb`, and multi-image `composite` are available on the `graver/ops` library entry point. It is Node-only (needs sharp) and ships as its own subpath so browser and edge bundles never pull it in.
+`vecline edit` wraps sharp's pipeline behind one command, in a fixed, sensible order (geometry → tone → colour → morphology → compositing → finish): `--resize`/`--fit`, `--rotate`, `--flip`/`--flop`, `--crop`, `--trim`; `--blur`, `--sharpen`, `--median`, `--clahe <WxH>`, `--gamma`, `--normalize`; `--grayscale`, `--negate`, `--sepia`, `--tint <color>`, `--threshold <0-255>`, `--brightness`/`--saturation`/`--hue`/`--lightness`; `--dilate`/`--erode`; `--unflatten`; `-b, --background` to flatten. Arbitrary affine warps, edge padding (`extend`), per-channel `linear` levels, custom `convolve` kernels, 3×3 `recomb`, and multi-image `composite` are available on the `vecline/ops` library entry point. It is Node-only (needs sharp) and ships as its own subpath so browser and edge bundles never pull it in.
 
-`graver verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines. Where `verify` gives you the number, **`graver diff before.png after.png`** shows you *where*: a pixelmatch-style heatmap with the base faded to a pale backdrop and every pixel that moved beyond a **CIEDE2000** threshold flagged in red — perceptual, so a one-bit rounding wobble doesn't light up the frame while a real hue shift is caught. `--fail-over 0.01` gates CI on the changed-pixel fraction, and `diffImages()` is pure (`graver/core`), so the same heatmap renders client-side in the playground or a browser test runner.
+`vecline verify --fail-under 0.98` exits non-zero when SSIM drops below the threshold, which makes it usable as a CI gate on asset pipelines. Where `verify` gives you the number, **`vecline diff before.png after.png`** shows you *where*: a pixelmatch-style heatmap with the base faded to a pale backdrop and every pixel that moved beyond a **CIEDE2000** threshold flagged in red — perceptual, so a one-bit rounding wobble doesn't light up the frame while a real hue shift is caught. `--fail-over 0.01` gates CI on the changed-pixel fraction, and `diffImages()` is pure (`vecline/core`), so the same heatmap renders client-side in the playground or a browser test runner.
 
 ## Library
 
 ```ts
-import { loadRaster, vectorize, rasterize, compareImages } from 'graver';
+import { loadRaster, vectorize, rasterize, compareImages } from 'vecline';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const source = await loadRaster(await readFile('logo.png'));
@@ -521,13 +521,13 @@ Every conversion function is pure with respect to the filesystem — only `loadR
 Stated plainly, because you should know before you invest:
 
 - **Tracing a photograph will not look like the photograph.** That is inherent, not a tuning problem. Use `embed` when fidelity matters, or `trace` when scalability and editability matter more.
-- **`pixel` mode on photographic input** would need roughly one rectangle per pixel. Graver refuses and tells you to use `embed` or `trace` instead.
+- **`pixel` mode on photographic input** would need roughly one rectangle per pixel. Vecline refuses and tells you to use `embed` or `trace` instead.
 - **WebP payloads in `embed` mode are browser-only.** resvg and librsvg builds without WebP render a WebP `<image>` as *blank*, with no warning. `auto` therefore never selects WebP; `--embed-strategy webp` opts in and prints a warning.
 - **16-bit sources are reduced to 8 bit** for `pixel` and `trace`, because SVG paint servers cannot express more. `embed` with `--embed-strategy preserve` keeps the original bit depth intact.
 - **Animation is not supported.** Multi-frame inputs use the first frame.
 - **`trace` memory** scales with image area; very large photographs are better downscaled first.
-- **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW are not built in** — the prebuilt libvips lacks the codecs. You can register your own via `graver/codecs`; see [Formats](#formats).
-- **`graver/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
+- **HEIC, JPEG XL, JPEG 2000, PSD, PDF and camera RAW are not built in** — the prebuilt libvips lacks the codecs. You can register your own via `vecline/codecs`; see [Formats](#formats).
+- **`vecline/core` cannot read or write compressed image files.** PNG, JPEG, WebP and friends need real codecs; core handles BMP, ICO, PNM and TGA because this package implements those itself. In a browser, use `createImageBitmap` / canvas to decode and `canvas.toBlob` to encode.
 - **Tight-tolerance tracing favours accuracy over few smooth curves.** The retuned default (0.4px) makes a large smooth arc come out as a fine, pixel-accurate polygon rather than a handful of Béziers. That is the right call for photos and for pixel fidelity, but if you want a logo as a few editable curves, use `--preset logo` (tolerance 0.6) or raise `--tolerance` yourself. The two goals genuinely trade off; the default picks accuracy.
 - **Not compared against Illustrator or vtracer.** The [comparison](#compared-with-other-vectorizers) covers potrace and imagetracerjs, which are what is installable and scriptable. Commercial tracers remain unmeasured.
 
@@ -536,8 +536,8 @@ Stated plainly, because you should know before you invest:
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/shunyagatha/Graver.git
-cd Graver
+git clone https://github.com/shunyagatha/Vecline.git
+cd Vecline
 npm install
 npm run build
 npm test

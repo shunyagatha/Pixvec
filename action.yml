@@ -1,4 +1,4 @@
-name: 'graver — vectorize & optimize images'
+name: 'vecline — vectorize & optimize images'
 description: 'Convert raster assets to SVG (or between formats) in CI and post a size-savings summary to the job. Pure-TS, no native binaries.'
 author: 'shunyagatha'
 branding:
@@ -12,7 +12,7 @@ inputs:
   out-dir:
     description: 'Directory to write converted files to.'
     required: false
-    default: 'graver-out'
+    default: 'vecline-out'
   to:
     description: 'Target extension: svg (default), or a raster format (png, webp, avif, …).'
     required: false
@@ -26,7 +26,7 @@ inputs:
     required: false
     default: 'auto'
   version:
-    description: 'graver version to run (npm dist-tag or exact version).'
+    description: 'vecline version to run (npm dist-tag or exact version).'
     required: false
     default: 'latest'
 
@@ -38,12 +38,12 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Run graver
+    - name: Run vecline
       shell: bash
       run: |
-        npx --yes "graver@${{ inputs.version }}" batch "${{ inputs.files }}" \
+        npx --yes "vecline@${{ inputs.version }}" batch "${{ inputs.files }}" \
           --out-dir "${{ inputs.out-dir }}" \
           --to "${{ inputs.to }}" \
           --mode "${{ inputs.mode }}" \
           --preset "${{ inputs.preset }}" \
-          --summary "${GITHUB_STEP_SUMMARY:-$RUNNER_TEMP/graver-summary.md}"
+          --summary "${GITHUB_STEP_SUMMARY:-$RUNNER_TEMP/vecline-summary.md}"

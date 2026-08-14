@@ -2,15 +2,15 @@
  * Office documents ⇄ PDF (and between Office formats).
  *
  * Faithfully rendering Word, Excel or PowerPoint needs a full office engine —
- * hundreds of megabytes. Bundling one would wreck graver's lean install, so this
+ * hundreds of megabytes. Bundling one would wreck vecline's lean install, so this
  * follows the same bring-your-own rule as the PDF and WASM-codec paths: it drives
  * the **user's own LibreOffice** through a plain child process, adding *zero*
- * dependencies. graver stays tiny; the conversion stays local and private (no
+ * dependencies. vecline stays tiny; the conversion stays local and private (no
  * cloud upload); and every format LibreOffice reads or writes is available in
  * both directions — `docx/xlsx/pptx/odt/ods/odp/rtf/html/csv/txt ⇄ pdf`.
  *
  * Node-only. If LibreOffice is not installed, the error says exactly how to get
- * it (or point `GRAVER_SOFFICE` at an existing binary).
+ * it (or point `VECLINE_SOFFICE` at an existing binary).
  */
 
 import { execFile } from 'node:child_process';
@@ -35,7 +35,7 @@ export function isOfficeDocument(path: string): boolean {
 
 /** Locate a LibreOffice `soffice` binary, or `null` if none of the usual spots have one. */
 export function findSoffice(): string | null {
-  const env = process.env.GRAVER_SOFFICE || process.env.SOFFICE_PATH;
+  const env = process.env.VECLINE_SOFFICE || process.env.SOFFICE_PATH;
   if (env && existsSync(env)) return env;
   const candidates =
     process.platform === 'win32'
@@ -90,7 +90,7 @@ export async function convertOffice(
   const absInput = resolve(input);
   if (!existsSync(absInput)) throw new Error(`Input not found: ${input}`);
 
-  const tmp = await mkdtemp(join(tmpdir(), 'graver-office-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'vecline-office-'));
   try {
     const args = buildSofficeArgs(absInput, targetExt, tmp);
     const run = opts.run ?? ((b, a) => spawnSoffice(b, a, opts.timeoutMs ?? 120_000));
@@ -174,10 +174,10 @@ function spawnSoffice(bin: string, args: string[], timeoutMs: number): Promise<v
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
         reject(new Error(
-          'LibreOffice was not found. graver drives your local LibreOffice for ' +
+          'LibreOffice was not found. vecline drives your local LibreOffice for ' +
             'Office⇄PDF conversion — nothing is bundled, so the install stays tiny. ' +
             'Install it from https://www.libreoffice.org/ (or `brew install --cask libreoffice`, ' +
-            '`apt install libreoffice`), or point GRAVER_SOFFICE at the soffice binary.',
+            '`apt install libreoffice`), or point VECLINE_SOFFICE at the soffice binary.',
         ));
       } else {
         reject(new Error(`LibreOffice conversion failed: ${(err as Error).message}`));

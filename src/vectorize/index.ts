@@ -1,11 +1,11 @@
 /**
- * `graver/vectorize` — the vectorisation engine, on its own.
+ * `vecline/vectorize` — the vectorisation engine, on its own.
  *
  * A narrow entry point for consumers who want only raster→SVG and nothing else.
  * Everything here is pure TypeScript with no dependencies, so importing this
  * subpath (rather than the Node entry) keeps a bundle free of libvips and resvg.
  *
- * These same symbols are also re-exported from `graver/core`; this barrel exists
+ * These same symbols are also re-exported from `vecline/core`; this barrel exists
  * so a bundler can drop the colour-science and metrics code a caller never
  * touches, and so the intent — "I only need the tracer" — is expressible in the
  * import itself.

@@ -2,19 +2,19 @@ import sharp from 'sharp';
 import type { RasterImage, Rgba } from './types.js';
 
 /**
- * `graver/ops` — raster editing, on the way in or out.
+ * `vecline/ops` — raster editing, on the way in or out.
  *
  * The conversion pipeline sometimes needs the pixels changed first: a 12-megapixel
  * photo downscaled before tracing, a scan deskewed, a busy background blurred
  * back. These are exactly the operations `sharp` already does well, so this
  * module is a thin, typed adapter over it rather than a reimplementation — the
- * point is to make them reachable from a Graver pipeline without every caller
+ * point is to make them reachable from a Vecline pipeline without every caller
  * re-deriving the raw-buffer plumbing.
  *
- * **This is Node-only** and deliberately *not* part of `graver/core`: it needs
+ * **This is Node-only** and deliberately *not* part of `vecline/core`: it needs
  * libvips. It ships as its own entry point so a browser or edge consumer never
  * pulls it in, and so a Node consumer who wants it opts in with an explicit
- * `import ... from 'graver/ops'`.
+ * `import ... from 'vecline/ops'`.
  */
 
 export interface ResizeOptions {

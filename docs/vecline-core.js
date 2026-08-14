@@ -5172,7 +5172,7 @@ function toEps(geometry, opts = {}) {
   const out = [
     "%!PS-Adobe-3.0 EPSF-3.0",
     `%%BoundingBox: 0 0 ${Math.ceil(width)} ${Math.ceil(height)}`,
-    "%%Creator: graver",
+    "%%Creator: vecline",
     "%%EndComments"
   ];
   for (const path of geometry.paths) {
@@ -5268,7 +5268,7 @@ function toGcode(polylines, opts = {}) {
   const toolOff = mode === "laser" ? "M5" : `G0 Z${n(opts.penUp ?? 5)}`;
   const toolOn = mode === "laser" ? `M3 S${power}` : `G1 Z${n(opts.penDown ?? 0)} F${feed}`;
   const lines = [
-    "; graver G-code",
+    "; vecline G-code",
     `; mode=${mode} feed=${feed} ${opts.units ?? "mm"}`,
     opts.units === "in" ? "G20" : "G21",
     "G90",

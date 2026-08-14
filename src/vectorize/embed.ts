@@ -152,9 +152,9 @@ export async function vectorizeEmbed(
   // ignore unknown data-* attributes, so this costs nothing visually.
   const digest = createHash('sha256').update(chosen.bytes).digest('hex');
   const provenance =
-    ` data-graver-sha256="${digest}"` +
-    ` data-graver-bytes="${chosen.bytes.length}"` +
-    (chosen.preserved ? ' data-graver-original="true"' : '');
+    ` data-vecline-sha256="${digest}"` +
+    ` data-vecline-bytes="${chosen.bytes.length}"` +
+    (chosen.preserved ? ' data-vecline-original="true"' : '');
 
   const dataUri = `data:${chosen.mime};base64,${toBase64(chosen.bytes)}`;
   doc.add(
@@ -204,8 +204,8 @@ const EXTENSION_BY_MIME: Record<string, string> = {
 };
 
 const DATA_URI = /<image\b[^>]*?\b(?:xlink:href|href)\s*=\s*(["'])data:([^;,]+);base64,([A-Za-z0-9+/=\s]*)\1/i;
-const SHA_ATTR = /\bdata-graver-sha256\s*=\s*(["'])([0-9a-f]{64})\1/i;
-const ORIGINAL_ATTR = /\bdata-graver-original\s*=\s*(["'])true\1/i;
+const SHA_ATTR = /\bdata-vecline-sha256\s*=\s*(["'])([0-9a-f]{64})\1/i;
+const ORIGINAL_ATTR = /\bdata-vecline-original\s*=\s*(["'])true\1/i;
 
 /**
  * Recover the embedded bitmap from an SVG produced by `embed` mode.

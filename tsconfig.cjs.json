@@ -1,5 +1,5 @@
 {
-  // CommonJS output, so `require('graver')` works alongside `import`.
+  // CommonJS output, so `require('vecline')` works alongside `import`.
   //
   // The source is written as ESM with explicit `.js` specifiers. TypeScript
   // rewrites those to `require()` calls here and the specifiers still resolve,

@@ -725,7 +725,7 @@ export interface PaletteEntry {
 
 /**
  * Extract a perceptual dominant-colour palette — the Wu + Oklab-Lloyd quantiser
- * graver already runs, exposed for theming, design tokens and placeholders.
+ * vecline already runs, exposed for theming, design tokens and placeholders.
  * Entries come back most-used first.
  */
 export function extractPalette(img: RasterImage, colors = 6): PaletteEntry[] {

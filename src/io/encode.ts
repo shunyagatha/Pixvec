@@ -8,7 +8,7 @@ import { findEncoder, registeredFormats } from '../codecs.js';
 
 export interface EncodeOptions {
   /**
-   * A built-in format, or the name of a codec registered via `graver/codecs`.
+   * A built-in format, or the name of a codec registered via `vecline/codecs`.
    * The string escape hatch is what lets a user-supplied HEIC/JXL encoder be a
    * valid target here without widening the built-in union.
    */
@@ -131,7 +131,7 @@ export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promi
       const note = registered.length ? ` Registered: ${registered.join(', ')}.` : '';
       throw new Error(
         `Unsupported output format: ${String(format)}. ` +
-          `Register an encoder for it via graver/codecs, or use a built-in format.${note}`,
+          `Register an encoder for it via vecline/codecs, or use a built-in format.${note}`,
       );
     }
   }

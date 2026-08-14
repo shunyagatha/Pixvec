@@ -1,7 +1,7 @@
 /**
- * Model Context Protocol (MCP) server for graver.
+ * Model Context Protocol (MCP) server for vecline.
  *
- * Exposes graver's conversion, tracing, export and measurement as tools an AI
+ * Exposes vecline's conversion, tracing, export and measurement as tools an AI
  * agent or IDE (Claude, Cursor, Continue, …) can call directly — "vectorise this
  * logo", "turn this drawing into laser G-code", "how close is this SVG to the
  * PNG?" — without the model shelling out and parsing text.
@@ -236,7 +236,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         images = [(await rasterizeSvg(new TextDecoder().decode(bytes), { baseDir: baseDirFor(inPath), scale: dpi ? dpi / 96 : 1 })).image];
         labels = [1];
       } else if (isOfficeDocument(inPath)) {
-        const tmp = await mkdtemp(join(tmpdir(), 'graver-mcp-doc-'));
+        const tmp = await mkdtemp(join(tmpdir(), 'vecline-mcp-doc-'));
         try {
           const tmpPdf = join(tmp, 'render.pdf');
           await convertOffice(inPath, tmpPdf, {});
@@ -314,7 +314,7 @@ export async function handleMcpMessage(msg: Rpc): Promise<string | null> {
   const { id, method, params } = msg;
   switch (method) {
     case 'initialize':
-      return reply(id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'graver', version: VERSION } });
+      return reply(id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'vecline', version: VERSION } });
     case 'notifications/initialized':
       return null;
     case 'ping':

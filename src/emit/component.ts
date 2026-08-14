@@ -2,7 +2,7 @@
  * SVG → framework component codegen.
  *
  * A traced logo or icon is rarely the deliverable — the deliverable is a
- * component you drop into an app. This turns a graver SVG string into a typed,
+ * component you drop into an app. This turns a vecline SVG string into a typed,
  * prop-forwarding component for React, Vue, Svelte or Solid, so the pipeline is
  * raster → traced/optimised SVG → component in one pass (SVGR and friends start
  * from an SVG file). Pure string transformation, so it belongs in the portable
@@ -22,7 +22,7 @@ export interface ComponentOptions {
   currentColor?: boolean;
 }
 
-/** Turn a graver SVG string into framework-component source code. */
+/** Turn a vecline SVG string into framework-component source code. */
 export function toComponent(svg: string, opts: ComponentOptions): string {
   const name = opts.name ?? 'Icon';
   const jsx = opts.framework === 'react' || opts.framework === 'solid';

@@ -8,7 +8,7 @@ import { flatArtwork, pixelArt } from './fixtures.js';
 /**
  * The portability contract.
  *
- * `graver/core` promises to run anywhere JavaScript runs — browser, Deno, Bun,
+ * `vecline/core` promises to run anywhere JavaScript runs — browser, Deno, Bun,
  * edge worker — which means it must not reach for Node built-ins or native
  * modules. That is easy to state and easy to break with one stray import, so it
  * is asserted here by reading the source rather than trusted to review.
@@ -85,7 +85,7 @@ async function reachableFromCore(): Promise<Set<string>> {
   return seen;
 }
 
-describe('graver/core portability', () => {
+describe('vecline/core portability', () => {
   it('imports no Node built-ins and no native modules', async () => {
     const offenders: string[] = [];
 
@@ -146,7 +146,7 @@ describe('graver/core portability', () => {
   });
 });
 
-describe('graver/core surface', () => {
+describe('vecline/core surface', () => {
   it('exposes the vectorisers and metrics', () => {
     for (const name of [
       'vectorizeExact', 'vectorizeExactContours', 'vectorizePixels', 'trace',

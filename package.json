@@ -1,5 +1,5 @@
 {
-  "name": "graver",
+  "name": "vecline",
   "version": "1.32.0",
   "description": "The measurable image + document toolkit for JavaScript. Raster <-> SVG (pixel-exact lossless or quality-targeted Bezier tracing, verified with PSNR/SSIM/CIEDE2000), plus PDF & Office (docx/xlsx/pptx) rendering and conversion, images-to-PDF, DXF/EPS/PDF/G-code export, content-aware crop, and image editing. Reads PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM, TGA.",
   "keywords": [
@@ -49,11 +49,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shunyagatha/Graver.git"
+    "url": "git+https://github.com/shunyagatha/Vecline.git"
   },
-  "homepage": "https://github.com/shunyagatha/Graver#readme",
+  "homepage": "https://github.com/shunyagatha/Vecline#readme",
   "bugs": {
-    "url": "https://github.com/shunyagatha/Graver/issues"
+    "url": "https://github.com/shunyagatha/Vecline/issues"
   },
   "type": "module",
   "engines": {
@@ -113,7 +113,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "graver": "./dist/esm/cli.js"
+    "vecline": "./dist/esm/cli.js"
   },
   "files": [
     "dist",

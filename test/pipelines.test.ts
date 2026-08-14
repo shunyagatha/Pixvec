@@ -7,7 +7,7 @@ import { flatArtwork, photoLike } from './fixtures.js';
 
 /**
  * The asset pipelines: favicon/PWA sets, responsive variants, lazy placeholders,
- * palette extraction. These are orchestration over primitives graver already
+ * palette extraction. These are orchestration over primitives vecline already
  * tests, so the checks are on the shape of what they produce.
  */
 

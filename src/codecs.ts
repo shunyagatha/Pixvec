@@ -17,7 +17,7 @@ import type { RasterImage } from './types.js';
  *
  * ```ts
  * import decodeJxl from '@jsquash/jxl/decode.js';
- * import { registerDecoder } from 'graver/codecs';
+ * import { registerDecoder } from 'vecline/codecs';
  *
  * registerDecoder({
  *   format: 'jxl',
@@ -28,7 +28,7 @@ import type { RasterImage } from './types.js';
  *     return { width, height, data: new Uint8ClampedArray(data.buffer) };
  *   },
  * });
- * // graver can now read .jxl anywhere it reads any other format.
+ * // vecline can now read .jxl anywhere it reads any other format.
  * ```
  *
  * The registry itself is pure — it holds functions, imports nothing — so it

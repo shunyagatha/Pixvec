@@ -24,7 +24,7 @@ export function toEps(geometry: TraceGeometry, opts: EpsOptions = {}): string {
   const out: string[] = [
     '%!PS-Adobe-3.0 EPSF-3.0',
     `%%BoundingBox: 0 0 ${Math.ceil(width)} ${Math.ceil(height)}`,
-    '%%Creator: graver',
+    '%%Creator: vecline',
     '%%EndComments',
   ];
 

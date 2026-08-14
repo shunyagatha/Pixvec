@@ -2,7 +2,7 @@
  * G-code / toolpath export — the end of the image→machine pipeline.
  *
  * Paired with centreline tracing, this turns a drawing into ready-to-run G-code
- * for a GRBL-style laser engraver or pen plotter: rapid travel with the tool up,
+ * for a GRBL-style laser envecline or pen plotter: rapid travel with the tool up,
  * tool down, cut/draw along each stroke at a feed rate, tool up, repeat. A rare
  * end-to-end capability in JS — most tools stop at SVG and leave the user to
  * find a separate svg2gcode. Y is flipped to machine bed space (origin
@@ -47,7 +47,7 @@ export function toGcode(polylines: Point[][], opts: GcodeOptions = {}): string {
   const toolOn = mode === 'laser' ? `M3 S${power}` : `G1 Z${n(opts.penDown ?? 0)} F${feed}`;
 
   const lines: string[] = [
-    '; graver G-code',
+    '; vecline G-code',
     `; mode=${mode} feed=${feed} ${opts.units ?? 'mm'}`,
     opts.units === 'in' ? 'G20' : 'G21',
     'G90',

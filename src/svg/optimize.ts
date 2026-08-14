@@ -1,7 +1,7 @@
 /**
  * SVG optimisation — a small, conservative minifier.
  *
- * Not a full SVGO clone: a focused pass that shrinks graver's own output (and
+ * Not a full SVGO clone: a focused pass that shrinks vecline's own output (and
  * any SVG handed in) without changing what it renders — strip comments and the
  * XML prologue, collapse inter-tag whitespace, round coordinates, and drop
  * default attributes. Everything here is render-preserving by construction, so
@@ -31,7 +31,7 @@ export function optimizeSvg(svg: string, opts: OptimizeOptions = {}): string {
 
   out = out
     // Collapse whitespace *between* tags and runs of spaces inside them. Text
-    // content (only <title> in graver output) sits between tags, so this leaves
+    // content (only <title> in vecline output) sits between tags, so this leaves
     // a lone title intact while removing pretty-print indentation.
     .replace(/>\s+</g, '><')
     .replace(/\s{2,}/g, ' ')

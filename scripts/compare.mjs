@@ -4,13 +4,13 @@
  *
  * The point of this script is that it can embarrass us. Every tool is measured
  * the same way: its SVG is rendered with the *same* renderer and scored with the
- * *same* metrics, so nothing here depends on Graver's own view of quality.
+ * *same* metrics, so nothing here depends on Vecline's own view of quality.
  *
  * Compared:
  *   potrace         the reference bilevel tracer, via its JavaScript port
  *   potrace/posterize  its multi-level mode, the closest thing it has to colour
  *   imagetracerjs   a widely used colour tracer
- *   graver          this package
+ *   vecline          this package
  *
  * potrace is bilevel by design, so it is scored on a black-and-white fixture
  * where the comparison is apples to apples, and posterize is used for colour.
@@ -176,7 +176,7 @@ const runPosterize = (file, options) =>
   new Promise((resolve, reject) =>
     potrace.posterize(file, options, (err, svg) => (err ? reject(err) : resolve(svg))));
 
-const dir = await mkdtemp(join(tmpdir(), 'graver-compare-'));
+const dir = await mkdtemp(join(tmpdir(), 'vecline-compare-'));
 const results = [];
 
 async function contend(fixtureName, source, entrants) {
@@ -196,11 +196,11 @@ async function contend(fixtureName, source, entrants) {
   }
 }
 
-const graverTrace = async (_file, source) => {
+const veclineTrace = async (_file, source) => {
   const input = await loadRaster(await toPng(source));
   return (await vectorize(input, { mode: 'trace' })).svg;
 };
-const graverLossless = async (_file, source) => {
+const veclineLossless = async (_file, source) => {
   const input = await loadRaster(await toPng(source));
   return (await vectorize(input, { mode: 'lossless' })).svg;
 };
@@ -209,10 +209,10 @@ const tracerjs = async (_file, source) =>
     { width: source.width, height: source.height, data: Array.from(source.data) },
     { numberofcolors: 16 },
   );
-// `mode: 'trace'` with no preset is exactly what `graver convert photo.png
+// `mode: 'trace'` with no preset is exactly what `vecline convert photo.png
 // out.svg` runs: auto-trace scales the palette to the content, so this row is
 // the honest zero-config default a user actually gets.
-const graverPhotoPreset = async (_file, source) => {
+const veclinePhotoPreset = async (_file, source) => {
   const input = await loadRaster(await toPng(source));
   return (await vectorize(input, { mode: 'trace', preset: 'photo', trace: { gradients: true } })).svg;
 };
@@ -221,22 +221,22 @@ const vtracerRun = async (_file, source) => vtracer.vectorize(await toPng(source
 // vtracer only makes sense in colour, so it joins the colour and photo panels.
 const withVtracer = (entrants) => (vtracer ? [...entrants, ['vtracer', vtracerRun]] : entrants);
 
-// The colour/photo panel: every colour tracer, plus graver's flat trace, its
+// The colour/photo panel: every colour tracer, plus vecline's flat trace, its
 // gradient-enabled trace, and its lossless fallback.
 const colourPanel = withVtracer([
   ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
   ['imagetracerjs', tracerjs],
-  ['graver (auto)', graverTrace],
-  ['graver photo', graverPhotoPreset],
-  ['graver lossless', graverLossless],
+  ['vecline (auto)', veclineTrace],
+  ['vecline photo', veclinePhotoPreset],
+  ['vecline lossless', veclineLossless],
 ]);
 
 try {
   await contend('bilevel', bilevelArt(160, 120), [
     ['potrace', (file) => runPotrace(file, { threshold: 128 })],
     ['imagetracerjs', tracerjs],
-    ['graver trace', graverTrace],
-    ['graver lossless', graverLossless],
+    ['vecline trace', veclineTrace],
+    ['vecline lossless', veclineLossless],
   ]);
 
   await contend('colour art', colourArt(160, 120), colourPanel);

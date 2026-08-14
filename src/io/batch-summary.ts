@@ -1,5 +1,5 @@
 /**
- * Markdown report for a `graver batch` run — designed to drop straight into a
+ * Markdown report for a `vecline batch` run — designed to drop straight into a
  * GitHub Actions job summary (`$GITHUB_STEP_SUMMARY`). Pure string formatting,
  * kept out of `cli.ts` so it can be tested without running the program.
  */
@@ -17,7 +17,7 @@ export function formatBatchSummary(rows: BatchRow[], done: number, failed: numbe
   const totalOut = rows.reduce((s, r) => s + r.outBytes, 0);
 
   const lines = [
-    '## graver',
+    '## vecline',
     '',
     `${done} converted${failed ? `, **${failed} failed**` : ''}. ` +
       `Total ${fmtBytes(totalIn)} → ${fmtBytes(totalOut)} (${change(totalOut, totalIn)}).`,

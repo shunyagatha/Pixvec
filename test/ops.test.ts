@@ -4,7 +4,7 @@ import { encode, flatArtwork, pixelArt } from './fixtures.js';
 import type { RasterImage } from '../src/types.js';
 
 /**
- * `graver/ops` is a thin adapter over sharp, so these tests check the adapter's
+ * `vecline/ops` is a thin adapter over sharp, so these tests check the adapter's
  * contract — dimensions, channel integrity, the order of operations, and the
  * two bugs found while writing it — rather than re-testing sharp's algorithms.
  */
