@@ -24,13 +24,22 @@ function exportable(node: SceneNode): boolean {
 }
 
 /**
- * Export scale for the selection.
+ * Export scale for the selection: the layer's own size.
  *
- * Tracing sees more detail than the on-screen resolution at 2x, which measurably
- * helps the palette; the emitted SVG is then resized back to the source
- * dimensions on insertion, so this costs nothing in the result.
+ * This was 2x, on the theory that more input detail would help. It does not, and
+ * the theory was never measured before it shipped. The tracer emits an
+ * axis-aligned staircase rather than curves at its default tolerance, so doubling
+ * the input doubles the number of steps; resizing the result back to the layer's
+ * size then lands every one of those steps on a half-pixel, which is what read as
+ * chewed, ragged edges in the canvas. Measured on a logo with a gradient:
+ *
+ *   1x   SSIM 0.9301   2,804 h/v commands    8 KB
+ *   2x   SSIM 0.9033   5,108 h/v commands   14 KB
+ *
+ * Worse fidelity, nearly twice the geometry, and almost twice the file — so 2x
+ * cost something on every axis and bought nothing on any.
  */
-const EXPORT_SCALE = 2;
+const EXPORT_SCALE = 1;
 
 figma.showUI(__html__, { width: 340, height: 460, themeColors: true });
 

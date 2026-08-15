@@ -19,6 +19,14 @@ that fails, say — it reports "not measured" rather than inventing a figure.
 
 ## Defaults
 
+The selection is traced at **its own size**, not upscaled. Exporting at 2x sounded
+like it would give the tracer more to work with; measured, it did the opposite —
+SSIM 0.9033 against 0.9301, 5,108 path commands against 2,804, 14 KB against 8 KB.
+The tracer emits an axis-aligned staircase rather than curves at its default
+tolerance, so doubling the input doubles the steps, and shrinking the result back
+puts every step on a half-pixel. That is what ragged edges in the canvas were.
+
+
 Gradients are **on**. Measured on a logo with a gradient: with them off the trace
 scored SSIM 0.9119 at 24 KB; with them on, 0.9301 at 8 KB — better fidelity and a
 third of the size, so off was simply the wrong default. Raising the palette above
