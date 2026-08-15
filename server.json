@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.shunyagatha/vecline",
-  "description": "Verified, deterministic, local-first image and document toolkit. Converts raster to SVG (bit-exact on flat art), measures its own output with real SSIM/PSNR/CIEDE2000, diffs images perceptually, traces centrelines and exports DXF/EPS/PDF/G-code for CNC, and renders PDF/Office documents to images — all on your machine, nothing uploaded.",
+  "description": "Local-first image-to-SVG + PDF/Office toolkit that measures its own output. Nothing uploaded.",
   "repository": {
     "url": "https://github.com/shunyagatha/Vecline",
     "source": "github"
