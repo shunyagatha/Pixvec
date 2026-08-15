@@ -12,13 +12,82 @@
  * saying how close the vector actually is to the pixels it came from.
  */
 
-import { trace, compareImages } from 'vecline/core';
+import { trace, centerlineTrace, compareImages, type RasterImage } from 'vecline/core';
 
-type RasterImage = { width: number; height: number; data: Uint8ClampedArray };
+/**
+ * The two things the Mode control chooses between.
+ *
+ * These used to be one call — `trace(image, { colors, gradients, mode })` — with
+ * the arguments cast through `never` to make it compile. `trace` has no `mode`
+ * option and never had one, so the centreline half of this control did nothing:
+ * both settings produced byte-identical SVG, and the plugin then reported a
+ * confident SSIM for a result the user had not asked for. The casts are what
+ * hid it. Without them TypeScript rejects the object outright, which is why
+ * they are gone and the types below are the real ones from the engine.
+ */
+type Mode = 'trace' | 'centerline';
+
+/**
+ * Which side of the image is the ink.
+ *
+ * `centerlineTrace` defaults to treating dark pixels as the line, which is right
+ * for a photograph of paper and wrong for artwork sitting on a dark canvas — and
+ * a Figma file is as often dark as light. Pointed the wrong way it skeletonises
+ * the *background* instead of the strokes: measured on the Vecline mark, correct
+ * polarity is 19 polylines against 13 on a dark ground, and 14 against 11 on a
+ * light one.
+ *
+ * The rule is that ink is the minority of an image — a drawing is mostly not
+ * drawing. Fully transparent pixels are neither, so they are skipped rather than
+ * counted as dark, which is what a naive luma average over RGBA would do to
+ * every logo exported with a transparent background.
+ */
+function inkIsDark(image: RasterImage): boolean {
+  const d = image.data;
+  let dark = 0;
+  let light = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < 128) continue;
+    // Rec. 601 luma, the weighting the engine's own threshold uses.
+    const y = 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
+    if (y < 128) dark++;
+    else light++;
+  }
+  return dark <= light;
+}
+
+function vectorize(image: RasterImage, mode: Mode, colors: number, gradients: boolean): string {
+  // Centreline is a fundamentally different operation, not a flag on the same
+  // one: it binarises, thins to a skeleton and emits open stroked polylines,
+  // where trace emits closed filled contours. Adaptive thresholding is on
+  // because the images people centreline-trace are photographs of paper, where
+  // one cutoff for the whole frame loses the shadowed corner.
+  if (mode === 'centerline') {
+    return centerlineTrace(image, { adaptive: true, blackOnWhite: inkIsDark(image) }).svg;
+  }
+  return trace(image, { colors, gradients }).svg;
+}
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
-let pending: { bytes: Uint8Array; name: string } | null = null;
+const mode = (): Mode => ($('mode') as HTMLSelectElement).value as Mode;
+
+let pending: { bytes: Uint8Array; name: string; id: string } | null = null;
+
+/**
+ * Grey out the controls the current mode ignores.
+ *
+ * Colours and gradients are trace's parameters; centreline binarises, so a
+ * colour count means nothing to it. Leaving them live implied they did
+ * something, which is the same failure the dead Mode control was.
+ */
+function syncControls(): void {
+  const centreline = mode() === 'centerline';
+  for (const id of ['colors', 'gradients']) {
+    ($(id) as HTMLInputElement).disabled = centreline;
+    $(id).closest('.row')?.classList.toggle('muted', centreline);
+  }
+}
 
 /** Decode PNG bytes to the engine's pixel contract, using the browser's decoder. */
 async function decode(bytes: Uint8Array): Promise<RasterImage> {
@@ -88,24 +157,27 @@ async function run(): Promise<void> {
     const started = performance.now();
     const image = await decode(pending.bytes);
 
-    setStatus('Tracing…', 'busy');
-    const mode = ($('mode') as HTMLSelectElement).value;
+    setStatus(mode() === 'centerline' ? 'Thinning…' : 'Tracing…', 'busy');
     const colors = Number(($('colors') as HTMLInputElement).value);
     const gradients = ($('gradients') as HTMLInputElement).checked;
-    const result = trace(image as never, { colors, gradients, mode } as never) as { svg: string };
+    const svg = vectorize(image, mode(), colors, gradients);
 
     setStatus('Scoring…', 'busy');
-    const rendered = await rasterize(result.svg, image.width, image.height);
-    const q = rendered ? (compareImages(image as never, rendered as never) as { ssim: number; psnr: number }) : null;
+    const rendered = await rasterize(svg, image.width, image.height);
+    const q = rendered ? compareImages(image, rendered) : null;
 
     parent.postMessage({
       pluginMessage: {
         type: 'traced',
-        svg: result.svg,
+        svg,
+        // The id of the layer this result came from. The main thread used to
+        // re-read the selection at insert time, which is a different layer if
+        // the user clicked elsewhere during the run.
+        sourceId: pending.id,
         ssim: q ? q.ssim : null,
         psnr: q ? q.psnr : null,
         ms: Math.round(performance.now() - started),
-        bytes: result.svg.length,
+        bytes: svg.length,
       },
     }, '*');
     setStatus(q ? `Done · SSIM ${q.ssim.toFixed(4)}` : 'Done · not measured');
@@ -128,15 +200,17 @@ window.onmessage = async (event: MessageEvent) => {
     setStatus(msg.reason);
     return;
   }
-  pending = { bytes: msg.bytes as Uint8Array, name: msg.name as string };
+  pending = { bytes: msg.bytes as Uint8Array, name: msg.name as string, id: msg.id as string };
   $('target').textContent = `${msg.name}  ${msg.width}×${msg.height}`;
   button.disabled = false;
   setStatus('Ready');
 };
 
 $('go').addEventListener('click', () => { void run(); });
+$('mode').addEventListener('change', syncControls);
 $('colors').addEventListener('input', () => {
   $('colorsVal').textContent = ($('colors') as HTMLInputElement).value;
 });
+syncControls();
 
 parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');

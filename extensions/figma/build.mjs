@@ -16,6 +16,19 @@
 
 import { build } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { execSync } from 'node:child_process';
+
+/**
+ * Typecheck first, here rather than only in the npm script.
+ *
+ * esbuild strips types without checking them, so a bundle can be produced from
+ * source that does not typecheck. That is not theoretical: the Mode control
+ * shipped dead because `trace(image, { colors, gradients, mode })` was cast
+ * through `never` to silence the error that `trace` has no `mode` option — and
+ * `node build.mjs` run directly, skipping `npm run build`, was happy to bundle
+ * it. Making the check part of the build removes the way round it.
+ */
+execSync('npx tsc --noEmit', { stdio: 'inherit' });
 
 await mkdir('dist', { recursive: true });
 

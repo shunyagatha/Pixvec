@@ -28,6 +28,9 @@
   }
   label { display: block; margin: 0 0 5px; font-weight: 500; }
   .row { margin-bottom: 13px; }
+  /* A control the current mode ignores is dimmed rather than hidden, so the
+     layout does not jump and it stays obvious the setting still exists. */
+  .row.muted { opacity: .4; }
   .inline { display: flex; align-items: center; gap: 8px; }
   select, input[type=range] { width: 100%; }
   select {
