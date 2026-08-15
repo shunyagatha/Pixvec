@@ -23,3 +23,6 @@ corpus/
 mcp-publisher.exe
 mcp-publisher
 *.tar.gz
+extensions/*/node_modules/
+extensions/*/out/
+extensions/*/*.vsix

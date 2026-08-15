@@ -1,0 +1,82 @@
+{
+  "name": "vecline-vscode",
+  "displayName": "Vecline — image to SVG, measured",
+  "description": "Right-click a PNG or JPEG and get an SVG, or a React/Vue/Svelte component — with the SSIM and PSNR of the conversion, measured by rendering the result back to pixels.",
+  "version": "0.1.0",
+  "publisher": "shunyagatha",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "Formatters"],
+  "keywords": ["svg", "vector", "vectorize", "png to svg", "trace", "icon"],
+  "repository": { "type": "git", "url": "https://github.com/shunyagatha/Vecline", "directory": "extensions/vscode" },
+  "homepage": "https://vecline.xyz",
+  "icon": "icon.png",
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "vecline.vectorize", "title": "Vecline: Convert to SVG" },
+      { "command": "vecline.component", "title": "Vecline: Convert to Component" },
+      { "command": "vecline.lossless", "title": "Vecline: Convert to SVG (lossless, or fail)" }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "vecline.vectorize",
+          "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp)$/i",
+          "group": "vecline@1"
+        },
+        {
+          "command": "vecline.component",
+          "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp)$/i",
+          "group": "vecline@2"
+        },
+        {
+          "command": "vecline.lossless",
+          "when": "resourceExtname =~ /\\.(png|jpg|jpeg|webp|gif|bmp)$/i",
+          "group": "vecline@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Vecline",
+      "properties": {
+        "vecline.preset": {
+          "type": "string",
+          "enum": ["auto", "logo", "lineart", "poster", "photo", "detailed", "pixelart"],
+          "default": "auto",
+          "description": "Tracing preset. `auto` inspects the image and picks."
+        },
+        "vecline.framework": {
+          "type": "string",
+          "enum": ["react", "vue", "svelte", "solid"],
+          "default": "react",
+          "description": "Target framework for 'Convert to Component'."
+        },
+        "vecline.currentColor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Map solid fills to `currentColor` in components, so CSS `color` drives them. Gradients are left alone."
+        },
+        "vecline.openAfterConvert": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the generated file once the conversion finishes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vecline": "^1.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
