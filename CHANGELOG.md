@@ -4,6 +4,10 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v1.41.1](https://github.com/shunyagatha/Vecline/releases/tag/v1.41.1)
+
+Component bounding boxes were `(-1, -1)` at every min corner, because an `Int32Array` cannot hold `Number.MAX_SAFE_INTEGER`. Despeckling a one-megapixel photograph took 103 seconds; it now takes under one.
+
 ## [v1.41.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.41.0)
 
 A ramp is judged against the bands it replaces, not against raw error it could never win.
