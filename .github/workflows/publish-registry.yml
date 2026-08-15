@@ -1,0 +1,76 @@
+# Publish to the official MCP Registry, without a human in the loop.
+#
+# The registry issues short-lived JWTs — about an hour — so an interactive
+# `mcp-publisher login github` has to be repeated for *every* release, and had
+# been, several times in a day. There is no long-lived token to ask for: the
+# expiry is the point.
+#
+# GitHub Actions OIDC removes the credential instead of extending it. GitHub
+# mints a short-lived identity token for this workflow, the registry verifies it
+# against GitHub directly, and the trust lives between those two rather than in
+# anything stored here. Nothing to leak, nothing to rotate, and no device code
+# ever again.
+name: Publish to MCP Registry
+
+on:
+  push:
+    tags: ['v*']
+  # Kept manual as well, so a failed run can be retried without re-tagging.
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # The whole mechanism. Without `id-token: write` GitHub will not mint the
+      # OIDC token and the login falls back to nothing.
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check server.json matches the tag
+        # A mismatch here publishes the wrong version under the right name, which
+        # is worse than failing: the registry would advertise a release that does
+        # not exist on npm. Cheap to check, so it is checked.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          declared=$(node -p "require('./server.json').version")
+          pkg=$(node -p "require('./server.json').packages[0].version")
+          echo "tag=$tag  server.json=$declared  package entry=$pkg"
+          if [ "$tag" != "$declared" ] || [ "$tag" != "$pkg" ]; then
+            echo "::error::server.json says $declared / $pkg but the tag is $tag"
+            exit 1
+          fi
+
+      - name: Wait for npm to serve this version
+        # The registry resolves the npm package to verify ownership, so a publish
+        # that races npm's propagation fails on a package that is genuinely there.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            if npm view "vecline@$tag" version >/dev/null 2>&1; then
+              echo "vecline@$tag is live on npm"
+              exit 0
+            fi
+            echo "waiting for vecline@$tag on npm ($i/30)"
+            sleep 10
+          done
+          echo "::error::vecline@$tag never appeared on npm"
+          exit 1
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL -o publisher.tar.gz \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          tar -xzf publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Authenticate via OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        run: ./mcp-publisher publish

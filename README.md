@@ -636,6 +636,10 @@ Stated plainly, because you should know before you invest:
 - **Tight-tolerance tracing favours accuracy over few smooth curves.** The retuned default (0.4px) makes a large smooth arc come out as a fine, pixel-accurate polygon rather than a handful of Béziers. That is the right call for photos and for pixel fidelity, but if you want a logo as a few editable curves, use `--preset logo` (tolerance 0.6) or raise `--tolerance` yourself. The two goals genuinely trade off; the default picks accuracy.
 - **Not compared against Illustrator or vtracer.** The [comparison](#compared-with-other-vectorizers) covers potrace and imagetracerjs, which are what is installable and scriptable. Commercial tracers remain unmeasured.
 
+## Changelog
+
+Every release is tagged and documented in [CHANGELOG.md](CHANGELOG.md), which indexes the [full notes on GitHub](https://github.com/shunyagatha/Vecline/releases) — including the releases that corrected an earlier claim.
+
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
