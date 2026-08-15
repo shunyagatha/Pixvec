@@ -1,6 +1,6 @@
 {
   "name": "vecline",
-  "version": "1.38.1",
+  "version": "1.39.0",
   "mcpName": "io.github.shunyagatha/vecline",
   "description": "The measurable image + document toolkit for JavaScript. Converts any of 11 formats to any other -- raster <-> raster, raster <-> SVG -- with the accuracy measured rather than asserted: pixel-exact lossless, or quality-targeted Bezier tracing verified with SSIM/PSNR/CIEDE2000. Cut-ready DXF that declares its own physical size, plus EPS, PDF and G-code for lasers, plotters and CNC. Renders PDF and Office (docx/xlsx/pptx) documents, images-to-PDF, centerline tracing, content-aware crop and image editing. Ships an MCP server for AI agents and a local bridge (vecline serve) so a browser can use your LibreOffice without uploading anything.",
   "keywords": [

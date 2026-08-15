@@ -137,6 +137,17 @@ export interface TraceOptions {
    */
   strokeWidth?: number;
   /**
+   * Extend each region's fill *under* the regions painted after it, instead of
+   * cutting at their shared edge. Render-identical — the later region repaints
+   * those pixels — but a shared boundary is then traced once rather than twice,
+   * and no antialiasing seam can open at a join that no longer exists.
+   *
+   * Off by default: it costs one extra contour pass per colour, and on artwork
+   * whose later colours are scattered the union can be *more* complex than the
+   * region it replaces. Worth measuring per image rather than assuming.
+   */
+  extendUnder?: boolean;
+  /**
    * Emit one named `<g>` per colour, tagged as an Inkscape/Illustrator layer, so
    * the SVG opens as editable colour layers (weeding/separation-ready) instead
    * of one flattened blob. Off by default.
@@ -179,6 +190,7 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  extendUnder: false,
   groupByColor: false,
   turnPolicy: 'left',
   gradients: false,
@@ -293,6 +305,36 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
 
   const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
 
+  /**
+   * Trace a class as if it extended *under* everything painted after it.
+   *
+   * Regions are painted largest-first, so by the time a small region is drawn,
+   * the large one beneath it has already been laid down. That means a region's
+   * mask does not have to stop at a shared edge: it can run on underneath, and
+   * the render is unchanged because the later region repaints those pixels.
+   *
+   * Two things follow. A boundary shared by two regions is currently traced
+   * twice — once as each one's edge — and here it is traced once, by whichever
+   * is painted later. And the hairline seam that antialiasing leaves between two
+   * abutting shapes cannot appear, because there is no longer a join to leave a
+   * gap at; `strokeWidth` exists to paint over exactly that seam.
+   *
+   * The mask is every pixel whose class is painted at this rank or later, so it
+   * is a union, and the loops come from one relabelled pass over it.
+   */
+  const extendedLoops = (rank: number, rankOfClass: Int32Array): Loop[] => {
+    const mask = new Int32Array(width * height).fill(-1);
+    for (let p = 0; p < mask.length; p++) {
+      const comp = comps.labels[p]!;
+      if (comp < 0) continue; // void stays void: transparency must not be filled
+      const cls = comps.classes[comp]!;
+      if (cls >= 0 && rankOfClass[cls]! >= rank) mask[p] = 0;
+    }
+    // One label, so every disconnected piece and every hole comes back in a
+    // single group — which is what a class's path wants anyway.
+    return traceComponents(mask, width, height, 1, o.turnPolicy)[0] ?? [];
+  };
+
   // --- Group components by class so one path serves each colour. ---
   const classArea = new Map<number, number>();
   const classComponents = new Map<number, number[]>();
@@ -353,15 +395,31 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
 
   let regions = 0;
 
-  for (const cls of orderedClasses) {
+  // Rank per class, for the extend-under mask. Built once; a class not present
+  // ranks last, which keeps it out of every union.
+  let rankOfClass: Int32Array | null = null;
+  if (o.extendUnder) {
+    let maxClass = 0;
+    for (const c of orderedClasses) if (c > maxClass) maxClass = c;
+    rankOfClass = new Int32Array(maxClass + 1).fill(orderedClasses.length);
+    orderedClasses.forEach((c, i) => { rankOfClass![c] = i; });
+  }
+
+  for (const [rank, cls] of orderedClasses.entries()) {
     const components = classComponents.get(cls)!;
     regions += components.length;
     if (cls === backgroundClass) continue;
 
     const path = new PathBuilder(o.precision);
     const classLoops: Loop[] = [];
-    for (const c of components) {
-      for (const loop of loopsByComponent[c]) {
+    // Extend-under replaces this class's own loops with the union's loops; the
+    // background class is skipped above, and a gradient class keeps its own
+    // geometry because its paint is not flat.
+    const ownLoops = rankOfClass && cls < GRAD_BASE
+      ? [extendedLoops(rank, rankOfClass)]
+      : components.map((c) => loopsByComponent[c]!);
+    for (const group of ownLoops) {
+      for (const loop of group) {
         classLoops.push(loop);
         const fitted = fitLoop(loop.pts, fitOpts);
         if (!fitted) continue;

@@ -275,6 +275,7 @@ interface VectorizeCliOptions {
   blackOnWhite?: boolean;
   strokeWidth?: number;
   turnPolicy?: string;
+  extendUnder?: boolean;
   fillStrategy?: string;
   rightAngle?: boolean;
   rightAngleThreshold?: number;
@@ -370,6 +371,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       blackOnWhite: o.blackOnWhite,
       strokeWidth: o.strokeWidth,
       turnPolicy: o.turnPolicy as never,
+      extendUnder: o.extendUnder,
       fillStrategy: o.fillStrategy as never,
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
@@ -1777,6 +1779,7 @@ program
   .option('--gradients', 'reconstruct smooth colour ramps as SVG gradients — de-bands photos, only where it measurably beats flat')
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
+  .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
   .option('--minify', 'minify the output SVG (render-preserving: round coords, strip defaults)')
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')

@@ -369,6 +369,27 @@ Budget  met  in 3 steps
 
 The search relaxes in *stages* — it coarsens the curve fit first (sub-pixel precision, the cheapest thing to lose) and only sacrifices whole features or palette entries once that is exhausted — then bisects back toward the target so you get the **most accurate result that still fits**, not the first one that happens to. `--max-nodes` targets anchor-point count instead, which is what an illustrator feels when editing; the two are separate because they don't move together (rounding coordinates cuts bytes without removing a node). If a budget is impossible, it says so and returns the closest real result rather than pretending.
 
+### `--extend-under` — one boundary instead of two
+
+Regions are painted largest-first, so by the time a small shape is drawn the large one beneath it is already down. That means a region's fill does not have to stop at a shared edge — it can run on underneath, and **the render is unchanged, because the later region repaints those pixels**.
+
+```bash
+vecline vectorize chart.png --extend-under
+```
+
+Two things follow. A boundary shared by two regions is normally traced *twice*, once as each one's edge; here it is traced once. And the hairline seam antialiasing can leave between two abutting shapes cannot appear, because there is no longer a join for it to open at — this is what `--stroke-width` exists to paint over.
+
+It is **off by default, and the reason is measured rather than assumed**:
+
+| Fixture | Size change | Render |
+|---|--:|---|
+| Flat artwork | **−28.3%** | identical |
+| Small logo | +100.6% | identical |
+| Parrots (photo) | +125.8% | identical |
+| Lighthouse (photo) | +128.9% | identical |
+
+The render is bit-identical every time — `vecline verify a.svg b.svg` reports `PSNR ∞`, `SSIM 1.000000` — so this is purely a size and seam trade. It wins clearly on flat artwork with few, large colour fields, and loses badly when the later colours are scattered, because then the union it traces is more complex than the region it replaced. Measure it on your own images rather than switching it on globally.
+
 ### `--target-ssim` / `--target-psnr`
 
 Trace, render, measure, and escalate until the target is met. Each step doubles the palette *and* tightens the geometric tolerances, because the failure modes are different — too few colours shows up as banding, too loose a tolerance as rounded-off detail. The best attempt is kept, so an unreachable target still returns the closest result along with a note saying it fell short.
