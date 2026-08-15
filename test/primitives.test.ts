@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { RasterImage } from '../src/types.js';
 import { detectPrimitive } from '../src/vectorize/primitives.js';
 import { trace } from '../src/vectorize/trace.js';
+import { quantize, quantizeAlpha, NearestColor } from '../src/vectorize/quantize.js';
+import { connectedComponents } from '../src/vectorize/components.js';
+import { traceComponents } from '../src/vectorize/contour.js';
 import { rasterizeSvg } from '../src/io/rasterize.js';
 import { compareImages } from '../src/metrics/index.js';
 import { createImage, setPixel } from './fixtures.js';
@@ -55,6 +58,51 @@ function roundRect(size: number, x0: number, y0: number, w: number, h: number, r
 }
 
 const traceOpts = { colors: 2, primitives: true } as const;
+
+const PIE: [number, number, number][] = [
+  [214, 69, 65], [32, 96, 160], [40, 150, 110], [235, 180, 40],
+];
+
+/**
+ * A pie or donut chart. `cuts` are the upper angular bounds of each slice, and
+ * `r0 > 0` makes it a ring. `legend` paints a swatch of every slice colour off
+ * to the side, which is what a real chart looks like and what stops each colour
+ * from being a single isolated region.
+ */
+function chart(
+  size: number,
+  r0: number,
+  r1: number,
+  cuts: number[],
+  legend = false,
+): RasterImage {
+  const img = blank(size);
+  const c = size / 2;
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      let hit = -1;
+      // Swatches sized like a real chart legend — 18px squares, well clear of
+      // the despeckle threshold. An earlier 10x8 swatch was small enough that
+      // adaptive despeckling absorbed it, which is a fixture flaw, not a sector
+      // bug: a legend nobody could read is not the case this test is about.
+      if (legend && x > size - 26 && x < size - 8 && y > 8 && y < 8 + 22 * cuts.length) {
+        hit = Math.floor((y - 8) / 22);
+      } else {
+        const d = Math.hypot(x - c, y - c);
+        if (d <= r1 && d >= r0) {
+          let a = Math.atan2(y - c, x - c);
+          if (a < 0) a += 2 * Math.PI;
+          hit = cuts.findIndex((t) => a <= t);
+          if (hit < 0) hit = cuts.length - 1;
+        }
+      }
+      if (hit >= 0) setPixel(img, x, y, ...PIE[hit % PIE.length]);
+    }
+  return img;
+}
+
+/** `<path>` elements whose `d` is real arc commands, not a flattened polygon. */
+const arcPaths = (svg: string): number => (svg.match(/<path d="M[^"]*A[^"]*"/g) ?? []).length;
 
 describe('detectPrimitive (unit)', () => {
   it('reads a rectangle contour exactly', () => {
@@ -187,3 +235,165 @@ describe('trace --primitives', () => {
     expect(prim.length).toBeLessThan(path.length);
   });
 });
+
+describe('sectors: pie slices and ring segments', () => {
+  it('reads a pie slice back at its true centre, radius and sweep', () => {
+    const img = chart(240, 0, 100, [1.7, 3.4, 5.1, 2 * Math.PI]);
+    const loops = soleLoops(img, 5);
+    // Four slices, and every one of them recognised.
+    expect(loops.length).toBe(4);
+    for (const pts of loops) {
+      const p = detectPrimitive(pts, { maxError: 1 });
+      expect(p?.kind).toBe('sector');
+      if (p?.kind !== 'sector') continue;
+      // The mask is tested at pixel indices, so in the contour's corner-lattice
+      // coordinates the true centre is half a pixel along each axis.
+      expect(Math.hypot(p.cx - 120.5, p.cy - 120.5)).toBeLessThan(1);
+      expect(p.r0).toBe(0);
+      expect(p.r1).toBeGreaterThan(99);
+      expect(p.r1).toBeLessThan(101);
+    }
+    // The four sweeps must tile the full turn: 1.7 + 1.7 + 1.7 + 1.183.
+    const total = loops
+      .map((pts) => detectPrimitive(pts, { maxError: 1 }))
+      .reduce((s, p) => s + (p?.kind === 'sector' ? p.a1 - p.a0 : 0), 0);
+    expect(total).toBeGreaterThan(2 * Math.PI - 0.06);
+    expect(total).toBeLessThan(2 * Math.PI + 0.06);
+  });
+
+  it('reads a ring segment back with its inner radius', () => {
+    const img = chart(240, 55, 100, [2.0, 4.0, 2 * Math.PI]);
+    const loops = soleLoops(img, 4);
+    expect(loops.length).toBe(3);
+    for (const pts of loops) {
+      const p = detectPrimitive(pts, { maxError: 1 });
+      expect(p?.kind).toBe('sector');
+      if (p?.kind !== 'sector') continue;
+      expect(p.r0).toBeGreaterThan(54);
+      expect(p.r0).toBeLessThan(56);
+      expect(p.r1).toBeGreaterThan(99);
+      expect(p.r1).toBeLessThan(101);
+    }
+  });
+
+  it('emits real arc commands, not a flattened polygon', () => {
+    const img = chart(240, 0, 100, [1.7, 3.4, 5.1, 2 * Math.PI]);
+    const out = trace(img, { colors: 5, primitives: true });
+    expect(arcPaths(out.svg)).toBe(4);
+    // An elliptical-arc command with the sector's radius, twice per slice for a
+    // ring and once for a pie.
+    expect(out.svg).toMatch(/A100(\.\d+)? 100(\.\d+)? 0 [01] 1 /);
+  });
+
+  it('shrinks a pie chart and a donut chart', () => {
+    for (const [r0, cuts, colors] of [
+      [0, [1.7, 3.4, 5.1, 2 * Math.PI], 5],
+      [55, [2.0, 4.0, 2 * Math.PI], 4],
+    ] as const) {
+      const img = chart(240, r0, 100, [...cuts]);
+      const on = trace(img, { colors, primitives: true });
+      const off = trace(img, { colors });
+      expect(arcPaths(on.svg)).toBe(cuts.length);
+      expect(arcPaths(off.svg)).toBe(0);
+      expect(on.svg.length).toBeLessThan(off.svg.length / 2);
+    }
+  });
+
+  it('still fires when a colour also appears in a legend', () => {
+    // The case that matters and that a per-class test never reaches: each slice
+    // colour is used twice, so no colour is a single isolated region.
+    const img = chart(240, 0, 95, [1.7, 3.4, 5.1, 2 * Math.PI], true);
+    const out = trace(img, { colors: 5, primitives: true });
+    expect(arcPaths(out.svg)).toBe(4);
+    // The swatches are rectangles, and they are still emitted as such.
+    expect(out.svg).toContain('<rect');
+  });
+
+  it('renders the chart as faithfully as the Bézier outline it replaces', async () => {
+    const img = chart(240, 55, 100, [2.0, 4.0, 2 * Math.PI]);
+    const on = await rasterizeSvg(trace(img, { colors: 4, primitives: true }).svg, { width: 240 });
+    const off = await rasterizeSvg(trace(img, { colors: 4 }).svg, { width: 240 });
+    const onSsim = compareImages(img, on.image).ssim;
+    const offSsim = compareImages(img, off.image).ssim;
+    expect(onSsim).toBeGreaterThan(0.98);
+    // The same trade the accepted <circle> makes: an ideal outline cannot follow
+    // a pixel staircase exactly, and gives up a little SSIM to say what it is.
+    expect(onSsim).toBeGreaterThan(offSsim - 0.03);
+  });
+
+  it('refuses a triangle, whose "arc" is a straight edge', () => {
+    // A wedge with the same apex and the same two radial edges as a pie slice,
+    // closed by a chord instead of an arc. Its sagitta is zero.
+    const img = blank(200);
+    for (let y = 0; y < 200; y++)
+      for (let x = 0; x < 200; x++) {
+        const dx = x - 100, dy = y - 100;
+        if (dy < 0 || dy > 80) continue;
+        if (Math.abs(dx) <= dy * 0.7) setPixel(img, x, y, ...FG);
+      }
+    const out = trace(img, traceOpts);
+    expect(arcPaths(out.svg)).toBe(0);
+  });
+
+  it('refuses a photograph', () => {
+    const size = 120;
+    const img = createImage(size, size);
+    let s = 7;
+    const rnd = (): number => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++)
+        setPixel(img, x, y,
+          40 + 180 * (x / size) + rnd() * 30,
+          30 + 150 * (y / size) + rnd() * 30,
+          200 - (120 * (x * y)) / (size * size) + rnd() * 30);
+    expect(arcPaths(trace(img, { colors: 12, primitives: true }).svg)).toBe(0);
+  });
+
+  it('leaves a full disc and a full annulus to the circle fitter', () => {
+    expect(arcPaths(trace(disc(80, 40, 40, 30), traceOpts).svg)).toBe(0);
+    const ring = blank(200);
+    for (let y = 0; y < 200; y++)
+      for (let x = 0; x < 200; x++) {
+        const d = Math.hypot(x - 100, y - 100);
+        if (d <= 80 && d >= 45) setPixel(ring, x, y, ...FG);
+      }
+    expect(arcPaths(trace(ring, traceOpts).svg)).toBe(0);
+  });
+
+  it('is off by default', () => {
+    const img = chart(240, 0, 100, [1.7, 3.4, 5.1, 2 * Math.PI]);
+    expect(arcPaths(trace(img, { colors: 5 }).svg)).toBe(0);
+  });
+});
+
+/**
+ * The solid boundary loops of every colour except the largest, taken off the
+ * real quantise → segment → contour chain. A unit test that fed `detectPrimitive`
+ * a hand-written polygon would be testing an idealised input; these are the
+ * exact staircases {@link trace} hands it.
+ */
+function soleLoops(img: RasterImage, colors: number): Int32Array[] {
+  const n = img.width * img.height;
+  const levels = quantizeAlpha(img, 8);
+  const palette = quantize(img, colors, { refineIterations: 4 });
+  const nearest = new NearestColor(palette, n);
+  const classes = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    classes[i] = nearest.index(img.data[i * 4], img.data[i * 4 + 1], img.data[i * 4 + 2]) * levels.length;
+  }
+  const comps = connectedComponents(classes, img.width, img.height, -1);
+  const groups = traceComponents(comps.labels, img.width, img.height, comps.count, 'left');
+
+  const areaOf = new Map<number, number>();
+  for (let c = 0; c < comps.count; c++) {
+    areaOf.set(comps.classes[c], (areaOf.get(comps.classes[c]) ?? 0) + comps.areas[c]);
+  }
+  const background = [...areaOf.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+  const out: Int32Array[] = [];
+  for (let c = 0; c < comps.count; c++) {
+    if (comps.classes[c] === background) continue;
+    for (const loop of groups[c]) if (loop.signedArea > 0) out.push(loop.pts);
+  }
+  return out;
+}
