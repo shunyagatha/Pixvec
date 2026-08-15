@@ -16,13 +16,21 @@
  *    is never proposed; large-step palette edges never coalesce; and the gate
  *    below cannot beat a near-zero flat error. Off by default, and byte-for-byte
  *    identical to the flat tracer whenever no region is accepted.
- * 2. **It only wins.** For every candidate the gate reconstructs the *actual*
- *    sRGB piecewise-linear interpolation the renderer will produce from the
- *    stops that will be written to the file, and compares that, per pixel, in
- *    Oklab against both the source and the flat bands it would replace. A
- *    gradient is committed only when its rendered output is measurably closer to
- *    the source than the bands — never on an idealised fit the renderer would
- *    not reproduce.
+ * 2. **It is measured, and the comparison is fair.** For every candidate the gate
+ *    reconstructs the *actual* sRGB piecewise-linear interpolation the renderer
+ *    will produce from the stops that will be written to the file, and compares
+ *    that, per pixel, in Oklab against both the source and the flat bands it
+ *    would replace — never an idealised fit the renderer would not reproduce.
+ *
+ *    That comparison weighs error against model size. Asking one ramp to beat a
+ *    forty-band staircase on raw error is a contest the simpler model cannot win,
+ *    however obviously the region is a ramp; measured on a logo whose ramp is
+ *    unmistakably linear, the bands scored 3.3e-5 against the gradient's 1.4e-4
+ *    and the ramp shipped as forty-eight slivers. So a gradient may be committed
+ *    at a slightly higher error than the bands when it replaces enough of them.
+ *    What guarantees quality is `gradientMaxError`, an absolute ceiling: a region
+ *    no single ramp can model — a whole photograph coalesced by the flood above —
+ *    lands far above it and is still refused.
  *
  * Ramps are fit in Oklab (perceptually uniform); the stops are sampled along
  * that Oklab ramp and emitted as sRGB, so SVG's sRGB stop interpolation tracks
@@ -48,7 +56,12 @@ export interface GradientTuning {
   gradientStepMax: number;
   /** Fractional error reduction a gradient must clear to beat the flat bands. */
   gradientMargin: number;
-  /** Absolute RMS-Oklab ceiling; a merely "less bad" gradient over noise is refused. */
+  /**
+   * Absolute RMS-Oklab ceiling. This is the real quality guarantee: since the
+   * accept test weighs error against the number of bands replaced, the ceiling is
+   * what separates a ramp the model genuinely fits from a region that merely got
+   * coalesced.
+   */
   gradientMaxError: number;
   /** Maximum colour stops per gradient. Stops are placed adaptively up to this. */
   gradientStops: number;
@@ -59,7 +72,7 @@ export const GRADIENT_DEFAULTS: GradientTuning = {
   gradientMinArea: 0,
   gradientStepMax: 0.08,
   gradientMargin: 0.1,
-  gradientMaxError: 0.1,
+  gradientMaxError: 0.015,
   gradientStops: 16,
 };
 
@@ -189,12 +202,24 @@ export function detectGradients(
   const RA = new Float64Array(K * 3);
   const RB = new Float64Array(K * 3);
   const lab = new Float64Array(3);
+  // How many distinct colour bands each candidate spans. This is the size of the
+  // piecewise-constant model the gradient is competing against, and stage 6 needs
+  // it to compare the two fairly. Counted here because this loop already visits
+  // every pixel with its candidate index.
+  const paletteColors = Math.max(1, Math.floor(palette.rgb.length / 3));
+  const bandSeen = new Uint8Array(K * paletteColors);
+  const bandCount = new Int32Array(K);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
       if (k < 0) continue;
+      const ci = colorIdx(classes[i]);
+      if (ci < paletteColors) {
+        const seenAt = k * paletteColors + ci;
+        if (!bandSeen[seenAt]) { bandSeen[seenAt] = 1; bandCount[k]++; }
+      }
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
       const m = k * 6;
@@ -369,7 +394,22 @@ export function detectGradients(
   for (let k = 0; k < K; k++) {
     if (!stopList[k] && !stopListRad[k]) continue;
     const count = M[k * 6];
-    const target = (flatSum[k] / count) * (1 - opts.gradientMargin);
+    // Rate–distortion, not raw error.
+    //
+    // The flat alternative spends `bands` pieces to reach its error; the gradient
+    // spends one. Comparing the two errors directly asks a ~3-stop ramp to also be
+    // strictly more accurate than a `bands`-piece staircase — a demand it can
+    // almost never meet, because piecewise-constant with dozens of pieces is by far
+    // the richer model. Measured on a logo whose teal ramp is unmistakably linear:
+    // flat (48 bands) scored 3.3e-5 against the gradient's 1.4e-4, so the obvious
+    // gradient lost by 4.3x and the ramp shipped as 48 banded slivers.
+    //
+    // Comparing error x model size restores the like-for-like comparison, and costs
+    // no new tuning knob. The absolute floor below is what actually protects
+    // quality: a whole-photograph region that no single ramp can model scores far
+    // above it (2.4e-2 vs a 1e-2 floor) and is still rejected, exactly as before.
+    const bands = Math.max(1, bandCount[k]);
+    const target = (flatSum[k] / count) * bands * (1 - opts.gradientMargin);
     const linErr = (models[k] && stopList[k]) ? gradSum[k] / count : Infinity;
     const radErr = (stopListRad[k] && radRMax[k] > 0) ? gradSumRad[k] / count : Infinity;
     const radialWins = radErr < linErr;

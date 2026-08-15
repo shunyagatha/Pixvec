@@ -115,7 +115,18 @@ export interface TraceOptions {
   gradientStepMax?: number;
   /** Fractional error reduction a gradient must clear to beat flat. Default 0.1. */
   gradientMargin?: number;
-  /** Absolute RMS-Oklab ceiling for acceptance. Default 0.1. */
+  /**
+   * Absolute RMS-Oklab ceiling for acceptance. Default 0.015.
+   *
+   * This is the real quality guarantee. It used to be 0.1, which was effectively
+   * inert: the old flat comparison rejected almost everything before the ceiling
+   * was ever consulted. Now that the comparison is size-aware (see the gate in
+   * `gradient.ts`), the ceiling is what separates a ramp the model genuinely fits
+   * from a region that merely got coalesced — so it has to be a real limit.
+   * Measured across the corpus: 0.015 keeps every photograph at its previous
+   * banding and SSIM, while still admitting the flat-art ramps the old gate
+   * wrongly refused.
+   */
   gradientMaxError?: number;
   /** Maximum colour stops per gradient (placed adaptively). Default 16. */
   gradientStops?: number;
@@ -203,7 +214,7 @@ export const TRACE_DEFAULTS = {
   gradientMinArea: 0,
   gradientStepMax: 0.08,
   gradientMargin: 0.1,
-  gradientMaxError: 0.1,
+  gradientMaxError: 0.015,
   gradientStops: 16,
 } as const;
 

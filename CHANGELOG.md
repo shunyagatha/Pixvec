@@ -4,6 +4,18 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v1.41.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.41.0)
+
+A ramp is judged against the bands it replaces, not against raw error it could never win.
+
+## [v1.40.1](https://github.com/shunyagatha/Vecline/releases/tag/v1.40.1)
+
+The size-budget solver overshot its target, sometimes by 6x.
+
+## [v1.40.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.40.0)
+
+Sector primitive — pie slices and donut segments as real arcs — and a despeckle threshold read from the image.
+
 ## [v1.39.1](https://github.com/shunyagatha/Vecline/releases/tag/v1.39.1)
 
 Docs catch up with what shipped.

@@ -1776,7 +1776,7 @@ program
   )
   .option('--right-angle', 'snap near-axis right-angle corners to exact 90° (crisper UI/pixel art)')
   .option('--right-angle-threshold <deg>', 'degrees of slack for --right-angle', floatArg('--right-angle-threshold', 0, 45))
-  .option('--gradients', 'reconstruct smooth colour ramps as SVG gradients — de-bands photos, only where it measurably beats flat')
+  .option('--gradients', 'reconstruct smooth colour ramps as SVG gradients — accepted only where the ramp is a measurably accurate fit and replaces more bands than it costs')
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')

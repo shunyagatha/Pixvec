@@ -432,7 +432,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--fill-strategy <how>` | How each palette colour is chosen from its cluster: `mean` (default), `dominant`, `median` (potrace's `fillStrategy`) |
 | `--right-angle` | Snap near-axis right-angle corners to exact 90° — crisper UI, screenshots, pixel art (imagetracerjs's `rightangleenhance`) |
 | `--right-angle-threshold <deg>` | Degrees of slack for `--right-angle` (default 12) |
-| `--gradients` | Reconstruct smooth colour ramps (skies, skin) as SVG gradients — de-bands photos, only where it measurably beats a flat fill |
+| `--gradients` | Reconstruct smooth colour ramps (skies, skin, brand artwork) as SVG gradients. Accepted only where the ramp is a measurably accurate fit *and* replaces more bands than it costs — a fair comparison against the multi-band flat alternative, not a raw error contest the simpler model could never win |
 | `--primitives` | Recognise circles, ellipses, rectangles, rounded rectangles and sectors (pie/donut) and emit the true shape — smaller, editable, a real arc for CAD |
 | `--primitive-error <px>` | Per-vertex residual budget for `--primitives` (default 1.0) |
 | `--layers` | Emit one named Inkscape/Illustrator **layer** per colour — editable, screen-print/vinyl separation-ready |

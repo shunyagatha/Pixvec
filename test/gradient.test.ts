@@ -84,6 +84,23 @@ describe('gradient output', () => {
     expect(grad.svg.length).toBeLessThan(flat.svg.length / 2);
   });
 
+  // The bug this guards: acceptance used to compare the gradient's error against
+  // the flat bands' error directly. A ramp cut into many bands is a far richer
+  // model than one linear gradient, so the bands essentially always won and the
+  // ramp shipped as dozens of slivers. The comparison is now size-aware, so a
+  // ramp is still recognised as a ramp when the palette is large.
+  it('reconstructs a ramp even when the flat alternative has many bands', () => {
+    const img = ramp(120, 60);
+    const many = trace(img, { colors: 48, gradients: true });
+    expect(many.svg).toContain('<linearGradient');
+    expect(referencesResolve(many.svg)).toBe(true);
+    // The win is structural: one paint instead of a stack of bands.
+    const flat = trace(img, { colors: 48 });
+    const fills = (s: string) => new Set(s.match(/fill="#[0-9a-f]{3,6}"/g) ?? []).size;
+    expect(fills(many.svg)).toBeLessThan(fills(flat.svg));
+    expect(many.svg.length).toBeLessThan(flat.svg.length);
+  });
+
   it('emits <defs> only when a gradient is present', () => {
     expect(trace(ramp(80, 40), { colors: 16, gradients: true }).svg).toContain('<defs>');
     expect(trace(pixelArt(4), { colors: 16, gradients: true }).svg).not.toContain('<defs>');
