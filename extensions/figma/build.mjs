@@ -17,6 +17,28 @@
 import { build } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Bundle the engine from the repo's OWN build, not from a published copy in
+ * node_modules.
+ *
+ * `extensions/figma/node_modules/vecline` is whatever version `npm install`
+ * fetched — 1.44.0 at the time of writing — and esbuild resolved `vecline/core`
+ * there, which meant the plugin silently shipped the published engine while the
+ * repo's src/ moved ahead. A whole round of centreline fixes lived in the repo,
+ * passed its tests, and never reached the bundle; the plugin was verified in
+ * Figma against an engine it was not actually running. Aliasing to ../../dist
+ * makes `npm run build` at the repo root the single source of truth, so the
+ * plugin can never again bundle an engine that differs from the one under test.
+ */
+const CORE = resolve(here, '../../dist/esm/core.js');
+const veclineAlias = { name: 'vecline-local', setup(b) {
+  b.onResolve({ filter: /^vecline\/core$/ }, () => ({ path: CORE }));
+} };
 
 /**
  * Typecheck first, here rather than only in the npm script.
@@ -43,7 +65,9 @@ await build({
   logLevel: 'warning',
 });
 
-// The iframe half, bundled to a string so it can be inlined.
+// The iframe half, bundled to a string so it can be inlined. The engine is
+// aliased to the repo's local build (see veclineAlias) so it is always the code
+// under test, never a stale published copy.
 const ui = await build({
   entryPoints: ['src/ui.ts'],
   bundle: true,
@@ -52,6 +76,7 @@ const ui = await build({
   minify: true,
   write: false,
   logLevel: 'warning',
+  plugins: [veclineAlias],
 });
 const js = ui.outputFiles[0].text;
 

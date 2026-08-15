@@ -207,13 +207,14 @@ export function applyThreshold(img: RasterImage, opts: ThresholdOptions = {}): T
       continue;
     }
     const lum = luma709(data[o], data[o + 1], data[o + 2]);
-    // Otsu returns the cutoff `t` such that pixels with luminance <= t are the
-    // dark class, so "dark is foreground" tests `lum <= cutoff`. Using `<` would
-    // drop pixels sitting exactly at the returned threshold — invisible on a
-    // continuous photo histogram, but wrong on clean bilevel input.
-    // Adaptive decides ink from the neighbourhood; `blackOnWhite` still chooses
-    // which side of that decision is the shape, so inverted art works either way.
-    const dark = mask ? mask[i] === 1 : lum <= cutoff;
+    // Compare round(luma) against the cutoff, because the cutoff was chosen from
+    // a histogram binned on round(luma). Comparing the raw float instead drops
+    // any pixel whose luminance rounds down into the dark class but whose
+    // fractional part sits just above the integer cutoff — e.g. #334155 at 63.47
+    // against a cutoff of 63 — which silently loses about half of all flat ink
+    // colours. Adaptive decides ink from the neighbourhood; `blackOnWhite` still
+    // chooses which side is the shape, so inverted art works either way.
+    const dark = mask ? mask[i] === 1 : Math.round(lum) <= cutoff;
     const isForeground = blackOnWhite ? dark : !dark;
     const c = isForeground ? fg : bg;
     out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;

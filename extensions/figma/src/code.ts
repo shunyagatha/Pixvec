@@ -46,7 +46,7 @@ const EXPORT_SCALE = 1;
 figma.showUI(__html__, { width: 340, height: 460, themeColors: true });
 
 type UiMessage =
-  | { type: 'traced'; svg: string; sourceId: string; ssim: number | null; psnr: number | null; ms: number; bytes: number }
+  | { type: 'traced'; svg: string; sourceId: string; ssim: number | null; psnr: number | null; ms: number; bytes: number; note?: string }
   | { type: 'failed'; message: string }
   | { type: 'ready' };
 
@@ -88,6 +88,9 @@ figma.ui.onmessage = async (msg: UiMessage) => {
         ? 'not measured'
         : `SSIM ${msg.ssim.toFixed(4)}${msg.psnr !== null && isFinite(msg.psnr) ? ` · PSNR ${msg.psnr.toFixed(1)} dB` : ' · PSNR ∞'}`;
       figma.notify(`Vecline → ${(msg.bytes / 1024).toFixed(1)} KB · ${quality} · ${msg.ms} ms`);
+      // The medial-axis advisory rides as its own longer-lived toast so it is
+      // not lost behind the metrics line.
+      if (msg.note) figma.notify(`Vecline: ${msg.note}`, { timeout: 6000 });
     } catch (err) {
       // A failure here means the SVG did not survive the importer, which is
       // worth saying plainly rather than leaving an empty canvas.

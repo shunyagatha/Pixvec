@@ -54,19 +54,19 @@ type Mode = 'trace' | 'centerline';
 const SIMPLIFY = 4;
 
 /**
- * Which side of the image is the ink.
+ * A polarity hint for the opaque case: is the ink darker than the ground.
  *
- * `centerlineTrace` defaults to treating dark pixels as the line, which is right
- * for a photograph of paper and wrong for artwork sitting on a dark canvas — and
- * a Figma file is as often dark as light. Pointed the wrong way it skeletonises
- * the *background* instead of the strokes: measured on the Vecline mark, correct
- * polarity is 19 polylines against 13 on a dark ground, and 14 against 11 on a
- * light one.
+ * This only decides anything when the layer is opaque *and* has two luminance
+ * populations — a shape drawn over a filled frame. There, `centerlineTrace`
+ * needs to know which side is the line, and the rule is that ink is the minority
+ * of an image: a drawing is mostly not drawing. Pointed the wrong way it
+ * skeletonises the background instead of the strokes.
  *
- * The rule is that ink is the minority of an image — a drawing is mostly not
- * drawing. Fully transparent pixels are neither, so they are skipped rather than
- * counted as dark, which is what a naive luma average over RGBA would do to
- * every logo exported with a transparent background.
+ * For the common design-tool case — a shape exported on a transparent ground —
+ * the engine decides from alpha and ignores this value entirely, which is what
+ * makes it safe to compute from opaque pixels only. Counting a transparent
+ * export's non-existent background would flip the answer, but the engine never
+ * asks in that case.
  */
 function inkIsDark(image: RasterImage): boolean {
   const d = image.data;
@@ -82,13 +82,27 @@ function inkIsDark(image: RasterImage): boolean {
   return dark <= light;
 }
 
+/** The SVG, its stroke count, and an optional advisory about the input. */
+interface Traced { svg: string; strokes: number; note?: string }
+
+/**
+ * A centreline is the medial axis, and a solid filled shape does not have one —
+ * its medial axis is a fan of ribs reaching to the boundary, not a stroke. That
+ * is inherent, not a bug: centreline is for line art, signatures and strokes.
+ * When the average ink width is far wider than any stroke, say so, so a designer
+ * who reached for the wrong mode is pointed at Trace rather than left puzzling
+ * over a fan. The result is still returned — engraving toolpaths legitimately
+ * want a fill's medial axis — just annotated.
+ */
+const SOLID_WIDTH_PX = 24;
+
 function vectorize(
   image: RasterImage,
   mode: Mode,
   colors: number,
   gradients: boolean,
   unevenLighting: boolean,
-): string {
+): Traced {
   // Centreline is a fundamentally different operation, not a flag on the same
   // one: it binarises, thins to a skeleton and emits open stroked polylines,
   // where trace emits closed filled contours.
@@ -106,13 +120,19 @@ function vectorize(
   // A design tool mostly holds vector artwork, so the global cutoff is the
   // default and the photograph case is a checkbox rather than an assumption.
   if (mode === 'centerline') {
-    return centerlineTrace(image, {
+    const out = centerlineTrace(image, {
       adaptive: unevenLighting,
       blackOnWhite: inkIsDark(image),
       simplify: SIMPLIFY,
-    }).svg;
+    });
+    const meanWidth = out.length > 0 ? out.inkPixels / out.length : 0;
+    const note = out.paths > 0 && meanWidth > SOLID_WIDTH_PX
+      ? 'This looks like a solid shape — Centreline traces its medial axis. Trace mode is cleaner for fills.'
+      : undefined;
+    return { svg: out.svg, strokes: out.paths, note };
   }
-  return trace(image, { colors, gradients }).svg;
+  const svg = trace(image, { colors, gradients }).svg;
+  return { svg, strokes: (svg.match(/<path|<rect|<circle|<ellipse|<polygon/g) ?? []).length };
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -213,7 +233,24 @@ async function run(): Promise<void> {
     const colors = Number(($('colors') as HTMLInputElement).value);
     const gradients = ($('gradients') as HTMLInputElement).checked;
     const uneven = ($('uneven') as HTMLInputElement).checked;
-    const svg = vectorize(image, mode(), colors, gradients, uneven);
+    const { svg, strokes, note } = vectorize(image, mode(), colors, gradients, uneven);
+
+    // A result with no geometry is a failure, not a success worth scoring. It
+    // used to be reported as a triumph: an empty centreline trace of a
+    // transparent layer rendered to a blank image, and the score — computed from
+    // premultiplied RGB, blind to the alpha it dropped — came back a perfect
+    // 1.0000 over nothing. Say so plainly and insert nothing, rather than place
+    // an empty layer beside the original under a green checkmark.
+    if (strokes === 0) {
+      setStatus(
+        mode() === 'centerline'
+          ? 'No strokes found. Try Trace mode, or check the layer is not empty.'
+          : 'Nothing to trace in this layer.',
+        'error',
+      );
+      parent.postMessage({ pluginMessage: { type: 'failed', message: 'the trace produced no geometry' } }, '*');
+      return;
+    }
 
     setStatus('Scoring…', 'busy');
     const rendered = await rasterize(svg, image.width, image.height);
@@ -231,9 +268,12 @@ async function run(): Promise<void> {
         psnr: q ? q.psnr : null,
         ms: Math.round(performance.now() - started),
         bytes: svg.length,
+        note,
       },
     }, '*');
-    setStatus(q ? `Done · SSIM ${q.ssim.toFixed(4)}` : 'Done · not measured');
+    // The advisory, if any, is what a designer needs to see — lead with it.
+    // Otherwise the measured score, which is the point of the plugin.
+    setStatus(note ?? (q ? `Done · SSIM ${q.ssim.toFixed(4)}` : 'Done · not measured'), note ? 'idle' : 'idle');
   } catch (err) {
     setStatus((err as Error).message, 'error');
     parent.postMessage({ pluginMessage: { type: 'failed', message: (err as Error).message } }, '*');

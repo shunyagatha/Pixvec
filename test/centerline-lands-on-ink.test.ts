@@ -72,6 +72,31 @@ function diagonalBand(light: boolean): RasterImage {
   return img;
 }
 
+/**
+ * A diagonal bar with mitred 45° ends that sit INSIDE the frame — a rotated
+ * rectangle, which is what an arrow shaft or any tilted stroke is.
+ *
+ * This is the shape that exposed the thinning bug, and the flat-ended
+ * `diagonalBand` above does not: `diagonalBand` runs off the image edge, so its
+ * ends are clipped square and the thinner never sees a diagonal tip to peel
+ * from. A bar whose ends terminate within the frame does, and Zhang–Suen ate it
+ * from both ends down to a two-pixel dot. The band runs from near one corner to
+ * near the opposite one along y = x, half-width HALF, cut off past `margin`.
+ */
+function diagonalBar(HALF: number): RasterImage {
+  const W = 240, H = 240, margin = 40;
+  const img = createImage(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const across = Math.abs(x - y) <= HALF;
+      const within = x >= margin && x <= W - margin && y >= margin && y <= H - margin;
+      const v = across && within ? 30 : 230;
+      setPixel(img, x, y, v, v, v);
+    }
+  }
+  return img;
+}
+
 describe('centerline skeletons land on the ink', () => {
   for (const light of [false, true]) {
     const what = light ? 'light artwork on a dark ground' : 'dark artwork on a light ground';
@@ -115,6 +140,30 @@ describe('centerline skeletons land on the ink', () => {
     );
     expect(length / chord).toBeLessThan(1.005);
   });
+
+  for (const HALF of [2, 6, 14]) {
+    it(`recovers the full length of a ${HALF * 2}px-wide diagonal bar with mitred ends`, () => {
+      // The thinning-erosion regression. A diagonal bar that ends inside the
+      // frame used to thin down to a two-pixel dot that the length filter then
+      // deleted, so the tracer returned nothing at all for a rotated stroke.
+      // The bar here spans ~160px along its axis; a correct skeleton is most of
+      // that, inset a little at each mitred end. Anything under a third of the
+      // length means the ends are being eaten.
+      const img = diagonalBar(HALF);
+      const polylines = centerlinePolylines(img, { blackOnWhite: true, simplify: 4 });
+
+      expect(polylines.length).toBeGreaterThan(0);
+      const total = polylines.reduce((sum, line) => {
+        let len = 0;
+        for (let i = 1; i < line.length; i++) {
+          len += Math.hypot(line[i]!.x - line[i - 1]!.x, line[i]!.y - line[i - 1]!.y);
+        }
+        return sum + len;
+      }, 0);
+      expect(total).toBeGreaterThan(120);
+      expect(fractionOnInk(img, polylines)).toBeGreaterThan(0.95);
+    });
+  }
 
   it('does not wander onto the background when the ink polarity is right', () => {
     // The plugin's failing case in miniature: light shapes, dark ground, large
