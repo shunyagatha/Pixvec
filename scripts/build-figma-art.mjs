@@ -251,6 +251,21 @@ ${mark(22, 24, 84, '#1B1220')}
 writeFileSync(join(ART, 'icon.svg'), icon);
 writeFileSync(join(ROOT, 'extensions', 'figma', 'icon.png'), render(icon, 128));
 
+/* -- 5. the Community profile avatar ------------------------------------- */
+/* Same tile at 512, because Figma crops the profile picture to a circle and
+   renders it at several sizes; 128 upscales visibly on the profile header.
+   The corner radius is dropped since a circular crop discards it anyway, and
+   the mark is inset further so the circle does not clip the arrowhead. */
+const avatar = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs><linearGradient id="vgrad" x1="0" y1="1" x2="1" y2="0">
+  <stop offset="0" stop-color="#A3005A"/><stop offset="1" stop-color="#FF4D9E"/>
+</linearGradient></defs>
+<rect width="512" height="512" fill="#FDFBFD"/>
+${mark(126, 132, 260, '#1B1220')}
+</svg>`;
+writeFileSync(join(ART, 'avatar.svg'), avatar);
+writeFileSync(join(ROOT, 'extensions', 'figma', 'avatar.png'), render(avatar, 512));
+
 console.log(`thumbnail.png  ${W}x${H}`);
 console.log(`icon.png       128x128`);
 console.log(`panel  gradients off  SSIM ${m.off.ssim.toFixed(6)}  PSNR ${m.off.psnr.toFixed(2)} dB  ${m.off.shapes} paths  ${m.off.kb} KB`);
