@@ -252,7 +252,7 @@ Two rows deserve comment, because glossing over them is how tools mislead you:
 
 ## Compared with other vectorizers
 
-Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Vecline's own view of quality. The field is potrace, imagetracerjs, and — the strongest modern open-source rival — **vtracer** (VisionCortex, Rust; an optional dev dependency, `npm install --no-save @neplex/vectorizer`).
+Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Vecline's own view of quality. The field is potrace, imagetracerjs, and — the strongest modern open-source rival — **vtracer** (VisionCortex, Rust). Point `VECLINE_VTRACER` at [vtracer's released binary](https://github.com/visioncortex/vtracer/releases) to score the tool its authors actually ship; failing that the harness falls back to the `@neplex/vectorizer` binding, and if neither is present the row is simply absent rather than guessed at.
 
 **Synthetic fixtures** — reproducible without licensing anyone's photographs:
 
@@ -263,11 +263,11 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 | | **vecline (auto)** | **1.4 KB** | **∞** | **1.0000** | **0.000** |
 | **Colour art** | potrace posterize | 1.9 KB | 14.61 dB | 0.8010 | 21.302 |
 | | imagetracerjs | 1.6 KB | 26.56 dB | 0.9363 | 0.662 |
-| | vtracer | 2.0 KB | 27.88 dB | 0.9490 | 0.583 |
+| | vtracer | **1.2 KB** | 27.88 dB | 0.9490 | 0.582 |
 | | **vecline (auto)** | 1.8 KB | **∞** | **1.0000** | **0.000** |
 | **Photo** (gradient + noise) | potrace posterize | 11.5 KB | 13.19 dB | 0.6024 | 23.911 |
 | | imagetracerjs | 11.8 KB | 26.85 dB | 0.7143 | 5.623 |
-| | vtracer | 72.6 KB | **32.50 dB** | **0.7958** | 3.053 |
+| | vtracer | 42.7 KB | **32.53 dB** | **0.7979** | 3.049 |
 | | **vecline (auto / photo)** | 19 KB | 31.12 dB | 0.7750 | **2.940** |
 | | **vecline lossless** | 43.7 KB | **∞** | **1.0000** | **0.000** |
 
@@ -276,22 +276,26 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 | Photo | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
 |---|---|--:|--:|--:|--:|
 | **Portrait** (skin, soft) | imagetracerjs | 1621 KB | 25.47 dB | 0.7093 | 5.957 |
-| | vtracer | 1661 KB | 25.79 dB | 0.7590 | 4.774 |
-| | **vecline (auto)** | **1338 KB** | **34.80 dB** | **0.9140** | **2.663** |
+| | vtracer | **987 KB** | 25.88 dB | 0.7652 | 4.743 |
+| | **vecline (auto)** | 1338 KB | **34.80 dB** | **0.9140** | **2.663** |
 | **Lighthouse** (sky) | imagetracerjs | 2010 KB | 24.58 dB | 0.7465 | 4.900 |
-| | vtracer | 1769 KB | 24.23 dB | 0.7588 | 5.678 |
-| | **vecline (auto)** | **1743 KB** | **36.26 dB** | **0.9453** | **2.575** |
+| | vtracer | **1032 KB** | 24.25 dB | 0.7624 | 5.665 |
+| | **vecline (auto)** | 1743 KB | **36.26 dB** | **0.9453** | **2.575** |
 | **Parrots** (fine detail) | imagetracerjs | 301 KB | 25.81 dB | 0.7615 | 6.317 |
-| | vtracer | 605 KB | 23.16 dB | 0.7936 | 7.735 |
+| | vtracer | 344 KB | 23.17 dB | 0.7949 | 7.728 |
 | | **vecline (auto)** | **309 KB** | **31.18 dB** | **0.8460** | **3.686** |
 
 **Bilevel** and **colour art** are bit-exact for vecline (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
 
-**The synthetic photo** — a pure gradient plus noise — is vtracer's best case, and it takes the SSIM (0.7958) with fine colour-precision tracing. vecline reaches 0.7750 at **a quarter of the file size** (19 KB vs 72.6 KB) and comfortably beats imagetracerjs (0.7143). More colours would close the last gap; it is not worth 4× the bytes on a synthetic worst case.
+**The synthetic photo** — a pure gradient plus noise — is vtracer's best case, and it takes the SSIM (0.7958) with fine colour-precision tracing. vecline reaches 0.7750 at **under half the file size** (19 KB vs 42.7 KB) and comfortably beats imagetracerjs (0.7143). More colours would close the last gap; it is not worth 2.2× the bytes on a synthetic worst case.
 
 > This row moved in v1.33.1, and downwards, so it is worth saying why. The `photo` preset used to score 0.7923 here — but `npm run compare` showed the same preset scoring *below plain auto on every real photograph*, and taking up to 136 seconds to do it, because it forced a despeckle threshold that erases the fine detail photographs are made of. Fixing that cost ~0.017 SSIM on this one synthetic fixture and gained **+0.25 SSIM at ~75× the speed** on the Kodak set below. A gradient-plus-noise pattern is not a photograph, and where the two disagree the real photographs win. `photo` and `auto` now resolve to the same measured-best configuration, so they are reported as one row.
 
-**On real photographs vecline is simply ahead — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.19**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7590 / 0.7588 / 0.7936 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR and ΔE, in a **smaller or comparable file every time** (parrots at half vtracer's size). The synthetic-worst-case story does not survive contact with actual photographs.
+**On real photographs vecline is ahead on every quality axis — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.18**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7652 / 0.7624 / 0.7949 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR (34.8 / 36.3 / 31.2 dB against 25.9 / 24.3 / 23.2) and roughly half the colour error. The synthetic-worst-case story does not survive contact with actual photographs.
+
+**And the honest counterpart: vtracer's files are smaller on two of the three.** 987 KB against vecline's 1338 on the portrait, 1032 against 1743 on the lighthouse; vecline is smaller only on parrots (309 vs 344). Those bytes buy the quality above — ~10 dB of PSNR is not a rounding error — but if size is what you are optimising for and 0.76 SSIM is enough, vtracer wins that trade and this table should not pretend otherwise.
+
+> **These numbers moved, downwards for us, in v1.38.0.** The vtracer rows were previously measured through [`@neplex/vectorizer`](https://www.npmjs.com/package/@neplex/vectorizer), a third-party napi binding. They are now measured against **vtracer's own released binary** (1.0.0-alpha.3, defaults, no tuning), which produces *substantially smaller files at the same quality* — 987 KB where the binding produced 1661 KB. The earlier table therefore claimed vecline wrote "a smaller or comparable file every time", and against the tool vtracer actually ships, that was **false**. Run `VECLINE_VTRACER=/path/to/vtracer npm run compare` to reproduce.
 
 **Gradient output** (`--gradients`, and on by default in auto mode for photos) reconstructs smooth colour ramps — skies, skin — as SVG gradients instead of flat bands. Both **`<linearGradient>`** (a directional ramp) and **`<radialGradient>`** (a vignette, a round highlight, a spotlight) are fit per region and the one that renders closer is kept — a radially-symmetric ramp has no linear direction at all, so it is fit from the region centroid outward by distance. On a synthetic vignette that is a **0.998 SSIM reconstruction in ~350 bytes** where the flat bands take 3–8 KB at 0.73–0.88. It **can only help**: a region becomes a gradient only when the gradient's *actual rendered output* (the renderer's sRGB stop interpolation, reproduced and scored per pixel in Oklab) beats the flat bands it would replace, so flat art stays byte-for-byte identical and hard edges are untouched — a concentrated de-banding win, never a regression.
 

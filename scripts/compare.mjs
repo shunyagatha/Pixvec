@@ -20,7 +20,12 @@
  *   npm run compare -- --json
  */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
+
+const execFileAsync = promisify(execFile);
 import { join } from 'node:path';
 import sharp from 'sharp';
 import potrace from 'potrace';
@@ -218,8 +223,45 @@ const veclinePhotoPreset = async (_file, source) => {
 };
 const vtracerRun = async (_file, source) => vtracer.vectorize(await toPng(source), vtracer.config);
 
+/**
+ * vtracer via its own released CLI binary.
+ *
+ * The npm route above (`@neplex/vectorizer`) is a third-party binding. When the
+ * real `vtracer` executable is available it is the more authoritative entrant —
+ * it is the artefact vtracer's authors actually ship, at its documented
+ * defaults, so a loss to it is a loss to vtracer rather than to someone's
+ * wrapper. Point `VECLINE_VTRACER` at the binary to enable this row.
+ */
+const vtracerBin = process.env.VECLINE_VTRACER && existsSync(process.env.VECLINE_VTRACER)
+  ? process.env.VECLINE_VTRACER
+  : null;
+
+const vtracerCli = async (_file, source) => {
+  const dir = await mkdtemp(join(tmpdir(), 'vecline-vtracer-'));
+  try {
+    const png = join(dir, 'in.png');
+    const svg = join(dir, 'out.svg');
+    await writeFile(png, await toPng(source));
+    // Defaults, and nothing else. vtracer's default clustering is already
+    // colour, so naming it adds nothing — and `--colormode` does not exist in
+    // 1.0.0-alpha.3 at all, which failed every row until the harness surfaced
+    // it. Passing no tuning is also the fair comparison: every other entrant is
+    // scored at its own out-of-the-box behaviour.
+    await execFileAsync(vtracerBin, ['--input', png, '--output', svg]);
+    return await readFile(svg, 'utf8');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+};
+
 // vtracer only makes sense in colour, so it joins the colour and photo panels.
-const withVtracer = (entrants) => (vtracer ? [...entrants, ['vtracer', vtracerRun]] : entrants);
+const withVtracer = (entrants) => {
+  // Prefer the real released binary; fall back to the npm binding; otherwise
+  // the row is simply absent rather than guessed at.
+  if (vtracerBin) return [...entrants, ['vtracer (cli)', vtracerCli]];
+  if (vtracer) return [...entrants, ['vtracer', vtracerRun]];
+  return entrants;
+};
 
 // The colour/photo panel: every colour tracer, plus vecline's flat trace, its
 // gradient-enabled trace, and its lossless fallback.
