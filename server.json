@@ -6,13 +6,13 @@
     "url": "https://github.com/shunyagatha/Vecline",
     "source": "github"
   },
-  "version": "1.38.0",
+  "version": "1.38.1",
   "websiteUrl": "https://vecline.xyz",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "vecline",
-      "version": "1.38.0",
+      "version": "1.38.1",
       "transport": {
         "type": "stdio"
       },
