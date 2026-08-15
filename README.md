@@ -550,10 +550,10 @@ It returns the plain Vite/Rollup plugin object (no `unplugin` dependency), and t
 
 It's a thin composite action over `vecline batch … --summary "$GITHUB_STEP_SUMMARY"`, so it inherits the pure-TS core's zero-native-binary install — no libvips to compile in CI. Run `vecline batch … --summary <file>` anywhere for the same Markdown report (per-file in/out sizes and signed savings).
 
-**AI-native.** `vecline mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Cursor, Continue — can call vecline directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Twelve tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `doc_to_images`, `office_convert`, `images_to_pdf`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["vecline", "mcp"] }`:
+**AI-native.** `vecline mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server (stdio) so an AI agent or IDE — Claude, Codex, VS Code, Cursor, Continue — can call vecline directly: *"vectorise this logo"*, *"turn this drawing into laser G-code"*, *"how close is this SVG to the PNG?"*. Twelve tools (`vectorize`, `convert`, `centerline`, `measure`, `diff`, `crop`, `doc_to_images`, `office_convert`, `images_to_pdf`, `palette`, `placeholder`, `image_info`), a dependency-free JSON-RPC implementation that adds nothing to the install. Point your client's MCP config at `{ "command": "npx", "args": ["vecline", "mcp"] }`:
 
 ```jsonc
-// Claude Desktop: claude_desktop_config.json — Cursor/Windsurf/Continue use the same shape
+// Claude Desktop: claude_desktop_config.json — Cursor, Windsurf and Continue take the same shape
 {
   "mcpServers": {
     "vecline": { "command": "npx", "args": ["-y", "vecline", "mcp"] }
@@ -561,8 +561,28 @@ It's a thin composite action over `vecline batch … --summary "$GITHUB_STEP_SUM
 }
 ```
 
+```jsonc
+// VS Code: .vscode/mcp.json (workspace) — note the key is "servers", not "mcpServers"
+{
+  "servers": {
+    "vecline": { "type": "stdio", "command": "npx", "args": ["-y", "vecline", "mcp"] }
+  }
+}
+```
+
+```toml
+# Codex: ~/.codex/config.toml — or .codex/config.toml to scope it to one project
+[mcp_servers.vecline]
+command = "npx"
+args = ["-y", "vecline", "mcp"]
+```
+
+Each of the three has a one-liner that writes the config for you:
+
 ```bash
-claude mcp add vecline -- npx -y vecline mcp   # Claude Code, one line
+claude mcp add vecline -- npx -y vecline mcp                              # Claude Code
+codex mcp add vecline -- npx -y vecline mcp                               # Codex
+code --add-mcp '{"name":"vecline","command":"npx","args":["-y","vecline","mcp"]}'  # VS Code
 ```
 
 **Or install it in one click.** Download [`vecline.mcpb`](https://github.com/shunyagatha/Vecline/releases/latest/download/vecline.mcpb) from the latest release and open it with Claude Desktop — no config file to edit. The bundle is a *launcher*, not a vendored copy of the package: it prefers a `vecline` already on your `PATH` and otherwise runs `npx -y vecline@<pinned> mcp`. That matters because the image path uses native binaries chosen per platform, and baking them in would mean shipping a separate bundle per OS/arch — with the wrong one failing silently rather than loudly. Vecline is also listed in the [official MCP registry](https://registry.modelcontextprotocol.io) as `io.github.shunyagatha/vecline` and on [Smithery](https://smithery.ai/servers/shunyagatha/vecline).
