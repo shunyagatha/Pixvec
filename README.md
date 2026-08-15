@@ -462,7 +462,29 @@ vecline verify a.png b.svg          # measure any two images
 vecline diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
 vecline batch 'src/**/*.png' -o out/ --to svg --summary "$GITHUB_STEP_SUMMARY"
 vecline mcp                         # MCP server: expose vecline as tools to AI agents/IDEs
+vecline serve                       # local bridge: let Vecline Studio use your LibreOffice
 ```
+
+**`vecline serve` — Office conversion in the browser, without uploading anything.** A browser tab has no office engine, and there are only two usual ways to give it one: bundle a ~300 MB LibreOffice-in-WASM, or upload the document to somebody's server. The first destroys instant load; the second destroys the entire privacy claim. So neither. Run `vecline serve` and [Vecline Studio](https://vecline.xyz) hands the document to **your** machine and gets it back converted:
+
+```bash
+npm install -g vecline && vecline serve
+```
+
+The chain is local at every link — `.docx` → your LibreOffice → PDF → mupdf inside the tab → pixels → traced SVG, scored against those pixels.
+
+**It was built to be attacked, then actually attacked.** The bridge binds **127.0.0.1 only**; accepts requests only from vecline.xyz or an origin you name with `--allow-origin`; answers Chrome's Private Network Access preflight only for those origins; refuses a rebound `Host`; caps one body at 64 MB and two conversions at once; and exposes exactly two endpoints that take *bytes and return bytes* — no request field anywhere names a file, so there is nothing to traverse. It runs only when you start it.
+
+A four-agent adversarial review — each finding then independently re-tested against a live server — found no breached boundary and four hardening gaps, all fixed:
+
+- A failed conversion used to return LibreOffice's raw error, which carries your temp paths, home directory and account name. Only messages written for a person are sent now; the detail stays on your console.
+- Any loopback origin on any port used to be allowed, so *every* page served from localhost had full bridge access. Now only origins you name.
+- Concurrency was unbounded — six concurrent 64 MB bodies took memory from 100 MB to 722 MB.
+- `--token=` silently started with authentication off. It now refuses.
+
+Prefer `--token-file <path>` or `VECLINE_TOKEN` over `--token`: an argument is readable from the process table by any local account, which is the one principal a token exists to fence out.
+
+Running the Studio locally? Name your dev origin: `vecline serve --allow-origin http://localhost:5173`.
 
 **Build-time.** A Vite/Rollup plugin vectorises assets in your build — import an image with a query suffix and get the vector back, no CLI step:
 

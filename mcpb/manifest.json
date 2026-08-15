@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "vecline",
   "display_name": "Vecline",
-  "version": "1.36.0",
+  "version": "1.37.0",
   "description": "Local-first image, vector and document toolkit that measures its own output. Nothing is uploaded.",
   "long_description": "Vecline converts images to vector and documents to images **entirely on your machine** — nothing is uploaded to any service.\n\nIt is unusual in one specific way: it **measures its own output**. After a conversion it renders the SVG it just produced back to pixels and scores it against your source with real SSIM, PSNR and CIEDE2000, so an agent can see how good a result actually is instead of taking the tool's word for it. On flat artwork — logos, icons, screenshots, pixel art — it produces vector geometry that rasterises back **bit-exact**, and says so.\n\nIt also covers the parts most vectorisers skip: centreline (single-stroke) tracing plus DXF, EPS, PDF and G-code export for laser cutters, plotters and CNC; perceptual image diffing; content-aware cropping; and rendering PDF and Office documents to images.\n\nHonest limitation: this is a deterministic, classical tracer, not a neural one. On difficult photographs a trained model will still produce cleaner shapes. What you get instead is reproducibility (identical input, identical output, forever), privacy, and numbers you can check.",
   "author": {

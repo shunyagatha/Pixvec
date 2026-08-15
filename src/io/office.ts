@@ -100,10 +100,15 @@ export async function convertOffice(
     // path the caller actually asked for.
     const produced = join(tmp, `${basename(absInput, extname(absInput))}.${targetExt}`);
     if (!existsSync(produced)) {
-      throw new Error(
+      // Named `OfficeUserError` so callers that expose errors over a network —
+      // the local bridge — can tell "written for a person" apart from "written
+      // by the OS". The latter carries absolute paths and must not travel.
+      const unsupported = new Error(
         `LibreOffice produced no ${targetExt.toUpperCase()} — the conversion from ` +
           `${extname(absInput) || 'that format'} to .${targetExt} may be unsupported.`,
       );
+      unsupported.name = 'OfficeUserError';
+      throw unsupported;
     }
     await mkdir(dirname(resolve(outPath)), { recursive: true });
     await writeFile(outPath, await readFile(produced));
@@ -173,14 +178,23 @@ function spawnSoffice(bin: string, args: string[], timeoutMs: number): Promise<v
       if (!err) return resolve();
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
-        reject(new Error(
+        const missing = new Error(
           'LibreOffice was not found. vecline drives your local LibreOffice for ' +
             'Office⇄PDF conversion — nothing is bundled, so the install stays tiny. ' +
             'Install it from https://www.libreoffice.org/ (or `brew install --cask libreoffice`, ' +
             '`apt install libreoffice`), or point VECLINE_SOFFICE at the soffice binary.',
-        ));
+        );
+        missing.name = 'OfficeUserError';
+        reject(missing);
       } else {
-        reject(new Error(`LibreOffice conversion failed: ${(err as Error).message}`));
+        // Node's message here is `Command failed: <bin> <args>\n<stderr>` — it
+        // carries the resolved soffice path, both temp directories, and hence
+        // the OS username. On the CLI that is useful; over the bridge it would
+        // hand a web page a map of the machine. It stays attached as `cause`
+        // for whoever is looking at the console, and never becomes the message.
+        const failed = new Error('LibreOffice conversion failed.');
+        (failed as Error & { cause?: unknown }).cause = err;
+        reject(failed);
       }
     });
   });

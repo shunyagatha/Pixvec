@@ -1,6 +1,6 @@
 {
   "name": "vecline",
-  "version": "1.36.0",
+  "version": "1.37.0",
   "mcpName": "io.github.shunyagatha/vecline",
   "description": "The measurable image + document toolkit for JavaScript. Converts any of 11 formats to any other -- raster <-> raster, raster <-> SVG -- with the accuracy measured rather than asserted: pixel-exact lossless, or quality-targeted Bezier tracing verified with SSIM/PSNR/CIEDE2000. Plus PDF & Office (docx/xlsx/pptx) rendering and conversion, images-to-PDF, DXF/EPS/PDF/G-code export, centerline tracing, content-aware crop and image editing. Reads and writes PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM and TGA.",
   "keywords": [

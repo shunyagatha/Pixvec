@@ -33,7 +33,8 @@ import { smartCrop, cropImage } from './crop.js';
 import { diffImages } from './diff.js';
 import { formatBatchSummary } from './io/batch-summary.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from './io/pdf.js';
-import { convertOffice, convertOfficeBatch, isOfficeDocument } from './io/office.js';
+import { convertOffice, convertOfficeBatch, isOfficeDocument, findSoffice } from './io/office.js';
+import { startBridge } from './io/bridge.js';
 import { imagesToPdf } from './io/images-pdf.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba, SizeBudgetReport } from './types.js';
 
@@ -1989,6 +1990,52 @@ program
   .command('mcp')
   .description('Start the MCP server (stdio), exposing vecline as tools for AI agents/IDEs')
   .action(() => { startMcpServer(); });
+
+program
+  .command('serve')
+  .description('Run the local conversion bridge, so Vecline Studio can use your LibreOffice')
+  .option('-p, --port <n>', 'port to listen on (loopback only)', intArg('--port', 1, 65535), 7654)
+  .option('--allow-origin <origin...>', 'additional browser origins permitted to connect')
+  .option('--token <secret>', 'shared secret (visible in the process table — prefer --token-file or VECLINE_TOKEN)')
+  .option('--token-file <path>', 'read the shared secret from this file')
+  .option('--soffice <path>', 'LibreOffice binary, when it is not on PATH')
+  .action(async (o: {
+    port: number; allowOrigin?: string[]; token?: string; tokenFile?: string; soffice?: string;
+  }) => {
+    // A secret passed as an argument is readable from the process table by any
+    // local account — which is exactly the principal `--token` exists to fence
+    // out. The two non-leaking sources therefore take precedence over the flag.
+    const token =
+      (o.tokenFile ? (await readFile(o.tokenFile, 'utf8')).trim() : undefined)
+      ?? process.env['VECLINE_TOKEN']
+      ?? o.token;
+
+    // `--token=` or `--token "$UNSET"` yields an empty string, which would fall
+    // through the truthiness check inside the bridge and silently start with
+    // authentication off. Someone who asked for a token should never get none.
+    if (token !== undefined && token === '') {
+      fail('--token was given but is empty. Refusing to start with authentication silently disabled.');
+    }
+
+    const bridge = await startBridge({ ...o, token });
+    const soffice = o.soffice ?? findSoffice();
+
+    info(`${green('✓')} ${bold('vecline serve')} ${dim(`— http://127.0.0.1:${bridge.port}`)}`);
+    info(dim('  Loopback only. Vecline Studio at https://vecline.xyz can now convert Office documents'));
+    info(dim('  through this process — the file goes to your own machine, never to a server.'));
+    info(soffice
+      ? dim(`  LibreOffice: ${soffice}`)
+      // Said now rather than on the first failed conversion: the whole point of
+      // this command is Office support, so starting without it is worth knowing
+      // immediately.
+      : red('  LibreOffice was not found — install it from libreoffice.org, or pass --soffice <path>.'));
+    if (token) info(dim('  A token is required; the Studio will ask you for it.'));
+    info(dim('  Ctrl-C to stop.'));
+
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+      process.on(signal, () => { void bridge.close().then(() => process.exit(0)); });
+    }
+  });
 
 program
   .command('gcode')

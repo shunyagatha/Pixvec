@@ -139,6 +139,8 @@ describe('vecline/core portability', () => {
     const nodeOnly = new Set([
       'index.ts', 'api.ts', 'cli.ts', 'ops.ts',
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts', 'io/batch-summary.ts', 'io/pdf.ts', 'io/office.ts', 'io/images-pdf.ts',
+      // Opens a socket and spawns LibreOffice — node:http, node:fs, node:crypto.
+      'io/bridge.ts',
       'vectorize/embed.ts',
       'pipelines/favicon.ts', 'pipelines/responsive.ts', 'pipelines/animate.ts',
       'mcp/server.ts', 'plugin/vite.ts',
