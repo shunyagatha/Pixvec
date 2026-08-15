@@ -1,6 +1,8 @@
 # Vecline
 
-**Measurable raster ⇄ SVG conversion — and a broad image + document toolkit.** Eleven raster formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted; plus **PDF & Office** (docx/xlsx/pptx) rendering and conversion, **images → PDF**, **DXF/EPS/G-code** export for makers, and content-aware crop — most of it in a **zero-dependency** core that runs in the browser too.
+**Measurable raster ⇄ SVG conversion — and a broad image + document toolkit.** Eleven raster formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted; plus **PDF & Office** (docx/xlsx/pptx) rendering and conversion, **images → PDF**, **DXF at a real physical cut size** alongside EPS and G-code for makers, centerline tracing and content-aware crop — most of it in a **zero-dependency** core that is CI-proven to bundle for a browser.
+
+On flat artwork — logos, icons, UI, screenshots, pixel art — the output is **bit-exact**: `SSIM 1.0000`, `PSNR ∞`, zero differing pixels, in a smaller and faster file than potrace, imagetracerjs or vtracer. On real photographs it leads every one of them on SSIM by 0.05–0.18. Every number in this README is reproducible with one command: `npm run compare`.
 
 [![npm version](https://img.shields.io/npm/v/vecline.svg)](https://www.npmjs.com/package/vecline)
 [![npm downloads](https://img.shields.io/npm/dm/vecline.svg)](https://www.npmjs.com/package/vecline)
@@ -9,7 +11,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
-**▶ [Vecline Studio — vecline.xyz](https://vecline.xyz)** — the full app in your browser: drop an image, tune it, watch live SSIM / PSNR / CIEDE2000, export SVG / PNG / DXF / EPS / PDF / G-code. Free, unlimited, no signup, works offline, and **nothing is uploaded** — the conversion runs in your tab, not on a server. ([How it compares](https://vecline.xyz/compare.html) · [smaller dev playground](https://shunyagatha.github.io/Vecline/))
+**▶ [Vecline Studio — vecline.xyz](https://vecline.xyz)** — the whole toolkit in your browser. Drop an image, a **PDF**, or a TGA/PNM/ICO no browser can read; tune it; watch live SSIM / PSNR / CIEDE2000; export SVG, DXF **at a real cut size**, EPS, PDF, G-code, React/Vue/Svelte/Solid components, colour separations, sprite sheets, favicons, BlurHash, or just re-encode between ten raster formats. Free, unlimited, no signup, works offline, and **nothing is uploaded** — every conversion runs in your tab, not on a server. ([How it compares](https://vecline.xyz/compare.html) · [dev playground](https://shunyagatha.github.io/Vecline/))
 
 ```bash
 vecline vectorize logo.png --verify
@@ -129,6 +131,8 @@ import { vectorizeExact } from 'vecline/core';
 const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
 const { svg } = vectorizeExact({ width, height, data });   // bit-exact, no codec needed
 ```
+
+**The zero-dependency claim is CI-asserted, not stated.** Every commit bundles `vecline/core` for a browser with esbuild — no Node platform, no externals — and fails if a single `node:` specifier or Node global survives into the output. It comes to **85 KB minified**, with a size tripwire either side so nothing large can arrive unnoticed. Reading the import graph would only prove that the imports we can see are clean; bundling proves the thing users actually do works.
 
 Install without the optional native packages (`npm install vecline --omit=optional`) and core still works, at **2 MB instead of ~100 MB**. Reading image files, rendering SVG back to pixels, and the verified lossless guarantee all need real codecs, so those live in the main entry point.
 
