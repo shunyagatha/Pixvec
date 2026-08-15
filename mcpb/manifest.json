@@ -1,0 +1,70 @@
+{
+  "manifest_version": "0.3",
+  "name": "vecline",
+  "display_name": "Vecline",
+  "version": "1.34.1",
+  "description": "Local-first image-to-SVG + PDF/Office toolkit that measures its own output. Nothing uploaded.",
+  "long_description": "Vecline converts images to vector and documents to images **entirely on your machine** — nothing is uploaded to any service.\n\nIt is unusual in one specific way: it **measures its own output**. After a conversion it renders the SVG it just produced back to pixels and scores it against your source with real SSIM, PSNR and CIEDE2000, so an agent can see how good a result actually is instead of taking the tool's word for it. On flat artwork — logos, icons, screenshots, pixel art — it produces vector geometry that rasterises back **bit-exact**, and says so.\n\nIt also covers the parts most vectorisers skip: centreline (single-stroke) tracing plus DXF, EPS, PDF and G-code export for laser cutters, plotters and CNC; perceptual image diffing; content-aware cropping; and rendering PDF and Office documents to images.\n\nHonest limitation: this is a deterministic, classical tracer, not a neural one. On difficult photographs a trained model will still produce cleaner shapes. What you get instead is reproducibility (identical input, identical output, forever), privacy, and numbers you can check.",
+  "author": {
+    "name": "shunyagatha",
+    "url": "https://github.com/shunyagatha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shunyagatha/Vecline.git"
+  },
+  "homepage": "https://vecline.xyz",
+  "documentation": "https://github.com/shunyagatha/Vecline#readme",
+  "support": "https://github.com/shunyagatha/Vecline/issues",
+  "icon": "icon.png",
+  "license": "MIT",
+  "keywords": [
+    "svg",
+    "vectorize",
+    "image",
+    "pdf",
+    "office",
+    "dxf",
+    "gcode",
+    "local-first"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "VECLINE_SOFFICE": "${user_config.soffice_path}"
+      }
+    }
+  },
+  "user_config": {
+    "soffice_path": {
+      "type": "file",
+      "title": "LibreOffice binary (optional)",
+      "description": "Only needed for the Office conversion tools. Leave empty to auto-detect. Without LibreOffice those tools report themselves as unavailable; everything else works normally.",
+      "required": false
+    }
+  },
+  "tools": [
+    { "name": "vectorize", "description": "Convert a raster image to SVG, auto-selecting pixel-exact or traced output." },
+    { "name": "convert", "description": "Convert between formats by extension, including DXF, EPS and PDF vector export." },
+    { "name": "centerline", "description": "Trace line art to single-stroke centreline SVG, or straight to G-code." },
+    { "name": "measure", "description": "Score two images against each other: PSNR, SSIM, CIEDE2000, and whether they are pixel-identical." },
+    { "name": "diff", "description": "Paint a perceptual CIEDE2000 heatmap of what changed between two images." },
+    { "name": "crop", "description": "Content-aware crop to an aspect ratio, keeping the subject rather than the centre." },
+    { "name": "doc_to_images", "description": "Render a PDF, SVG or Office document to one image per page." },
+    { "name": "office_convert", "description": "Convert Office documents to and from PDF using a local LibreOffice." },
+    { "name": "images_to_pdf", "description": "Combine images into a single multi-page PDF." },
+    { "name": "palette", "description": "Extract a perceptual dominant-colour palette from an image." },
+    { "name": "placeholder", "description": "Generate a BlurHash string for lazy-loading an image." },
+    { "name": "image_info", "description": "Inspect an image: dimensions, format, alpha and recommended strategy." }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.17"
+    }
+  }
+}

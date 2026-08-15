@@ -138,7 +138,8 @@
     "corpus": "node scripts/fetch-corpus.mjs",
     "corpus:report": "node scripts/corpus-report.mjs",
     "diagnose": "node scripts/diagnose-photo.mjs",
-    "playground": "node scripts/build-playground.mjs"
+    "playground": "node scripts/build-playground.mjs",
+    "mcpb": "npx -y @anthropic-ai/mcpb pack mcpb vecline.mcpb"
   },
   "dependencies": {
     "commander": "^12.1.0",

@@ -13,3 +13,6 @@ Thumbs.db
 .vscode/
 *.tsbuildinfo
 corpus/
+
+# Built MCPB bundle — reproducible from mcpb/ via `npm run mcpb`
+*.mcpb
