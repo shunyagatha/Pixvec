@@ -23,6 +23,15 @@ function exportable(node: SceneNode): boolean {
   return 'exportAsync' in node;
 }
 
+/**
+ * Export scale for the selection.
+ *
+ * Tracing sees more detail than the on-screen resolution at 2x, which measurably
+ * helps the palette; the emitted SVG is then resized back to the source
+ * dimensions on insertion, so this costs nothing in the result.
+ */
+const EXPORT_SCALE = 2;
+
 figma.showUI(__html__, { width: 340, height: 460, themeColors: true });
 
 type UiMessage =
@@ -46,6 +55,12 @@ figma.ui.onmessage = async (msg: UiMessage) => {
       const node = figma.createNodeFromSvg(msg.svg);
       const source = figma.currentPage.selection[0];
       if (source) {
+        // The selection is exported at EXPORT_SCALE so the tracer sees more than
+        // screen resolution, which means the SVG comes back that many times too
+        // big. Resizing to the source's own dimensions puts it back — and because
+        // the result is vector, nothing is lost in the process. Without this the
+        // traced copy silently arrived at 810x768 beside a 405x384 original.
+        node.resize(source.width, source.height);
         // Place it beside the original rather than on top of it, so the
         // comparison is immediate and nothing is hidden.
         node.x = source.x + source.width + 40;
@@ -86,7 +101,7 @@ async function sendSelection(): Promise<void> {
     // what the palette is derived from.
     const bytes = await (node as ExportMixin).exportAsync({
       format: 'PNG',
-      constraint: { type: 'SCALE', value: 2 },
+      constraint: { type: 'SCALE', value: EXPORT_SCALE },
     });
     figma.ui.postMessage({
       type: 'selection',
