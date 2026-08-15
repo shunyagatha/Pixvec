@@ -58,8 +58,12 @@ that on every build.
   browser and driven through the full path with a synthetic selection: 200x200 in,
   4,227 bytes out, SSIM 0.9825, PSNR 33.8 dB, 428 ms.
 
-What is **not** yet verified is the Figma plugin shell itself — manifest loading
-and the `figma.*` calls — which needs the desktop app to exercise.
+- **The plugin itself, in the Figma desktop app.** Imported from manifest, launched
+  from Plugins > Development, and run against a real frame: it picked up the
+  selection automatically (405x384), traced it, and inserted a new
+  `Frame (vecline)` at X=445 — beside the original, not over it — containing 14
+  editable `Vector` layers with the gradient intact as a Linear fill. Running it
+  again on the result worked too, and the panel tracked each selection change.
 
 ## Licence
 
