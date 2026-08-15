@@ -32,9 +32,23 @@ export function toComponent(svg: string, opts: ComponentOptions): string {
   // base64 payload of an embedded image; an earlier blanket namespace strip
   // silently destroyed embed-mode output.
   let body = svg
-    .replace(/^<!--[\s\S]*?-->\n?/, '') // strip the generator comment
     .replace(/\s(?:xmlns:(?:inkscape|sodipodi)|(?:inkscape|sodipodi):[\w-]+)="[^"]*"/gi, '')
     .trim();
+
+  // Reduce to exactly the root element: drop an XML declaration, a DOCTYPE, and
+  // any leading comments, plus whatever trails `</svg>`.
+  //
+  // This is load-bearing rather than cosmetic. `injectProps` anchors on `^<svg`,
+  // so a file that opened with `<?xml version="1.0"?>` — which is most SVGs
+  // written by Illustrator or Inkscape rather than by vecline — failed that
+  // anchor and silently skipped the props spread, *and* left the processing
+  // instruction sitting inside a JSX `return`. The result compiled nowhere and
+  // forwarded nothing, while `component` still exited 0. Tracing a raster hid
+  // the bug completely, because vecline's own output has no prologue.
+  const rootStart = body.search(/<svg\b/i);
+  if (rootStart > 0) body = body.slice(rootStart);
+  const rootEnd = body.lastIndexOf('</svg>');
+  if (rootEnd !== -1) body = body.slice(0, rootEnd + '</svg>'.length);
 
   if (opts.currentColor) {
     // Only solid hex fills follow `color`; gradients and `none` stay as they are.
@@ -43,6 +57,10 @@ export function toComponent(svg: string, opts: ComponentOptions): string {
 
   if (jsx) {
     body = body
+      // `<!-- … -->` is not JSX. Convert rather than delete, so a hand-authored
+      // note survives into the generated component instead of vanishing.
+      .replace(/<!--([\s\S]*?)-->/g, (_m, text: string) =>
+        `{/*${text.replace(/\*\//g, '*\\/')}*/}`)
       // JSX-supported namespaced attrs become camelCase (xlink:href → xlinkHref).
       .replace(/\s(xlink:[a-z]+|xmlns:xlink)=/gi, (_m, a: string) =>
         ` ${a.replace(/[:-]([a-z])/g, (_x: string, c: string) => c.toUpperCase())}=`)

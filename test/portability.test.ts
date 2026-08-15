@@ -53,6 +53,7 @@ const CORE_MODULES = [
   'vectorize/trace.ts',
   'vectorize/threshold.ts',
   'vectorize/index.ts',
+  'io/route.ts',
   'io/formats/bytes.ts',
   'io/formats/bmp.ts',
   'io/formats/ico.ts',

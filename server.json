@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.shunyagatha/vecline",
-  "description": "Local-first image-to-SVG + PDF/Office toolkit that measures its own output. Nothing uploaded.",
+  "description": "Local-first image, vector and document toolkit that measures its own output. Nothing uploaded.",
   "repository": {
     "url": "https://github.com/shunyagatha/Vecline",
     "source": "github"
   },
-  "version": "1.35.0",
+  "version": "1.36.0",
   "websiteUrl": "https://vecline.xyz",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "vecline",
-      "version": "1.35.0",
+      "version": "1.36.0",
       "transport": {
         "type": "stdio"
       },

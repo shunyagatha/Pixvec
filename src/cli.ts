@@ -12,6 +12,7 @@ import { parseCssColor } from './color.js';
 import { decodeRaster, looksLikeSvg } from './io/decode.js';
 import { encodeRaster, formatFromExtension } from './io/encode.js';
 import { baseDirFor, rasterizeSvg } from './io/rasterize.js';
+import { chooseConvertRoute } from './io/route.js';
 import { compareImages } from './metrics/index.js';
 import { extractEmbedded } from './vectorize/embed.js';
 import { bytesEqual } from './io/formats/bytes.js';
@@ -659,13 +660,74 @@ function toRasterizeOptions(o: SharedCliOptions, output: string): RasterizeCliOp
 
 async function runConvert(input: string, output: string, o: SharedCliOptions): Promise<void> {
   const ext = extname(output).toLowerCase();
-  if (ext === '.svg') {
-    await runVectorize(input, toVectorizeOptions(o, output));
-  } else if (ext === '.dxf' || ext === '.eps' || ext === '.pdf') {
-    await runVectorExport(input, output, ext, o);
-  } else {
-    await runRasterize(input, toRasterizeOptions(o, output));
+  // Only sniff when the answer depends on it — `.svg`/`.dxf`/`.eps`/`.pdf` are
+  // decided by the output alone, and reading the file to learn nothing would be
+  // a wasted pass over what can be a very large image.
+  const needsInput = ext !== '.svg' && ext !== '.dxf' && ext !== '.eps' && ext !== '.pdf';
+  const inputIsSvg = needsInput ? looksLikeSvg(await readInput(input)) : false;
+
+  switch (chooseConvertRoute(ext, inputIsSvg)) {
+    case 'vectorize':
+      return runVectorize(input, toVectorizeOptions(o, output));
+    case 'vector-export':
+      return runVectorExport(input, output, ext as '.dxf' | '.eps' | '.pdf', o);
+    case 'rasterize':
+      return runRasterize(input, toRasterizeOptions(o, output));
+    case 'raster-convert':
+      return runRasterConvert(input, output, o);
   }
+}
+
+/**
+ * Raster → raster.
+ *
+ * The library could always do this — `decodeRaster` and `encodeRaster` cover all
+ * ten formats in both directions — but `convert` could not *express* it: every
+ * output extension that was not `.svg/.dxf/.eps/.pdf` fell through to the
+ * rasterizer, which rejects anything that is not an SVG. So `vecline convert
+ * photo.png photo.webp` failed with "does not look like an SVG", and the square
+ * matrix this project advertises was true of the API and false of the CLI for
+ * 100 of its 121 cells. Found by executing every cell rather than reading the
+ * routing, which is the only way a gap like this surfaces.
+ */
+async function runRasterConvert(input: string, output: string, o: SharedCliOptions): Promise<void> {
+  const ext = extname(output).toLowerCase();
+  const format = formatFromExtension(ext);
+  if (!format) {
+    fail(`cannot write ${ext || basename(output)} — expected an image extension, .svg, .dxf, .eps or .pdf.`);
+    return;
+  }
+
+  const bytes = await readInput(input);
+  const { image, meta } = await decodeRaster(bytes);
+  const encoded = await encodeRaster(image, {
+    format,
+    quality: o.quality,
+    lossless: Boolean(o.lossless),
+    background: o.background,
+  });
+  await writeOutput(output, encoded);
+
+  if (o.json) {
+    emitJson({
+      input,
+      output,
+      from: meta.format,
+      to: format,
+      width: image.width,
+      height: image.height,
+      inputBytes: bytes.length,
+      outputBytes: encoded.length,
+    });
+    return;
+  }
+  const delta = bytes.length === 0 ? 0 : Math.round(((encoded.length - bytes.length) / bytes.length) * 100);
+  info(
+    `${green('✓')} ${bold(basename(output))}  ${dim(
+      `${meta.format} → ${format}  ${image.width}×${image.height}  ` +
+      `${formatBytes(bytes.length)} → ${formatBytes(encoded.length)} (${delta >= 0 ? '+' : ''}${delta}%)`,
+    )}`,
+  );
 }
 
 /** Raster → a non-SVG vector format (DXF/EPS/PDF) via structured trace geometry. */
@@ -1899,8 +1961,11 @@ program
 
 program
   .command('animate')
-  .description('Trace an animated GIF/APNG into one CSS-animated SVG (shared palette, no JS)')
-  .argument('<input>', 'animated GIF or APNG')
+  .description('Trace an animated GIF or WebP into one CSS-animated SVG (shared palette, no JS)')
+  // APNG is deliberately not advertised: frames come from whatever libvips opens
+  // with `animated: true`, and the prebuilt sharp binary does not expose APNG
+  // pages, so an APNG silently yields a single-frame SVG.
+  .argument('<input>', 'animated GIF or WebP')
   .option('-o, --output <file>', 'output SVG path (default <input>.svg)')
   .option('-c, --colors <n>', 'palette size shared across frames', intArg('--colors', 2, 256), 16)
   .option('--max-frames <n>', 'cap frames (sampled evenly) to bound size', intArg('--max-frames', 1, 1000))

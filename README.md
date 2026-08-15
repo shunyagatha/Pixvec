@@ -9,7 +9,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18.17-brightgreen.svg)](https://nodejs.org)
 
-**▶ [Try it in your browser](https://shunyagatha.github.io/Vecline/)** — a zero-install playground that runs the real `vecline/core` client-side and shows live SSIM / PSNR / CIEDE2000. Nothing leaves your machine.
+**▶ [Vecline Studio — vecline.xyz](https://vecline.xyz)** — the full app in your browser: drop an image, tune it, watch live SSIM / PSNR / CIEDE2000, export SVG / PNG / DXF / EPS / PDF / G-code. Free, unlimited, no signup, works offline, and **nothing is uploaded** — the conversion runs in your tab, not on a server. ([How it compares](https://vecline.xyz/compare.html) · [smaller dev playground](https://shunyagatha.github.io/Vecline/))
 
 ```bash
 vecline vectorize logo.png --verify
@@ -150,7 +150,15 @@ The BMP, ICO, PNM and TGA codecs are written from scratch in this package, so th
 | **TGA** | ✅ RLE, colour-mapped | ✅ RLE optional |
 | **SVG** | ✅ | ✅ |
 
-**The matrix is square: every format it reads, it writes.** That is 11 × 11 = **121 conversions**, and the test suite runs all of them on every commit — PNG→TGA, ICO→WebP, TGA→SVG, SVG→BMP, whatever you need.
+**The matrix is square: every format it reads, it writes.** That is 11 × 11 = **121 conversions**, and the test suite runs all of them on every commit — PNG→TGA, ICO→WebP, TGA→SVG, SVG→BMP, whatever you need. Every cell is reachable from one command:
+
+```bash
+vecline convert photo.png thumb.webp   # raster → raster
+vecline convert logo.png logo.svg      # raster → vector
+vecline convert logo.svg logo@2x.png   # vector → raster
+```
+
+`convert` decides from the input bytes *and* the output extension, not the extension alone — a file named `.txt` that contains `<svg>` is treated as an SVG, and a `.svg` that contains PNG bytes is not.
 
 BMP, ICO, PNM and TGA are decoded in pure TypeScript — libvips is not built with them, and each is simple and stable enough to implement completely rather than adding another native dependency. All four are lossless formats, so the test suite asserts **bit-exact** decoding rather than approximate agreement.
 
@@ -439,7 +447,8 @@ vecline responsive hero.jpg -o img/    # AVIF/WebP/fallback ladder + <picture> m
 vecline placeholder hero.jpg -f blurhash   # BlurHash string (or -f svg for a tiny LQIP-SVG)
 vecline palette art.png --css          # perceptual palette as CSS custom properties
 vecline extract keep.svg -o out.png --against original.png   # byte-identical recovery
-vecline convert in.png out.svg      # direction inferred from extensions
+vecline convert in.png out.svg      # direction inferred from input + extension
+vecline convert photo.png thumb.webp   # …including plain raster → raster
 vecline doc report.pdf -o pages/ --dpi 150   # PDF (or SVG) → one image per page
 vecline office report.docx -o report.pdf     # Word/Excel/PPT ⇄ PDF (uses your LibreOffice)
 vecline pdf page1.png page2.jpg -o album.pdf # combine images into one multi-page PDF
@@ -448,7 +457,7 @@ vecline gcode drawing.png --tool laser --feed 800   # ready-to-run laser/plotter
 vecline convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
 vecline optimize icon.svg -o icon.min.svg   # render-preserving SVG minify
 vecline sprite icons/*.svg -o sprite.svg    # pack many icons into one <symbol> sheet
-vecline animate loading.gif -o loading.svg  # animated GIF/APNG → one CSS-animated SVG
+vecline animate loading.gif -o loading.svg  # animated GIF/WebP → one CSS-animated SVG
 vecline verify a.png b.svg          # measure any two images
 vecline diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
 vecline batch 'src/**/*.png' -o out/ --to svg --summary "$GITHUB_STEP_SUMMARY"
@@ -495,19 +504,25 @@ It's a thin composite action over `vecline batch … --summary "$GITHUB_STEP_SUM
 claude mcp add vecline -- npx -y vecline mcp   # Claude Code, one line
 ```
 
+**Or install it in one click.** Download [`vecline.mcpb`](https://github.com/shunyagatha/Vecline/releases/latest/download/vecline.mcpb) from the latest release and open it with Claude Desktop — no config file to edit. The bundle is a *launcher*, not a vendored copy of the package: it prefers a `vecline` already on your `PATH` and otherwise runs `npx -y vecline@<pinned> mcp`. That matters because the image path uses native binaries chosen per platform, and baking them in would mean shipping a separate bundle per OS/arch — with the wrong one failing silently rather than loudly. Vecline is also listed in the [official MCP registry](https://registry.modelcontextprotocol.io) as `io.github.shunyagatha/vecline` and on [Smithery](https://smithery.ai/servers/shunyagatha/vecline).
+
+**Every tool is annotated**, so an agent knows what a call does before making it: `measure`, `palette`, `placeholder` and `image_info` are marked read-only; the eight that write a file are marked destructive, because they will overwrite whatever is at the output path. All twelve are `openWorldHint: false` — nothing in this server touches a network.
+
 **Why an agent should reach for this rather than a cloud vectoriser.** Three of these tools have no equivalent in any hosted image service: `measure` and `diff` report *real* SSIM/PSNR/CIEDE2000 by rendering the result and comparing it, so a model can verify its own output instead of asserting it worked; `vectorize --mode lossless` returns geometry that is provably bit-exact; and the whole surface runs locally, so nothing an agent touches is uploaded. The honest converse is in the tool descriptions themselves: on *photographs* a neural cloud tracer will usually look better, and `vectorize` says so, because an agent choosing between tools should not have to discover that by shipping a bad result.
 
 **It degrades honestly, too.** `office_convert` needs your local LibreOffice and PDF input needs the optional `mupdf`; rather than failing cold when they are absent, the server probes for them at `tools/list` and annotates the affected tools (`UNAVAILABLE … install from libreoffice.org`). An agent then picks a different tool or tells you what to install, instead of retrying something that cannot work.
 
 `vecline component` turns a raster (or an existing SVG) into a typed, prop-forwarding **React/Vue/Svelte/Solid** component in one pass (`-f`, `--current-color`, `--js`) — raster → traced SVG → component, where SVGR-style tools start from the SVG. For designers, `--layers` emits editable per-colour Inkscape/Illustrator layers and the `traceSeparations()` API returns one standalone SVG per colour (screen-print/vinyl/DTF separations); `--palette "#fff,#e4002b,#000"` locks output to exact brand/spot colours. `vecline sprite icons/*` packs a folder of icons (rasters get traced on the way in) into a single `<symbol>` sheet you reference with `<use href="#name">` — the standard on-trend replacement for icon fonts, and `svgSprite()` is pure `vecline/core`.
 
-**Centerline (single-stroke) tracing** — `vecline centerline drawing.png` — is the most-requested tracer feature neither potrace nor vtracer ships. Instead of outlining *both* edges of every stroke (which doubles the geometry and makes a pen/laser run each line twice), it extracts the **medial axis**: one open `<path fill="none">` down the middle of each stroke, via Zhang–Suen thinning → skeleton-graph walking → Douglas–Peucker. Exactly what a plotter, laser envecline, CNC router, vinyl cutter, or signature-vectorisation needs. `centerlineTrace()` is pure and in `vecline/core`. And `vecline gcode drawing.png --tool laser|pen` takes it the last mile — **ready-to-run GRBL-style G-code toolpaths** (feed/power/units/scale, Y-flipped to bed space), a rare end-to-end image→machine pipeline in JS where other tools stop at SVG and leave you hunting for a separate svg2gcode.
+**Centerline (single-stroke) tracing** — `vecline centerline drawing.png` — is the most-requested tracer feature neither potrace nor vtracer ships. Instead of outlining *both* edges of every stroke (which doubles the geometry and makes a pen/laser run each line twice), it extracts the **medial axis**: one open `<path fill="none">` down the middle of each stroke, via Zhang–Suen thinning → skeleton-graph walking → Douglas–Peucker. Exactly what a plotter, laser engraver, CNC router, vinyl cutter, or signature-vectorisation needs. `centerlineTrace()` is pure and in `vecline/core`. And `vecline gcode drawing.png --tool laser|pen` takes it the last mile — **ready-to-run GRBL-style G-code toolpaths** (feed/power/units/scale, Y-flipped to bed space), a rare end-to-end image→machine pipeline in JS where other tools stop at SVG and leave you hunting for a separate svg2gcode.
 
 **Vector export beyond SVG** is the maker/CAD lane no other JS tracer serves: `vecline convert in.png out.dxf` writes a **DXF** (closed `LWPOLYLINE`s with true colour, Y-up) that LightBurn, LibreCAD, Fusion, and every laser/router/vinyl cutter imports; `out.eps` writes **EPS/PostScript** with native curves; `out.pdf` writes a print-ready **PDF**, with `--cmyk` for prepress (free/JS tools all collapse to sRGB — vecline doesn't). And the DXF is **arc-aware**: a round hole or a circular boss is written as a real `CIRCLE`/`ELLIPSE` entity — one arc the machine cuts in a single smooth move — not a ring of short chords a polyline would force. (Primitive recognition runs by default for the exporters; pass `primitives: false` for raw polylines.) The `traceGeometry()`/`toDxf`/`toEps`/`toPdf` API (all pure, in `vecline/core`) exposes the same structured Bézier geometry — now with a `primitives` annotation per sub-path — for custom pipelines.
 
 The **asset pipelines** close the loop to what web devs deploy: `vecline favicon` writes a complete favicon/PWA icon set (multi-size `.ico`, Apple touch icon, 192/512 + maskable PNGs), a `manifest.webmanifest`, and the `<head>` markup from one source; `vecline responsive` writes an AVIF/WebP/fallback width-ladder with ready `<picture>`/`srcset` markup; `vecline placeholder` emits a **BlurHash** string or a tiny **LQIP-SVG** (a zero-binary SQIP successor) for blur-up loading; and `vecline palette` extracts a perceptual dominant-colour palette as JSON or CSS custom properties. All are pure-TS where they can be (`blurHash`, `lqipSvg`, `extractPalette` live in `vecline/core`).
 
-**Animated GIF/APNG → animated SVG** — `vecline animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`vecline/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
+**Animated raster → animated SVG** — `vecline animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`vecline/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
+
+**Animated GIF and animated WebP are the verified inputs.** Frames come from whatever libvips opens with `animated: true`, and the prebuilt `sharp` binary **does not expose APNG frames** — an APNG loads as a single still, so you get a one-frame SVG rather than an error. (Measured, not assumed: this build raises `vips_image_get: field "n-pages" not found` on the APNG path.) Earlier versions of this README listed APNG without that qualifier; if your libvips is built with APNG page support it will work, but do not count on the default install.
 
 **Documents to images** — `vecline doc report.pdf -o pages/ --dpi 150` renders a **PDF**, an **SVG**, or an **Office document** (`.docx`/`.xlsx`/`.pptx`/ODF — via your LibreOffice) to one raster per page, at any DPI or scale, in any output format (`--format png|jpeg|webp|avif`, `--pages "1,3-5"`). Pass `--format svg` to **vectorise each page** — turning a scanned or raster page into real, scalable SVG in one step. So `vecline doc slides.pptx -o thumbs/ -f webp` gives you a WebP thumbnail per slide. SVG rendering uses the bundled resvg; **PDF** rendering follows vecline's bring-your-own-codec rule — it dynamically loads the optional, pure-WASM [`mupdf`](https://www.npmjs.com/package/mupdf) package (no native binary to compile) and prints a one-line install hint if it is not present, so the base install stays lean. `renderPdfPages()` / `isPdf()` are exported for programmatic use.
 

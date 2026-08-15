@@ -1,6 +1,6 @@
 {
   "name": "vecline-mcpb",
-  "version": "1.35.0",
+  "version": "1.36.0",
   "private": true,
   "type": "commonjs",
   "description": "Module-type declaration for the bundle. Without it, Node infers ESM or CommonJS from whatever package.json happens to sit above the extraction directory, and the launcher's require() breaks in exactly the environments where it is hardest to debug."

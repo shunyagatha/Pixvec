@@ -213,6 +213,11 @@ export {
 // --- Preprocessing that stays pure -----------------------------------------
 export { autoMinArea } from './vectorize/trace.js';
 
+// --- Conversion routing (pure) ---------------------------------------------
+// "Given these input bytes and this desired output, what kind of conversion is
+// this?" — the question any converter UI answers, not just the CLI.
+export { chooseConvertRoute, type ConvertRoute } from './io/route.js';
+
 // --- Byte helpers, useful when feeding the decoders ------------------------
 export { toBase64, fromBase64, bytesEqual, latin1 } from './io/formats/bytes.js';
 
@@ -265,4 +270,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.35.0';
+export const VERSION = '1.36.0';
