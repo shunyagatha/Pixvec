@@ -81,6 +81,15 @@
   <label for="gradients" style="margin:0">Reconstruct gradients</label>
 </div>
 
+<!-- Off by default: adaptive thresholding compares each pixel with its own
+     neighbourhood, which rescues a photograph with a shadow across it and
+     wrecks flat artwork, where a pixel inside a large fill is its own
+     neighbourhood. Most Figma layers are flat artwork. -->
+<div class="row inline">
+  <input type="checkbox" id="uneven">
+  <label for="uneven" style="margin:0">Uneven lighting (photo of paper)</label>
+</div>
+
 <button id="go" disabled>Vectorize</button>
 <div id="status">Select a layer</div>
 
