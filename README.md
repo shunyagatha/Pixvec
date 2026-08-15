@@ -373,7 +373,7 @@ Budget  met  in 3 steps
   accuracy    0.9994 → 0.9971  −0.0023 SSIM paid
 ```
 
-The search relaxes in *stages* — it coarsens the curve fit first (sub-pixel precision, the cheapest thing to lose) and only sacrifices whole features or palette entries once that is exhausted — then bisects back toward the target so you get the **most accurate result that still fits**, not the first one that happens to. `--max-nodes` targets anchor-point count instead, which is what an illustrator feels when editing; the two are separate because they don't move together (rounding coordinates cuts bytes without removing a node). If a budget is impossible, it says so and returns the closest real result rather than pretending.
+The search relaxes in *stages*, cheapest lever first: it coarsens the curve fit, then rounds coordinates, and only sacrifices whole features or palette entries once those continuous levers are exhausted. The order matters for more than accuracy — a structural lever is *discontinuous* (dropping a colour can halve the file in one jump), so leading with the smooth levers is what lets a plain bisection actually land on a target instead of overshooting past it into the next cliff. You get the **most accurate result that still fits**, not the first one that happens to. `--max-nodes` targets anchor-point count instead, which is what an illustrator feels when editing; the two are separate because they don't move together (rounding coordinates cuts bytes without removing a node). If a budget is below what the levers can reach, it says so and returns the closest real result rather than pretending to have hit it.
 
 ### `--extend-under` — one boundary instead of two
 
