@@ -285,6 +285,7 @@ interface VectorizeCliOptions {
   blurDelta?: number;
   threshold?: number | 'auto';
   blackOnWhite?: boolean;
+  speckleScope?: string;
   adaptive?: boolean;
   adaptiveWindow?: number;
   adaptiveT?: number;
@@ -386,6 +387,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       blurDelta: o.blurDelta,
       threshold: o.threshold,
       blackOnWhite: o.blackOnWhite,
+      speckleScope: o.speckleScope as never,
       adaptive: o.adaptive,
       adaptiveWindow: o.adaptiveWindow,
       adaptiveT: o.adaptiveT,
@@ -1796,6 +1798,7 @@ program
   .option('--blur <radius>', 'selective (edge-preserving) blur before quantisation, 1-5', intArg('--blur', 0, 5))
   .option('--blur-delta <n>', 'edge-preservation threshold for --blur', intArg('--blur-delta', 0, 255))
   .option('--threshold <cutoff>', 'reduce to two colours by luminance: a 0-255 number or "auto" (Otsu)', thresholdArg)
+  .addOption(new Option('--speckle-scope <scope>', 'which small regions --min-area may absorb: every one under the cutoff, or only specks surrounded by a single colour (sparing antialiasing fringe)').choices(['all','isolated']))
   .option('--black-on-white <bool>', 'with --threshold: dark pixels are the shape (default true)', boolArg)
   .option('--adaptive', 'threshold against each pixel\'s own neighbourhood (Bradley–Roth) instead of one global cutoff — for photos of paper, where one corner is in shadow')
   .option('--adaptive-window <px>', 'neighbourhood side length for --adaptive; 0 = an eighth of the shorter side', intArg('--adaptive-window', 0, 4096))

@@ -230,6 +230,44 @@ export function adaptiveMinArea(comps: ComponentMap, totalPixels: number, budget
   return Math.min(threshold, ceiling);
 }
 
+/**
+ * Which small components a despeckle pass is allowed to absorb.
+ *
+ * `all` removes everything under the size cutoff. `isolated` removes only the
+ * ones whose neighbours are all a single class.
+ *
+ * The distinction is load-bearing, and measuring it is what showed the size
+ * cutoff alone to be the wrong test. A component under 8px is one of two very
+ * different things:
+ *
+ *   - **isolated** — surrounded entirely by one class, so it is a speck floating
+ *     inside a uniform region. Sensor noise, a JPEG mosquito, a stray pixel.
+ *     Absorbing it recolours those pixels to the field around them, which is a
+ *     real change but a local one: no edge moves.
+ *   - **transitional** — its neighbours span two or more classes, so it lives in
+ *     the ramp between two regions. That is an antialiasing fringe pixel, and it
+ *     carries the sub-pixel position of the edge. Absorbing it moves the edge.
+ *
+ * Measured on `logo-tux` at 16 colours: of 2,873 components under 8px, only 40.2%
+ * are isolated — the other 59.8% are fringe. On `photo-jpeg-artifacts` it is
+ * 13.0% against 87.0%. So a size-only cutoff spends most of its deletions on edge
+ * signal, which is precisely why turning despeckling on cost 0.05–0.20 SSIM
+ * across the corpus while saving bytes.
+ *
+ * `isolated` is cheaper per byte saved, not free. Measured end to end at
+ * `minArea: 8`, against no despeckling at all:
+ *
+ *   logo-tux              84 KB / 0.9745   ->  all 21 KB / 0.9202   isolated 49 KB / 0.9600
+ *   alpha-dice           234 KB / 0.9304   -> all 133 KB / 0.9191   isolated 231 KB / 0.9305
+ *   photo-jpeg-artifacts 338 KB / 0.8986   ->  all 72 KB / 0.5488   isolated 288 KB / 0.8657
+ *
+ * On logo-tux that is 0.00041 SSIM per KB saved against `all`'s 0.00086 — twice
+ * the value for the same currency — and on a JPEG-artifact photo it is the
+ * difference between a usable result and a ruined one. It still costs something,
+ * because recolouring a speck is a real change; it just does not move an edge.
+ */
+export type SpeckleScope = 'all' | 'isolated';
+
 export function despeckle(
   classes: Int32Array,
   comps: ComponentMap,
@@ -237,6 +275,7 @@ export function despeckle(
   height: number,
   minArea: number,
   voidClass = -1,
+  scope: SpeckleScope = 'all',
 ): number {
   if (minArea <= 1) return 0;
 
@@ -245,6 +284,37 @@ export function despeckle(
     if (comps.areas[c] < minArea) small.push(c);
   }
   if (small.length === 0) return 0;
+
+  if (scope === 'isolated') {
+    // One pass over the image per candidate would be quadratic, so collect each
+    // candidate's bordering classes in a single sweep instead.
+    const borders = new Map<number, number>(); // component -> the one class seen, or -1 for "several"
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const c = comps.labels[i];
+        if (comps.areas[c] >= minArea) continue;
+        const me = classes[i];
+        for (const j of [
+          x > 0 ? i - 1 : -1,
+          x + 1 < width ? i + 1 : -1,
+          y > 0 ? i - width : -1,
+          y + 1 < height ? i + width : -1,
+        ]) {
+          if (j < 0) continue;
+          const other = classes[j];
+          if (other === me) continue;
+          const prev = borders.get(c);
+          if (prev === undefined) borders.set(c, other);
+          else if (prev !== other && prev !== -1) borders.set(c, -1);
+        }
+      }
+    }
+    for (let k = small.length - 1; k >= 0; k--) {
+      if (borders.get(small[k]) === -1) small.splice(k, 1);
+    }
+    if (small.length === 0) return 0;
+  }
 
   // Process smallest first so a speck never absorbs into another speck that is
   // itself about to disappear.

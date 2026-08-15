@@ -4,6 +4,10 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v1.44.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.44.0)
+
+`--speckle-scope isolated`: despeckling that can tell noise from an edge. The size cutoff alone cannot — measured on logo-tux at 16 colours, only 40.2% of the components under 8px are specks floating inside a uniform field; the other 59.8% sit between two regions and are antialiasing fringe carrying the sub-pixel position of an edge. On a JPEG-artifact photo it is 13.0% against 87.0%. Removing by size spends most of its deletions on signal, which is why despeckling cost 0.05-0.20 SSIM across the corpus. Scoping to isolated specks is twice the size saving per unit of fidelity (0.00041 SSIM/KB against 0.00086), and on photo-jpeg-artifacts it is the difference between 0.8657 and 0.5488. Not free — recolouring a speck is a real change — but it never moves an edge. Default is unchanged.
+
 ## [v1.43.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.43.0)
 
 `--severity`: where the error is, not just how much. SSIM, PSNR and mean ΔE are global aggregates, and an aggregate cannot separate a harmless dusting of antialiasing along every edge from one solid wrong-coloured region — averaged over a megapixel they can score alike. Differing pixels are opened morphologically to delete one-pixel filaments, clustered 4-connected, and scored by summed squared area so a coherent blob outweighs scattered dust. Plus a composite: a geometric mean over accuracy, structure and coherence, so no strong axis can carry a collapsed one. On `photo-parrots` this reports SSIM 0.834 against coherence 0.321 — a 266,960px coherent wrong region the aggregates hide.

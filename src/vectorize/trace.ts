@@ -3,7 +3,7 @@ import { shortHex } from '../color.js';
 import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
 import type { RasterImage, Rgba } from '../types.js';
-import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap } from './components.js';
+import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, type SpeckleScope } from './components.js';
 import { traceComponents, type TurnPolicy, type Loop } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
@@ -40,6 +40,14 @@ export interface TraceOptions {
   alphaLevels?: number;
   /** Regions smaller than this many pixels are absorbed into their neighbours. */
   minArea?: number;
+  /**
+   * Which small regions {@link minArea} may absorb.  (default) takes every
+   * one under the cutoff.  takes only those surrounded by a single
+   * class — specks floating inside a uniform field — and spares the ones sitting
+   * between two regions, which are antialiasing fringe carrying the sub-pixel
+   * position of an edge.
+   */
+  speckleScope?: SpeckleScope;
   /** Douglas–Peucker tolerance in pixels for the structural outline. */
   tolerance?: number;
   /** Maximum Bézier fitting error in pixels. */
@@ -198,6 +206,7 @@ export const TRACE_DEFAULTS = {
   colors: 16,
   alphaLevels: 8,
   minArea: 0,
+  speckleScope: 'all' as SpeckleScope,
   // 0.4, not 1.0. A measured diagnosis (scripts/diagnose-photo.mjs) found the
   // curve fitter, not quantisation, is the dominant loss on photographs — 0.11
   // to 0.24 SSIM — and that a 1px tolerance is *strictly worse* than 0.4 on
@@ -334,7 +343,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   if (o.minArea > 1) {
     // Two passes: absorbing one speck can leave its neighbour below threshold.
     for (let pass = 0; pass < 2; pass++) {
-      const merged = despeckle(classes, comps, width, height, o.minArea, -1);
+      const merged = despeckle(classes, comps, width, height, o.minArea, -1, o.speckleScope);
       if (merged === 0) break;
       despeckled += merged;
       comps = connectedComponents(classes, width, height, -1);

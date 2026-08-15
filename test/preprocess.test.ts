@@ -228,3 +228,51 @@ describe('trace preprocessing integration', () => {
     expect(applyThreshold(flat, { threshold: 'auto' }).image.data).toEqual(off.data);
   });
 });
+
+describe('speckle scope', () => {
+  it('spares antialiasing fringe and takes only isolated specks', async () => {
+    const { quantize, NearestColor } = await import('../src/vectorize/quantize.js');
+    const { connectedComponents, despeckle } = await import('../src/vectorize/components.js');
+    const W = 90, H = 90;
+    const img = createImage(W, H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        // Left half dark, right half light: the vertical seam between them is
+        // where fringe lives. Plus isolated specks well inside each field.
+        const dark = x < W / 2;
+        let v = dark ? 40 : 220;
+        if (x === Math.floor(W / 2) && y % 2 === 0) v = 130;          // fringe on the seam
+        if ((x === 12 || x === 70) && y % 9 === 0) v = dark ? 200 : 50; // isolated specks
+        setPixel(img, x, y, v, v, v);
+      }
+    }
+    const n = W * H;
+    const pal = quantize(img, 8, {});
+    const near = new NearestColor(pal, n);
+    const base = new Int32Array(n);
+    for (let i = 0; i < n; i++) {
+      const o = i * 4;
+      base[i] = near.index(img.data[o], img.data[o + 1], img.data[o + 2]);
+    }
+    const run = (scope: 'all' | 'isolated'): number => {
+      const cls = Int32Array.from(base);
+      const comps = connectedComponents(cls, W, H, -1);
+      return despeckle(cls, comps, W, H, 6, -1, scope);
+    };
+    const all = run('all');
+    const isolated = run('isolated');
+    // Both remove something, but `isolated` is strictly more conservative: it
+    // declines the fringe components sitting between the two fields.
+    expect(all).toBeGreaterThan(0);
+    expect(isolated).toBeGreaterThan(0);
+    expect(isolated).toBeLessThan(all);
+  });
+
+  it('defaults to `all`, so existing output is unchanged', async () => {
+    const { trace } = await import('../src/vectorize/trace.js');
+    const img = createImage(40, 40);
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) setPixel(img, x, y, x < 20 ? 30 : 220, 100, 150);
+    expect(trace(img, { colors: 8, minArea: 6 }).svg)
+      .toEqual(trace(img, { colors: 8, minArea: 6, speckleScope: 'all' }).svg);
+  });
+});
