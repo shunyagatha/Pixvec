@@ -73,4 +73,21 @@ jobs:
         run: ./mcp-publisher login github-oidc
 
       - name: Publish
-        run: ./mcp-publisher publish
+        # A version already in the registry is not a failure. It happens on a
+        # manual re-run, and on any release published by hand before the tag
+        # landed. Letting that paint the run red teaches everyone to ignore red
+        # runs, which costs far more than it saves — so a duplicate is reported
+        # and passed over, and every other error still fails loudly.
+        run: |
+          set +e
+          output=$(./mcp-publisher publish 2>&1)
+          code=$?
+          echo "$output"
+          if [ $code -eq 0 ]; then
+            exit 0
+          fi
+          if echo "$output" | grep -q "duplicate version"; then
+            echo "::notice::This version is already in the registry — nothing to do."
+            exit 0
+          fi
+          exit $code
