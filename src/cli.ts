@@ -110,6 +110,18 @@ function printQuality(q: QualityReport, label = 'Accuracy'): void {
     );
     info(`  ${dim('Max channel')} ${q.maxChannelDiff}/255`);
   }
+  // Only printed when it was asked for, since it costs an extra pass. It answers
+  // the question the aggregates above cannot: is the error spread thin along
+  // every edge, or gathered into one place a person would point at?
+  if (q.severity) {
+    info(
+      `  ${dim('Coherence')}   ${q.severity.score.toFixed(4)}  ` +
+        dim(`(${q.severity.clusters} cluster(s), largest ${q.severity.largestCluster}px)`),
+    );
+  }
+  if (q.composite !== undefined) {
+    info(`  ${dim('Composite')}   ${q.composite.toFixed(4)} ${dim('(geometric mean; 1.0 is bit-exact)')}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +314,7 @@ interface VectorizeCliOptions {
   bgEverywhere?: boolean;
   feather?: boolean;
   verify?: boolean;
+  severity?: boolean;
   embedStrategy: string;
   xlink?: boolean;
   imageRendering?: string;
@@ -340,6 +353,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
   }
 
   const result = await vectorize(source, {
+    compare: o.severity ? { severity: true } : undefined,
     mode: (o.lossless ? 'lossless' : o.mode) as never,
     preset: o.preset as never,
     losslessPrefer: o.prefer as never,
@@ -1806,6 +1820,7 @@ program
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))
   .option('--target-psnr <db>', 'escalate settings until PSNR reaches this', floatArg('--target-psnr', 0, 200))
+  .option('--severity', 'with --verify: also report where the error is (coherent regions vs edge dust) and a single composite score')
   .option('--max-bytes <size>', 'size budget: relax until the SVG fits, and report the accuracy it cost (e.g. 40KB)', byteSizeArg)
   .option('--max-nodes <n>', 'complexity budget: relax until the geometry has at most this many anchor points', intArg('--max-nodes', 4, 10_000_000))
   .option('--max-colors <n>', 'palette ceiling during refinement', intArg('--max-colors', 2, 256))

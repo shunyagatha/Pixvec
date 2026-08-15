@@ -1,9 +1,11 @@
 import { deltaE2000, luma709, srgbToLab } from '../color.js';
+import { severity, compositeScore, type SeverityReport } from './severity.js';
 import { compositeOver, premultiply, sameSize } from '../image.js';
 import type { AlphaMode, QualityReport, RasterImage, Rgba } from '../types.js';
 import { ssimPlane } from './ssim.js';
 
 export { ssimPlane };
+export { severity, compositeScore, type SeverityReport, type SeverityOptions } from './severity.js';
 
 export interface CompareOptions {
   /**
@@ -13,6 +15,12 @@ export interface CompareOptions {
   alphaMode?: AlphaMode;
   /** Background used to flatten both images before the CIEDE2000 pass. */
   deltaEBackground?: Rgba;
+  /**
+   * Also cluster the differing pixels and report where the error is, plus a
+   * single composite score. Off by default: it costs one extra pass over the
+   * image, and the existing aggregates are what most callers read.
+   */
+  severity?: boolean;
   /** Skip the CIEDE2000 pass, which is the expensive part on large photos. */
   skipDeltaE?: boolean;
   /** Skip SSIM, which allocates six float planes per channel. */
@@ -92,8 +100,20 @@ export function compareImages(
   }
 
   let deltaE = { mean: 0, p95: 0, max: 0 };
+  // The per-pixel field is only retained when severity is asked for, so the
+  // default path allocates nothing extra.
+  const field = opts.severity && !lossless ? new Float64Array(pixels) : undefined;
   if (!lossless && !opts.skipDeltaE) {
-    deltaE = deltaEStats(reference, candidate, bg);
+    deltaE = deltaEStats(reference, candidate, bg, field);
+  }
+
+  let sev: SeverityReport | undefined;
+  let composite: number | undefined;
+  if (opts.severity) {
+    sev = lossless
+      ? { differing: 0, coherent: 0, clusters: 0, largestCluster: 0, mass: 0, score: 1 }
+      : severity(field ?? new Float64Array(pixels), width, height);
+    composite = lossless ? 1 : compositeScore(psnr, ssim, sev.score);
   }
 
   return {
@@ -112,6 +132,8 @@ export function compareImages(
     deltaEBackground: bg,
     alphaMode,
     lossless,
+    severity: sev,
+    composite,
   };
 }
 
@@ -141,6 +163,10 @@ function deltaEStats(
   reference: RasterImage,
   candidate: RasterImage,
   bg: Rgba,
+  // When supplied, the per-pixel CIEDE2000 is retained here as well as binned.
+  // Severity clustering needs the field, and recomputing it would mean a second
+  // full Lab conversion over the image for no new information.
+  field?: Float64Array,
 ): { mean: number; p95: number; max: number } {
   const flatA = compositeOver(reference, bg);
   const flatB = compositeOver(candidate, bg);
@@ -168,6 +194,7 @@ function deltaEStats(
     srgbToLab(rb, gb, bb, labB);
     const de = deltaE2000(labA[0], labA[1], labA[2], labB[0], labB[1], labB[2]);
 
+    if (field) field[i] = de;
     sum += de;
     if (de > max) max = de;
     const bin = Math.min(BINS - 1, Math.round(de * 100));

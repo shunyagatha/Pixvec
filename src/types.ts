@@ -117,6 +117,8 @@ export interface SizeBudgetReport {
 export type VectorizeMode = 'embed' | 'pixel' | 'trace';
 
 /** Full-reference quality comparison between two same-sized rasters. */
+import type { SeverityReport } from './metrics/severity.js';
+
 export interface QualityReport {
   width: number;
   height: number;
@@ -142,4 +144,16 @@ export interface QualityReport {
   alphaMode: AlphaMode;
   /** True when every channel of every pixel matches. */
   lossless: boolean;
+  /**
+   * Where the error is, not just how much — present when  was asked
+   * for. Global aggregates cannot separate a harmless dusting of antialiasing
+   * from one solid wrong-coloured region; this clusters the differing pixels so
+   * a coherent blob outweighs scattered dust.
+   */
+  severity?: SeverityReport;
+  /**
+   * A single geometric-mean score over accuracy, structure and error coherence,
+   * in [0, 1]. Geometric so no strong axis can carry a collapsed one.
+   */
+  composite?: number;
 }

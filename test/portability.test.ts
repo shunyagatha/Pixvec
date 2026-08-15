@@ -41,6 +41,7 @@ const CORE_MODULES = [
   'io/export/gcode.ts',
   'io/export/index.ts',
   'metrics/index.ts',
+  'metrics/severity.ts',
   'metrics/ssim.ts',
   'vectorize/quantize.ts',
   'vectorize/components.ts',
