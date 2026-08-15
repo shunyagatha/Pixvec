@@ -48,6 +48,11 @@ guarantee rather than a hope.
   pixels, use the lossless command and take the embedded result.
 - Nothing is uploaded. The engine runs locally in the extension host.
 
+## Marketplace icon
+
+ is generated from , composited on the brand paper colour
+with padding so it does not sit edge-to-edge inside a rounded tile.
+
 ## Licence
 
 MIT, same as Vecline. Source lives in
