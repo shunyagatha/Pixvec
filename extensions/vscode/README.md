@@ -50,8 +50,9 @@ guarantee rather than a hope.
 
 ## Marketplace icon
 
- is generated from , composited on the brand paper colour
-with padding so it does not sit edge-to-edge inside a rounded tile.
+`icon.png` is generated from `extensions/logo.svg`, composited on the brand paper
+colour with padding so the mark does not sit edge-to-edge once a store crops it
+into a rounded tile.
 
 ## Licence
 
