@@ -120,6 +120,7 @@ export { selectiveBlur, type BlurOptions } from './preprocess.js';
 export {
   applyThreshold,
   otsuThreshold,
+  bradleyMask,
   type ThresholdOptions,
   type ThresholdResult,
 } from './vectorize/threshold.js';
@@ -271,4 +272,4 @@ export {
 } from './io/export/index.js';
 
 /** Version of the package this build came from. */
-export const VERSION = '1.41.1';
+export const VERSION = '1.42.0';

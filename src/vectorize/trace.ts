@@ -103,6 +103,16 @@ export interface TraceOptions {
   /** With {@link threshold}: dark pixels are the shape on a light ground. Default true. */
   blackOnWhite?: boolean;
   /**
+   * Threshold against each pixel's own neighbourhood rather than one cutoff for
+   * the whole frame. The fix for a photograph of paper, where one corner is in
+   * shadow and no global cutoff can serve both ends of the page.
+   */
+  adaptive?: boolean;
+  /** Neighbourhood side for {@link adaptive}; 0 (default) = an eighth of the shorter side. */
+  adaptiveWindow?: number;
+  /** Percent below the local mean that counts as ink for {@link adaptive}. Default 15. */
+  adaptiveT?: number;
+  /**
    * Reconstruct smooth colour ramps as SVG gradients instead of flat bands.
    * Off by default. A region only becomes a gradient when the gradient's actual
    * rendered output beats the flat bands it replaces (measured per pixel in
@@ -255,7 +265,10 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
   }
   if (opts.threshold !== undefined) {
-    img = applyThreshold(img, { threshold: o.threshold, blackOnWhite: o.blackOnWhite }).image;
+    img = applyThreshold(img, {
+      threshold: o.threshold, blackOnWhite: o.blackOnWhite,
+      adaptive: o.adaptive, adaptiveWindow: o.adaptiveWindow, adaptiveT: o.adaptiveT,
+    }).image;
   }
 
   const { width, height } = img;

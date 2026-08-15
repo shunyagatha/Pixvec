@@ -12,7 +12,7 @@
  * (Douglas–Peucker) → emit as stroked `<path fill="none">`. Pure TypeScript.
  */
 
-import { otsuThreshold } from './threshold.js';
+import { otsuThreshold, bradleyMask } from './threshold.js';
 import { luma709 } from '../color.js';
 import { SvgDoc } from '../svg/build.js';
 import { PathBuilder } from '../svg/path.js';
@@ -23,6 +23,18 @@ export interface CenterlineOptions {
   threshold?: number | 'auto';
   /** Dark pixels are the line on a light ground. Default true. */
   blackOnWhite?: boolean;
+  /**
+   * Binarise against each pixel's own neighbourhood (Bradley–Roth) rather than
+   * one cutoff for the frame. This is the mode that matters most here: a
+   * centerline trace is usually fed a phone photo of paper, where one corner is
+   * in shadow and a global cutoff either loses the writing there or floods the
+   * lit half with ink.
+   */
+  adaptive?: boolean;
+  /** Neighbourhood side for {@link adaptive}; 0 (default) = an eighth of the shorter side. */
+  adaptiveWindow?: number;
+  /** Percent below the local mean that counts as ink for {@link adaptive}. Default 15. */
+  adaptiveT?: number;
   /** Stroke width in pixels. Default 1. */
   strokeWidth?: number;
   /** Stroke colour (any CSS colour). Default `#000`. */
@@ -58,6 +70,9 @@ export function centerlinePolylines(image: RasterImage, opts: CenterlineOptions 
     ? otsuThreshold(image)
     : opts.threshold;
   const blackOnWhite = opts.blackOnWhite ?? true;
+  const local = opts.adaptive
+    ? bradleyMask(image, opts.adaptiveWindow ?? 0, opts.adaptiveT ?? 15)
+    : null;
 
   // Binarise into a 1-pixel-padded mask so strokes touching the edge still thin.
   const P = width + 2, Q = height + 2;
@@ -67,7 +82,8 @@ export function centerlinePolylines(image: RasterImage, opts: CenterlineOptions 
       const o = (y * width + x) * 4;
       if (image.data[o + 3] < 8) continue;
       const lum = luma709(image.data[o], image.data[o + 1], image.data[o + 2]);
-      const fg = blackOnWhite ? lum <= cutoff : lum > cutoff;
+      const dark = local ? local[y * width + x] === 1 : lum <= cutoff;
+      const fg = blackOnWhite ? dark : !dark;
       if (fg) mask[(y + 1) * P + (x + 1)] = 1;
     }
   }

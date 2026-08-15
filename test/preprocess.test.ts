@@ -180,4 +180,51 @@ describe('trace preprocessing integration', () => {
     const blurred = trace(img, { colors: 8, minArea: 0, blur: 3 });
     expect(blurred.regions).toBeLessThanOrEqual(noBlur.regions);
   });
+
+  // The case a single global cutoff cannot serve: a photograph of paper where one
+  // corner is in shadow. Ink is a constant fraction below its OWN local paper, so
+  // shadowed ink is brighter than lit paper — and no global number separates them.
+  it('adaptive thresholding recovers ink a global cutoff loses to shadow', () => {
+    const W = 240, H = 160;
+    const img = createImage(W, H);
+    const isInk = (x: number, y: number): boolean => y % 28 < 3 && x > 20 && x < W - 20;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const light = 245 - 165 * ((x / W) * 0.45 + (y / H) * 0.55);
+        const v = Math.round(isInk(x, y) ? light * 0.65 : light);
+        setPixel(img, x, y, v, v, v);
+      }
+    }
+    const recall = (out: RasterImage): number => {
+      let hit = 0, total = 0;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (!isInk(x, y)) continue;
+        total++;
+        if (out.data[(y * W + x) * 4] < 128) hit++;
+      }
+      return hit / total;
+    };
+    const precision = (out: RasterImage): number => {
+      let hit = 0, marked = 0;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        if (out.data[(y * W + x) * 4] >= 128) continue;
+        marked++;
+        if (isInk(x, y)) hit++;
+      }
+      return marked === 0 ? 0 : hit / marked;
+    };
+    const global = applyThreshold(img, { threshold: 'auto' }).image;
+    const local = applyThreshold(img, { threshold: 'auto', adaptive: true }).image;
+    // The global cutoff floods the shadowed end: it marks far more than the ink.
+    expect(precision(global)).toBeLessThan(0.5);
+    // Adaptive finds essentially all of the ink and almost nothing else.
+    expect(recall(local)).toBeGreaterThan(0.95);
+    expect(precision(local)).toBeGreaterThan(0.9);
+  });
+
+  it('leaves evenly-lit art to Otsu — adaptive is opt-in', () => {
+    const flat = bimodal();
+    const off = applyThreshold(flat, { threshold: 'auto' }).image;
+    expect(applyThreshold(flat, { threshold: 'auto' }).image.data).toEqual(off.data);
+  });
 });

@@ -425,6 +425,9 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--polygon` | Emit polygons instead of curves |
 | `--threshold <cutoff\|auto>` | Reduce to two colours by luminance before tracing (potrace-style bilevel; `auto` = Otsu) |
 | `--black-on-white <bool>` | With `--threshold`: dark pixels are the shape (default true) |
+| `--adaptive` | Threshold against each pixel's own neighbourhood (Bradley–Roth) rather than one cutoff for the frame. For a photograph of paper, where one corner is in shadow and no global number serves both ends: on a page whose ink sits a constant 35% below its *local* paper, Otsu scores F1 26.4% (it floods the shadowed half) and this scores 100%. Also on `centerline` and `gcode`, where it matters most. Off by default — on evenly-lit art Otsu is the better estimator |
+| `--adaptive-window <px>` | Neighbourhood side for `--adaptive`; 0 (default) is an eighth of the shorter side |
+| `--adaptive-t <pct>` | How far below the local mean counts as ink (default 15) |
 | `--blur <1-5>` | Selective, edge-preserving blur before quantising — removes grain without softening edges |
 | `--blur-delta <n>` | Edge-preservation threshold for `--blur` (default 20) |
 | `--stroke-width <n>` | Stroke each path in its own fill colour to hide seams between regions |

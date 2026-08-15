@@ -273,6 +273,9 @@ interface VectorizeCliOptions {
   blurDelta?: number;
   threshold?: number | 'auto';
   blackOnWhite?: boolean;
+  adaptive?: boolean;
+  adaptiveWindow?: number;
+  adaptiveT?: number;
   strokeWidth?: number;
   turnPolicy?: string;
   extendUnder?: boolean;
@@ -369,6 +372,9 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       blurDelta: o.blurDelta,
       threshold: o.threshold,
       blackOnWhite: o.blackOnWhite,
+      adaptive: o.adaptive,
+      adaptiveWindow: o.adaptiveWindow,
+      adaptiveT: o.adaptiveT,
       strokeWidth: o.strokeWidth,
       turnPolicy: o.turnPolicy as never,
       extendUnder: o.extendUnder,
@@ -1441,6 +1447,9 @@ interface CenterlineCliOptions {
   output?: string;
   threshold?: number | 'auto';
   whiteOnBlack?: boolean;
+  adaptive?: boolean;
+  adaptiveWindow?: number;
+  adaptiveT?: number;
   strokeWidth: number;
   stroke: string;
   simplify: number;
@@ -1455,6 +1464,9 @@ async function runCenterline(input: string, o: CenterlineCliOptions): Promise<vo
   const out = centerlineTrace(source.image, {
     threshold: o.threshold,
     blackOnWhite: !o.whiteOnBlack,
+    adaptive: o.adaptive,
+    adaptiveWindow: o.adaptiveWindow,
+    adaptiveT: o.adaptiveT,
     strokeWidth: o.strokeWidth,
     stroke: o.stroke,
     simplify: o.simplify,
@@ -1478,6 +1490,9 @@ async function runCenterline(input: string, o: CenterlineCliOptions): Promise<vo
 
 interface GcodeCliOptions {
   output?: string;
+  adaptive?: boolean;
+  adaptiveWindow?: number;
+  adaptiveT?: number;
   tool: 'laser' | 'pen';
   feed: number;
   power: number;
@@ -1496,6 +1511,9 @@ async function runGcode(input: string, o: GcodeCliOptions): Promise<void> {
   const polylines = centerlinePolylines(source.image, {
     threshold: o.threshold,
     blackOnWhite: !o.whiteOnBlack,
+    adaptive: o.adaptive,
+    adaptiveWindow: o.adaptiveWindow,
+    adaptiveT: o.adaptiveT,
     simplify: o.simplify,
   });
   const gcode = toGcode(polylines, {
@@ -1765,6 +1783,9 @@ program
   .option('--blur-delta <n>', 'edge-preservation threshold for --blur', intArg('--blur-delta', 0, 255))
   .option('--threshold <cutoff>', 'reduce to two colours by luminance: a 0-255 number or "auto" (Otsu)', thresholdArg)
   .option('--black-on-white <bool>', 'with --threshold: dark pixels are the shape (default true)', boolArg)
+  .option('--adaptive', 'threshold against each pixel\'s own neighbourhood (Bradley–Roth) instead of one global cutoff — for photos of paper, where one corner is in shadow')
+  .option('--adaptive-window <px>', 'neighbourhood side length for --adaptive; 0 = an eighth of the shorter side', intArg('--adaptive-window', 0, 4096))
+  .option('--adaptive-t <pct>', 'how far below the local mean counts as ink, in percent (default 15)', intArg('--adaptive-t', 0, 100))
   .option('--stroke-width <n>', 'stroke each path in its fill colour to hide seams between regions', floatArg('--stroke-width', 0, 100))
   .addOption(
     new Option('--turn-policy <policy>', 'how to resolve diagonal self-touches (checkerboard saddles)')
@@ -1955,6 +1976,9 @@ program
   .option('-o, --output <file>', 'output SVG path (defaults to <input>.svg)')
   .option('--threshold <cutoff>', 'binarise cutoff 0-255 or "auto" (Otsu)', thresholdArg)
   .option('--white-on-black', 'the line is light on a dark ground')
+  .option('--adaptive', 'binarise against each pixel\'s own neighbourhood (Bradley–Roth) — for photos of paper lit unevenly')
+  .option('--adaptive-window <px>', 'neighbourhood side for --adaptive; 0 = an eighth of the shorter side', intArg('--adaptive-window', 0, 4096))
+  .option('--adaptive-t <pct>', 'percent below the local mean that counts as ink (default 15)', intArg('--adaptive-t', 0, 100))
   .option('--stroke-width <n>', 'stroke width in px', floatArg('--stroke-width', 0.1, 100), 1)
   .option('--stroke <color>', 'stroke colour', '#000')
   .option('--simplify <px>', 'Douglas-Peucker tolerance', floatArg('--simplify', 0, 100), 1)
@@ -2074,6 +2098,9 @@ program
   .option('--threshold <cutoff>', 'binarise cutoff 0-255 or "auto"', thresholdArg)
   .option('--white-on-black', 'the line is light on a dark ground')
   .option('--simplify <px>', 'path simplification tolerance', floatArg('--simplify', 0, 100), 1)
+  .option('--adaptive', 'binarise against each pixel\'s own neighbourhood (Bradley–Roth) — for photos of paper lit unevenly')
+  .option('--adaptive-window <px>', 'neighbourhood side for --adaptive; 0 = an eighth of the shorter side', intArg('--adaptive-window', 0, 4096))
+  .option('--adaptive-t <pct>', 'percent below the local mean that counts as ink (default 15)', intArg('--adaptive-t', 0, 100))
   .option('--json', 'machine-readable output on stdout')
   .action(runGcode);
 

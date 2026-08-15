@@ -4,6 +4,10 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v1.42.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.42.0)
+
+Adaptive thresholding (Bradley–Roth): `--adaptive` on `vectorize`, `centerline` and `gcode`. A global cutoff assumes the page is lit evenly; a photograph of paper is not, and no single number serves both a lit corner and a shadowed one. On a page with a lighting gradient where the ink is a constant 35% below its *local* paper, Otsu turns the shadowed half solid black — precision 15.2%, F1 26.4%. Comparing each pixel with its own neighbourhood scores 100%.
+
 ## [v1.41.1](https://github.com/shunyagatha/Vecline/releases/tag/v1.41.1)
 
 Component bounding boxes were `(-1, -1)` at every min corner, because an `Int32Array` cannot hold `Number.MAX_SAFE_INTEGER`. Despeckling a one-megapixel photograph took 103 seconds; it now takes under one.

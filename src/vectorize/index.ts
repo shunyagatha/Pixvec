@@ -40,6 +40,7 @@ export {
 export {
   applyThreshold,
   otsuThreshold,
+  bradleyMask,
   type ThresholdOptions,
   type ThresholdResult,
 } from './threshold.js';
