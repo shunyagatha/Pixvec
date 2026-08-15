@@ -1,0 +1,86 @@
+<meta charset="utf-8">
+<!--
+  Plugin panel.
+
+  Figma supplies its own theme as CSS variables when `themeColors: true` is set in
+  showUI, so the panel follows the editor's light/dark setting instead of guessing.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 14px;
+    font: 12px/1.45 Inter, -apple-system, "Segoe UI", sans-serif;
+    color: var(--figma-color-text, #1a1a1a);
+    background: var(--figma-color-bg, #fff);
+  }
+  h1 { font-size: 12px; font-weight: 600; margin: 0 0 2px; letter-spacing: .01em; }
+  .sub { color: var(--figma-color-text-secondary, #777); margin: 0 0 14px; }
+  .target {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    padding: 8px 10px; border-radius: 6px;
+    background: var(--figma-color-bg-secondary, #f5f5f5);
+    color: var(--figma-color-text, #1a1a1a);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-bottom: 14px;
+  }
+  label { display: block; margin: 0 0 5px; font-weight: 500; }
+  .row { margin-bottom: 13px; }
+  .inline { display: flex; align-items: center; gap: 8px; }
+  select, input[type=range] { width: 100%; }
+  select {
+    padding: 6px; border-radius: 5px; font: inherit;
+    border: 1px solid var(--figma-color-border, #ddd);
+    background: var(--figma-color-bg, #fff); color: inherit;
+  }
+  .val { font-family: ui-monospace, monospace; min-width: 22px; text-align: right; color: var(--figma-color-text-secondary, #777); }
+  button {
+    width: 100%; padding: 9px; border: 0; border-radius: 6px; cursor: pointer;
+    font: inherit; font-weight: 600;
+    background: var(--figma-color-bg-brand, #0d99ff); color: var(--figma-color-text-onbrand, #fff);
+  }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #status {
+    margin-top: 11px; text-align: center; min-height: 16px;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--figma-color-text-secondary, #777);
+  }
+  #status[data-kind="error"] { color: var(--figma-color-text-danger, #d1006f); }
+  .note {
+    margin-top: 14px; padding-top: 12px; font-size: 11px; line-height: 1.5;
+    border-top: 1px solid var(--figma-color-border, #eee);
+    color: var(--figma-color-text-secondary, #777);
+  }
+</style>
+
+<h1>Vecline</h1>
+<p class="sub">Vectorize the selection, and measure how close it landed.</p>
+
+<div class="target" id="target">—</div>
+
+<div class="row">
+  <label for="mode">Mode</label>
+  <select id="mode">
+    <option value="trace">Trace — filled colour contours</option>
+    <option value="centerline">Centerline — single strokes</option>
+  </select>
+</div>
+
+<div class="row">
+  <label for="colors">Colours <span class="val" id="colorsVal">16</span></label>
+  <input type="range" id="colors" min="2" max="64" value="16">
+</div>
+
+<div class="row inline">
+  <input type="checkbox" id="gradients">
+  <label for="gradients" style="margin:0">Reconstruct gradients</label>
+</div>
+
+<button id="go" disabled>Vectorize</button>
+<div id="status">Select a layer</div>
+
+<p class="note">
+  The result is placed beside your layer, not over it. Nothing leaves this
+  document — the tracer runs inside the plugin, and it makes no network requests.
+</p>
+
+<script src="ui.js"></script>

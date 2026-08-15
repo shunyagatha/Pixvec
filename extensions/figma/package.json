@@ -1,0 +1,19 @@
+{
+  "name": "vecline-figma",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "vecline": "^1.44.0"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.4.0"
+  }
+}
