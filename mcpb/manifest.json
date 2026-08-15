@@ -33,7 +33,9 @@
     "entry_point": "server/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/server/index.js"],
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
       "env": {
         "VECLINE_SOFFICE": "${user_config.soffice_path}"
       }
@@ -47,24 +49,15 @@
       "required": false
     }
   },
-  "tools": [
-    { "name": "vectorize", "description": "Convert a raster image to SVG, auto-selecting pixel-exact or traced output." },
-    { "name": "convert", "description": "Convert between formats by extension, including DXF, EPS and PDF vector export." },
-    { "name": "centerline", "description": "Trace line art to single-stroke centreline SVG, or straight to G-code." },
-    { "name": "measure", "description": "Score two images against each other: PSNR, SSIM, CIEDE2000, and whether they are pixel-identical." },
-    { "name": "diff", "description": "Paint a perceptual CIEDE2000 heatmap of what changed between two images." },
-    { "name": "crop", "description": "Content-aware crop to an aspect ratio, keeping the subject rather than the centre." },
-    { "name": "doc_to_images", "description": "Render a PDF, SVG or Office document to one image per page." },
-    { "name": "office_convert", "description": "Convert Office documents to and from PDF using a local LibreOffice." },
-    { "name": "images_to_pdf", "description": "Combine images into a single multi-page PDF." },
-    { "name": "palette", "description": "Extract a perceptual dominant-colour palette from an image." },
-    { "name": "placeholder", "description": "Generate a BlurHash string for lazy-loading an image." },
-    { "name": "image_info", "description": "Inspect an image: dimensions, format, alpha and recommended strategy." }
-  ],
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"],
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
     "runtimes": {
       "node": ">=18.17"
     }
-  }
+  },
+  "tools_generated": true
 }
