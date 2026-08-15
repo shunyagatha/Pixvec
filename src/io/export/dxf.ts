@@ -11,18 +11,59 @@
 import type { TraceGeometry } from './geometry.js';
 import { flatten, n } from './shared.js';
 
+/** Physical units a DXF can declare, and their `$INSUNITS` codes. */
+export const DXF_UNITS = { none: 0, in: 1, mm: 4, cm: 5, m: 6 } as const;
+export type DxfUnit = keyof typeof DXF_UNITS;
+
 export interface DxfOptions {
   /** Samples per Bézier when flattening to polyline vertices. Default 12. */
   curveSteps?: number;
+  /**
+   * Physical unit to declare in the file header. Default `none`, which is what
+   * every DXF this exporter has ever written said — silently.
+   */
+  units?: DxfUnit;
+  /**
+   * How many source pixels make one {@link units}. Given this, coordinates are
+   * emitted at real physical size instead of in pixels.
+   *
+   * This is the difference between a drawing and a part. Without it the
+   * receiving program has to guess a scale, and the guess is usually wrong —
+   * which a maker discovers after the cut, in material.
+   */
+  pixelsPerUnit?: number;
 }
 
 /** Serialise trace geometry to an ASCII DXF document. */
 export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
   const steps = opts.curveSteps ?? 12;
   const H = geometry.height;
-  const fy = (y: number): number => H - y; // DXF Y is up
+  const units = opts.units ?? 'none';
+  // Guard against 0 and negatives as well as undefined: a scale of zero would
+  // collapse every coordinate to the origin and emit a valid-looking file
+  // containing nothing, which is worse than refusing.
+  const per = opts.pixelsPerUnit && opts.pixelsPerUnit > 0 ? opts.pixelsPerUnit : 1;
+  const s = (v: number): number => v / per;
+  const fy = (y: number): number => s(H - y); // DXF Y is up
+  const sx = (x: number): number => s(x);
 
-  const lines: string[] = ['0', 'SECTION', '2', 'ENTITIES'];
+  const lines: string[] = [];
+
+  // A HEADER declaring $INSUNITS. Without it the file says nothing about scale,
+  // and LightBurn, LibreCAD and Fusion each apply their own default — so the
+  // same file cuts at three different sizes depending on what opened it.
+  if (units !== 'none') {
+    lines.push(
+      '0', 'SECTION', '2', 'HEADER',
+      '9', '$INSUNITS', '70', String(DXF_UNITS[units]),
+      // $MEASUREMENT picks the drawing's unit *system* (0 imperial, 1 metric),
+      // which some importers consult instead of $INSUNITS.
+      '9', '$MEASUREMENT', '70', units === 'in' ? '0' : '1',
+      '0', 'ENDSEC',
+    );
+  }
+
+  lines.push('0', 'SECTION', '2', 'ENTITIES');
 
   for (const path of geometry.paths) {
     const layer = `c_${hex(path.color.r, path.color.g, path.color.b)}`;
@@ -37,7 +78,7 @@ export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
       if (prim?.kind === 'circle') {
         lines.push(
           '0', 'CIRCLE', '8', layer, '62', aci, '420', String(trueColor),
-          '10', n(prim.cx), '20', n(fy(prim.cy)), '40', n(prim.r),
+          '10', n(sx(prim.cx)), '20', n(fy(prim.cy)), '40', n(s(prim.r)),
         );
         return;
       }
@@ -49,8 +90,8 @@ export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
         const ratio = prim.rx >= prim.ry ? prim.ry / prim.rx : prim.rx / prim.ry;
         lines.push(
           '0', 'ELLIPSE', '8', layer, '62', aci, '420', String(trueColor),
-          '10', n(prim.cx), '20', n(fy(prim.cy)), '30', '0',
-          '11', n(majorX), '21', n(-majorY), '31', '0',
+          '10', n(sx(prim.cx)), '20', n(fy(prim.cy)), '30', '0',
+          '11', n(s(majorX)), '21', n(s(-majorY)), '31', '0',
           // End parameter at full precision: n()'s 3-place rounding of 2π would
           // leave a sub-pixel hairline gap instead of a closed ellipse.
           '40', n(ratio), '41', '0', '42', String(2 * Math.PI),
@@ -69,7 +110,7 @@ export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
         '0', 'LWPOLYLINE', '8', layer, '62', aci,
         '420', String(trueColor), '90', String(verts.length), '70', '1',
       );
-      for (const v of verts) lines.push('10', n(v.x), '20', n(fy(v.y)));
+      for (const v of verts) lines.push('10', n(sx(v.x)), '20', n(fy(v.y)));
     });
   }
 

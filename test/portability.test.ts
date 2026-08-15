@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { build } from 'esbuild';
 import { describe, expect, it } from 'vitest';
 import * as core from '../src/core.js';
 import { compareImages } from '../src/metrics/index.js';
@@ -244,4 +245,74 @@ describe('vecline/core surface', () => {
   it('reports a version', () => {
     expect(core.VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
+});
+
+/**
+ * The stronger form of the same promise.
+ *
+ * Everything above reads the *source* and walks its import graph, which is a
+ * good proxy and still a proxy: it trusts that the walk sees every edge, that
+ * no dependency pulls something in behind it, and that nothing arrives through
+ * a form the walk does not parse. The claim users actually rely on is narrower
+ * and more testable — *this bundles for a browser* — so this asserts that
+ * directly, by bundling it for a browser.
+ *
+ * A bundler resolves the real graph, follows transitive dependencies, and fails
+ * loudly on anything it cannot satisfy without a Node shim. If `vecline/core`
+ * ever grows an edge to `node:fs`, this goes red before anyone deploys it to a
+ * Worker and finds out there.
+ */
+describe('vecline/core bundles for the browser', () => {
+  it('bundles with no externals and no Node built-ins', async () => {
+    const result = await build({
+      entryPoints: ['src/core.ts'],
+      bundle: true,
+      write: false,
+      format: 'esm',
+      // No `platform: 'node'`, and deliberately no `external` list: anything the
+      // core reaches for must resolve here, or the build throws.
+      platform: 'browser',
+      target: ['es2022', 'chrome111', 'firefox111', 'safari16'],
+      logLevel: 'silent',
+    });
+
+    expect(result.errors).toEqual([]);
+    const [output] = result.outputFiles ?? [];
+    expect(output).toBeDefined();
+
+    const code = output!.text;
+
+    // A `node:` specifier surviving into a browser bundle means esbuild left an
+    // import it could not resolve — the exact failure this guards.
+    expect(code).not.toMatch(/from\s*["']node:/);
+    expect(code).not.toMatch(/require\(\s*["']node:/);
+    expect(code).not.toMatch(/import\(\s*["']node:/);
+
+    // The globals a Node-only path reaches for. `Buffer` is already checked
+    // against the source above; these catch it arriving through a dependency.
+    expect(code).not.toMatch(/\bprocess\.(env|argv|cwd|platform)\b/);
+    expect(code).not.toMatch(/\b__dirname\b|\b__filename\b/);
+  }, 60_000);
+
+  it('stays small enough to be worth shipping to a browser', async () => {
+    const result = await build({
+      entryPoints: ['src/core.ts'],
+      bundle: true,
+      write: false,
+      format: 'esm',
+      platform: 'browser',
+      minify: true,
+      target: ['es2022'],
+      logLevel: 'silent',
+    });
+
+    const bytes = (result.outputFiles ?? [])[0]?.contents.length ?? 0;
+    // Not a performance assertion — a tripwire. The portable core is a few
+    // hundred KB of pure geometry and colour maths; a jump past this ceiling
+    // means something large arrived that probably should not have.
+    expect(bytes).toBeGreaterThan(10_000);
+    expect(bytes).toBeLessThan(600_000);
+    // eslint-disable-next-line no-console
+    console.log(`  vecline/core bundles to ${(bytes / 1024).toFixed(1)} KB minified`);
+  }, 60_000);
 });

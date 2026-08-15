@@ -35,6 +35,7 @@ import { formatBatchSummary } from './io/batch-summary.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from './io/pdf.js';
 import { convertOffice, convertOfficeBatch, isOfficeDocument, findSoffice } from './io/office.js';
 import { startBridge } from './io/bridge.js';
+import type { DxfUnit } from './io/export/index.js';
 import { imagesToPdf } from './io/images-pdf.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba, SizeBudgetReport } from './types.js';
 
@@ -744,12 +745,32 @@ async function runVectorExport(
   }
   const source = await loadRaster(bytes);
   const geometry = traceGeometry(source.image, { colors: o.colors, tolerance: o.tolerance });
-  const cmyk = Boolean((o as SharedCliOptions & { cmyk?: boolean }).cmyk);
+  const opts = o as SharedCliOptions & { cmyk?: boolean; units?: DxfUnit; physicalWidth?: number };
+  const cmyk = Boolean(opts.cmyk);
+
+  // A maker thinks in "this part is 100 mm wide", not in pixels per unit, so
+  // that is what the flag asks for and this converts.
+  const units = opts.units;
+  const pixelsPerUnit = units && opts.physicalWidth
+    ? source.image.width / opts.physicalWidth
+    : undefined;
+  if (opts.physicalWidth && !units) {
+    fail('--physical-width needs --units too, or the number means nothing. Try `--units mm`.');
+  }
 
   const data: string | Uint8Array =
-    ext === '.dxf' ? toDxf(geometry)
+    ext === '.dxf' ? toDxf(geometry, { units, pixelsPerUnit })
       : ext === '.eps' ? toEps(geometry, { cmyk })
         : toPdf(geometry, { cmyk });
+
+  if (ext === '.dxf' && units && pixelsPerUnit) {
+    const h = source.image.height / pixelsPerUnit;
+    info(dim(`  Physical size: ${opts.physicalWidth}${units} × ${h.toFixed(2)}${units} (declared via $INSUNITS)`));
+  } else if (ext === '.dxf' && !units) {
+    // Silence here is how a part gets cut at the wrong size: the file simply
+    // does not say, and each program that opens it assumes something different.
+    info(dim('  No units declared — pass `--units mm --physical-width <n>` to cut at a known size.'));
+  }
   await writeOutput(output, data);
 
   const size = typeof data === 'string' ? Buffer.byteLength(data) : data.length;
@@ -2125,6 +2146,8 @@ program
   .option('--bg-everywhere', 'remove matching pixels anywhere, not just those reachable from the edge')
   .option('--feather', 'fade the cut instead of a hard edge')
   .option('--cmyk', 'emit CMYK colours for .pdf/.eps output (print/prepress)')
+  .addOption(new Option('--units <unit>', 'physical unit to declare in .dxf output').choices(['mm', 'cm', 'in', 'm']))
+  .option('--physical-width <n>', 'width of the finished part in --units, so it cuts at a known size', floatArg('--physical-width', 0.01, 100000))
   .option('--verify', 'measure the result')
   .option('--json', 'machine-readable output')
   .action((input: string, output: string, opts: SharedCliOptions) =>
