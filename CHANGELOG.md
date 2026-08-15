@@ -4,6 +4,10 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v1.44.1](https://github.com/shunyagatha/Vecline/releases/tag/v1.44.1)
+
+MCP setup for Codex and VS Code, and a correction: the old text said Cursor, Windsurf and Continue share the Claude Desktop config shape — true — but VS Code does not. Its `.vscode/mcp.json` keys the map as `servers`, not `mcpServers`, so following that line in VS Code produced a file the editor ignores. Codex takes TOML and was not mentioned at all. Three blocks now, one per shape that exists, plus the CLI one-liners. The registry listing carries the Vecline mark.
+
 ## [v1.44.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.44.0)
 
 `--speckle-scope isolated`: despeckling that can tell noise from an edge. The size cutoff alone cannot — measured on logo-tux at 16 colours, only 40.2% of the components under 8px are specks floating inside a uniform field; the other 59.8% sit between two regions and are antialiasing fringe carrying the sub-pixel position of an edge. On a JPEG-artifact photo it is 13.0% against 87.0%. Removing by size spends most of its deletions on signal, which is why despeckling cost 0.05-0.20 SSIM across the corpus. Scoping to isolated specks is twice the size saving per unit of fidelity (0.00041 SSIM/KB against 0.00086), and on photo-jpeg-artifacts it is the difference between 0.8657 and 0.5488. Not free — recolouring a speck is a real change — but it never moves an edge. Default is unchanged.
