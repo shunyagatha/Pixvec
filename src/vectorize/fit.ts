@@ -68,7 +68,7 @@ const TANGENT_WINDOW = 4;
 const MAX_OPTIMIZE_PASSES = 8;
 
 /** Fit one closed lattice loop. Returns null if the loop degenerates. */
-export function fitLoop(pts: Int32Array, opts: FitOptions): FittedPath | null {
+export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOptions): FittedPath | null {
   const n = pts.length / 2;
   if (n < 3) return null;
 

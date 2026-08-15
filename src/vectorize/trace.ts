@@ -3,7 +3,7 @@ import { shortHex } from '../color.js';
 import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
 import type { RasterImage, Rgba } from '../types.js';
-import { connectedComponents, despeckle, type ComponentMap } from './components.js';
+import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap } from './components.js';
 import { traceComponents, type TurnPolicy, type Loop } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
@@ -293,6 +293,14 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // --- Segment, optionally removing specks. ---
   let comps: ComponentMap = connectedComponents(classes, width, height, -1);
   let despeckled = 0;
+
+  // With no explicit `minArea`, pick one from the components actually found.
+  // The old default was derived from pixel count alone and could not see that
+  // an antialiased logo had shattered into hundreds of edge slivers.
+  if (opts.minArea === undefined) {
+    o.minArea = Math.max(o.minArea, adaptiveMinArea(comps, width * height));
+  }
+
   if (o.minArea > 1) {
     // Two passes: absorbing one speck can leave its neighbour below threshold.
     for (let pass = 0; pass < 2; pass++) {

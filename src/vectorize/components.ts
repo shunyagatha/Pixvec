@@ -171,6 +171,57 @@ export function connectedComponents(
  * Returns the number of components absorbed. `classes` is modified in place;
  * the caller must re-run {@link connectedComponents} afterwards.
  */
+/**
+ * Choose a speck threshold from what the image actually contains.
+ *
+ * A fixed threshold cannot serve both cases. Antialiased artwork — a logo, an
+ * icon, anything exported from a design tool or through JPEG — fragments along
+ * every edge into hundreds of one-to-forty-pixel slivers: on a 405×384 logo,
+ * **99% of components were under 40px**. Each becomes its own contour, so the
+ * trace is either enormous or, once a size budget squeezes it, visibly wavy.
+ * The old rule (`min(16, pixels / 50_000)`) returned **3** for that image and
+ * removed essentially nothing.
+ *
+ * Raising the fixed number is not the answer either, and that mistake has
+ * already been made here: the `photo` preset once forced `minArea: 16` and
+ * measured *worse than no preset at all*, because on a photograph the small
+ * components are the detail.
+ *
+ * So the threshold is chosen by **area, not by count**. Components are removed
+ * only while everything removed so far still accounts for a negligible share of
+ * the picture. That distinguishes the two cases by itself:
+ *
+ * - On antialiased artwork the slivers are 99% of the *count* but a sliver of
+ *   the *area*, so the threshold climbs until they are gone.
+ * - On a photograph the small components carry real area, the budget is spent
+ *   almost immediately, and the threshold stays low — which is the behaviour
+ *   that keeps fine detail.
+ *
+ * @param budget Fraction of total area that may be absorbed. Default 1.5%.
+ */
+export function adaptiveMinArea(comps: ComponentMap, totalPixels: number, budget = 0.015): number {
+  if (comps.count === 0 || totalPixels <= 0) return 0;
+
+  const sizes = Array.from(comps.areas.subarray(0, comps.count)).sort((a, b) => a - b);
+  const allowed = totalPixels * budget;
+
+  let spent = 0;
+  let threshold = 0;
+  for (const size of sizes) {
+    if (spent + size > allowed) break;
+    spent += size;
+    // +1 so the threshold is exclusive of the largest component kept, matching
+    // despeckle's `area < minArea` test.
+    threshold = size + 1;
+  }
+
+  // A threshold of 1 or less disables despeckling, and an unbounded one would
+  // let a mostly-empty image swallow its own subject. 0.4% of the frame is far
+  // above any antialiasing fringe and far below any real feature.
+  const ceiling = Math.max(4, Math.round(totalPixels * 0.004));
+  return Math.min(threshold, ceiling);
+}
+
 export function despeckle(
   classes: Int32Array,
   comps: ComponentMap,

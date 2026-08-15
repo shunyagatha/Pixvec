@@ -140,6 +140,7 @@ export {
 export {
   connectedComponents,
   despeckle,
+  adaptiveMinArea,
   type ComponentMap,
 } from './vectorize/components.js';
 
