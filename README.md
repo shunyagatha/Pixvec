@@ -585,6 +585,27 @@ Test fixtures are **generated from code**, not committed as binaries: an image b
 
 Standing on the shoulders of: [Xiaolin Wu](https://www.ece.mcmaster.ca/~xwu/) (colour quantisation), [Philip J. Schneider](https://dl.acm.org/doi/10.5555/90767.90941) (curve fitting), [Peter Selinger](https://potrace.sourceforge.net/) (potrace, whose approach to boundary tracing informed this one), [Björn Ottosson](https://bottosson.github.io/posts/oklab/) (Oklab), [Wang, Bovik, Sheikh & Simoncelli](https://ece.uwaterloo.ca/~z70wang/publications/ssim.html) (SSIM), and [Sharma, Wu & Dalal](https://hajim.rochester.edu/ece/sites/gsharma/ciede2000/) (CIEDE2000). Built on [libvips](https://www.libvips.org/) via [sharp](https://sharp.pixelplumbing.com/), and [resvg](https://github.com/linebender/resvg).
 
+
+## Privacy Policy
+
+**Vecline collects nothing.** There is no server to send anything to: every
+conversion — tracing, measuring, cropping, PDF and Office rendering — happens on
+your own machine, and your images and documents are never uploaded.
+
+- **Collected:** nothing. No files, no accounts, no analytics, no telemetry, no cookies.
+- **Storage:** files are processed in memory and written only where you ask.
+- **Third parties:** nothing is shared, because nothing is collected. The MCP
+  desktop extension may fetch the `vecline` package from npm on first run, and
+  Office conversion invokes a LibreOffice already installed on your machine —
+  neither transmits your documents.
+- **Retention:** none; there is no stored data to request or delete.
+- **Verify it:** watch your browser's Network tab while converting, or
+  disconnect from the internet and keep working.
+
+Full policy: **https://vecline.xyz/privacy.html** ·
+Contact: [open an issue](https://github.com/shunyagatha/Vecline/issues)
+
+
 ## License
 
 [MIT](LICENSE)

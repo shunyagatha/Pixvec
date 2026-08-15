@@ -154,6 +154,31 @@ async function probeCapabilities(): Promise<{ pdf: boolean; office: boolean }> {
 }
 
 /** The tool list, annotated with what this machine can currently do. */
+/**
+ * Behavioural annotations, per the MCP tool-annotation contract.
+ *
+ * These let a client decide what needs confirming before it runs: a tool that
+ * only reads pixels is safe to call freely, while one that writes to a path the
+ * user supplied can overwrite a file that was already there. Every tool here
+ * that takes an output path is marked destructive for exactly that reason —
+ * "destructive" is about what *could* be lost, not about intent, and claiming
+ * otherwise would be the sort of quiet inaccuracy this project exists to avoid.
+ */
+const ANNOTATIONS: Record<string, { title: string; readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean }> = {
+  vectorize: { title: 'Vectorize image to SVG', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  convert: { title: 'Convert between formats', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  centerline: { title: 'Trace centrelines / G-code', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  measure: { title: 'Measure image similarity', readOnlyHint: true },
+  diff: { title: 'Perceptual image diff', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  crop: { title: 'Content-aware crop', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  palette: { title: 'Extract colour palette', readOnlyHint: true },
+  placeholder: { title: 'Generate BlurHash placeholder', readOnlyHint: true },
+  image_info: { title: 'Inspect image metadata', readOnlyHint: true },
+  doc_to_images: { title: 'Render document to images', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  office_convert: { title: 'Convert Office document', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+  images_to_pdf: { title: 'Combine images into a PDF', readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+};
+
 async function describeTools(): Promise<typeof TOOLS> {
   const cap = await probeCapabilities();
   const missing = (tool: string): string | null => {
@@ -173,7 +198,11 @@ async function describeTools(): Promise<typeof TOOLS> {
   };
   return TOOLS.map((t) => {
     const note = missing(t.name);
-    return note ? { ...t, description: `${t.description} [${note}]` } : t;
+    const annotations = ANNOTATIONS[t.name];
+    const described = note ? { ...t, description: `${t.description} [${note}]` } : { ...t };
+    // `openWorldHint: false` is accurate and worth stating: every tool operates
+    // on local files only — none of them reach the network.
+    return annotations ? { ...described, annotations: { ...annotations, openWorldHint: false } } : described;
   });
 }
 
