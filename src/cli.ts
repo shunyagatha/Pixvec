@@ -1756,7 +1756,7 @@ program
   .option('--fit-error <px>', 'maximum curve fitting error', floatArg('--fit-error', 0.01, 100))
   .option('--corner-angle <deg>', 'turn angle treated as a sharp corner', floatArg('--corner-angle', 0, 180))
   .option('--polygon', 'emit polygons instead of curves')
-  .option('--primitives', 'recognise circles, ellipses, rectangles and rounded rectangles and emit <circle>/<ellipse>/<rect>/<rect rx> — smaller, editable, render-preserving')
+  .option('--primitives', 'recognise circles, ellipses, rectangles, rounded rectangles and sectors (pie/donut) — smaller, editable, a real arc for CAD')
   .option('--primitive-error <px>', 'per-vertex residual budget for --primitives', floatArg('--primitive-error', 0.1, 10))
   .option('--no-optimize', 'do not merge adjacent curves that a single curve fits')
   .option('--opt-tolerance <n>', 'error budget for a curve merge (defaults to --fit-error)', floatArg('--opt-tolerance', 0.01, 100))

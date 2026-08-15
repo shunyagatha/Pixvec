@@ -49,14 +49,20 @@ export interface TraceOptions {
   /** Skip curve fitting and emit polygons. */
   polygonOnly?: boolean;
   /**
-   * Recognise circles, ellipses and rectangles and emit them as `<circle>`,
-   * `<ellipse>` and `<rect>` — smaller, editable as true shapes, and the source
-   * of real arcs for CAD/DXF export. Off by default. A region is only replaced
-   * when every boundary vertex lies within {@link primitiveError} px of the
-   * fitted shape, so the substitution is render-preserving.
+   * Recognise circles, ellipses, rectangles and sectors, and emit them as
+   * `<circle>`, `<ellipse>`, `<rect>` and a `<path>` of true SVG arc commands —
+   * smaller, editable as real shapes, and the source of arcs for CAD/DXF export.
+   * A sector covers both a pie slice and a donut segment, which is what turns a
+   * chart's several hundred Bézier anchors into a handful of arcs. Off by
+   * default.
+   *
+   * A loop is only replaced when the whole of its boundary lies within
+   * {@link primitiveError} px of the fitted shape, so the substitution is
+   * render-preserving. Loops are judged one at a time, so a colour used by both
+   * a slice and its legend swatch still becomes an arc and a rectangle.
    */
   primitives?: boolean;
-  /** Per-vertex residual budget for {@link primitives}, in pixels. Default 1.0. */
+  /** Residual budget for {@link primitives}, in pixels. Default 1.0. */
   primitiveError?: number;
   /** Merge adjacent curves where one fits both. Default on. */
   optimize?: boolean;
@@ -418,7 +424,6 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     regions += components.length;
     if (cls === backgroundClass) continue;
 
-    const path = new PathBuilder(o.precision);
     const classLoops: Loop[] = [];
     // Extend-under replaces this class's own loops with the union's loops; the
     // background class is skipped above, and a gradient class keeps its own
@@ -426,21 +431,38 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     const ownLoops = rankOfClass && cls < GRAD_BASE
       ? [extendedLoops(rank, rankOfClass)]
       : components.map((c) => loopsByComponent[c]!);
-    for (const group of ownLoops) {
-      for (const loop of group) {
-        classLoops.push(loop);
-        const fitted = fitLoop(loop.pts, fitOpts);
-        if (!fitted) continue;
-        path.moveTo(fitted.start.x, fitted.start.y);
-        for (const seg of fitted.segments) {
-          if (seg.kind === 'line') path.lineTo(seg.x, seg.y);
-          else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
-        }
-        path.close();
+    for (const group of ownLoops) for (const loop of group) classLoops.push(loop);
+
+    // A region that *is* a circle/ellipse/rectangle/sector emits the true
+    // primitive instead of a Bézier outline — smaller, editable as a shape, and
+    // the arc source for DXF. Only a class whose every loop is a solid outer
+    // boundary is eligible: a loop that encloses a hole must keep its path, or
+    // the primitive would paint the hole in.
+    //
+    // Per loop, not per class. A colour that appears twice — a pie slice and its
+    // legend swatch, the commonest thing in a real chart — would otherwise
+    // disqualify both, which is exactly how a fitter can pass every synthetic
+    // fixture and then never fire on a real chart.
+    const eligible = o.primitives && classLoops.length > 0
+      && classLoops.every((l) => l.signedArea > 0);
+    const prims = classLoops.map((l) =>
+      eligible ? detectPrimitive(l.pts, { maxError: o.primitiveError }) : null);
+
+    const path = new PathBuilder(o.precision);
+    for (const [i, loop] of classLoops.entries()) {
+      if (prims[i]) continue; // emitted as its own element below
+      const fitted = fitLoop(loop.pts, fitOpts);
+      if (!fitted) continue;
+      path.moveTo(fitted.start.x, fitted.start.y);
+      for (const seg of fitted.segments) {
+        if (seg.kind === 'line') path.lineTo(seg.x, seg.y);
+        else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
       }
+      path.close();
     }
 
-    if (path.isEmpty()) continue;
+    const primCount = prims.reduce((k, p) => k + (p ? 1 : 0), 0);
+    if (path.isEmpty() && primCount === 0) continue;
 
     // Build the path markup, then either drop it straight in or wrap it in a
     // named layer. An accepted gradient region paints with its `<linearGradient>`
@@ -457,16 +479,16 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
       const stroke = strokeFor(shortHex(color.r, color.g, color.b));
-      // A region that *is* a circle/ellipse/rectangle emits the true primitive
-      // instead of a Bézier outline — smaller, editable as a shape, and the arc
-      // source for DXF. Only a single solid loop (no holes) is eligible, and the
-      // fit is residual-gated so the swap never changes the render.
-      const prim = o.primitives && classLoops.length === 1
-        ? detectPrimitive(classLoops[0].pts, { maxError: o.primitiveError })
-        : null;
-      markup = prim
-        ? primitiveSvg(prim, `${fillAttrs(color)}${stroke}`, o.precision)
-        : `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
+      const attrs = `${fillAttrs(color)}${stroke}`;
+      // Recognised loops become true shapes; whatever is left of the class stays
+      // one shared evenodd path, exactly as before.
+      const shapes = prims
+        .filter((p): p is NonNullable<typeof p> => p !== null)
+        .map((p) => primitiveSvg(p, attrs, o.precision))
+        .join('');
+      markup = path.isEmpty()
+        ? shapes
+        : `${shapes}<path fill-rule="evenodd" d="${path.toString()}"${attrs}/>`;
       // Include the alpha in the label when it is below opaque, so one colour at
       // two alpha levels does not produce two indistinguishable separations.
       label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);
