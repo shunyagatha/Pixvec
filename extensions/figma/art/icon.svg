@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<defs><linearGradient id="vgrad" x1="0" y1="1" x2="1" y2="0">
+  <stop offset="0" stop-color="#A3005A"/><stop offset="1" stop-color="#FF4D9E"/>
+</linearGradient></defs>
+<rect width="128" height="128" rx="26" fill="#FDFBFD"/>
+<g transform="translate(22 24) scale(0.2074074074074074)" fill-rule="evenodd">
+    <path fill="#1B1220" d="M7 96L130 96L179 173L153 197L110 130L70 131L128 221L102 246L7 98ZM353 96L187 377L139 303L164 277L187 310L264 180L353 97Z"/>
+    <path fill="url(#vgrad)" d="M395 6L399 8L380 87L358 69L48 368L23 344L336 45L318 25L395 7Z"/>
+  </g>
+</svg>

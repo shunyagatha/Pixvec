@@ -156,6 +156,7 @@
     "corpus:report": "node scripts/corpus-report.mjs",
     "diagnose": "node scripts/diagnose-photo.mjs",
     "playground": "node scripts/build-playground.mjs",
+    "figma:art": "node scripts/build-figma-art-trace.mjs && node scripts/build-figma-art.mjs",
     "mcpb": "npx -y @anthropic-ai/mcpb pack mcpb vecline.mcpb"
   },
   "dependencies": {
