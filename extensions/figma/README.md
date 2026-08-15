@@ -64,3 +64,25 @@ and the `figma.*` calls — which needs the desktop app to exercise.
 ## Licence
 
 MIT, same as Vecline.
+
+## Testing the sandbox half without Figma
+
+`test/harness.html` stands in for Figma's plugin sandbox — it shims `figma.showUI`,
+`ui.postMessage`, `createNodeFromSvg`, `notify` and the rest, then drives
+`dist/code.js` through every message it can receive. Serve the plugin directory
+and open it:
+
+```bash
+npm run build
+npx http-server . -p 5200     # or any static server
+# then open http://localhost:5200/test/harness.html
+```
+
+It asserts that a `ready` message exports the selection, a `traced` message
+inserts exactly one node and reports the measurement, a `failed` message surfaces
+as an error, and a malformed SVG is reported rather than silently swallowed.
+
+This covers the plugin's logic. What it cannot cover is Figma's own runtime
+loading `manifest.json` — that needs the desktop app, because Figma's browser
+build has no `Plugins → Development` menu (verified: it offers only installed
+plugins, "Run last plugin" and "Manage plugins…").
