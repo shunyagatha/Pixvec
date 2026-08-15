@@ -16,3 +16,10 @@ corpus/
 
 # Built MCPB bundle — reproducible from mcpb/ via `npm run mcpb`
 *.mcpb
+
+# Third-party release binaries fetched for publishing (mcp-publisher, etc).
+# One of these was swept into a commit by `git add -A` and put 19.4 MB of
+# unrelated binary into the history; ignoring them stops that repeating.
+mcp-publisher.exe
+mcp-publisher
+*.tar.gz
