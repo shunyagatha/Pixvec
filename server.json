@@ -8,6 +8,15 @@
   },
   "version": "1.44.0",
   "websiteUrl": "https://vecline.xyz",
+  "icons": [
+    {
+      "src": "https://vecline.xyz/icon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ],
   "packages": [
     {
       "registryType": "npm",

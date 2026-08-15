@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 405 384" fill-rule="evenodd">
+
+<defs><linearGradient id="vgrad" x1="0" y1="1" x2="1" y2="0">
+<stop offset="0" stop-color="#A3005A"/><stop offset="1" stop-color="#FF4D9E"/>
+</linearGradient></defs>
+<path fill="#1B1220" d="M7 96L130 96L179 173L153 197L110 130L70 131L128 221L102 246L7 98ZM353 96L187 377L139 303L164 277L187 310L264 180L353 97Z"/>
+<path d="M395 6L399 8L380 87L358 69L48 368L23 344L336 45L318 25L395 7Z" fill="url(#vgrad)"/>
+</svg>

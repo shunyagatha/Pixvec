@@ -1,3 +1,5 @@
+<img src="https://vecline.xyz/icon.svg" width="72" alt="">
+
 # Vecline
 
 **Measurable raster ⇄ SVG conversion — and a broad image + document toolkit.** Eleven raster formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted; plus **PDF & Office** (docx/xlsx/pptx) rendering and conversion, **images → PDF**, **DXF at a real physical cut size** alongside EPS and G-code for makers, centerline tracing and content-aware crop — most of it in a **zero-dependency** core that is CI-proven to bundle for a browser.
