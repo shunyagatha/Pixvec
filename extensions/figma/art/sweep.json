@@ -1,0 +1,34 @@
+[
+  {
+    "colors": 4,
+    "ssim": 0.9878955452911552,
+    "psnr": 32.92960156563567,
+    "paths": 4,
+    "kb": 19,
+    "isDefault": false
+  },
+  {
+    "colors": 8,
+    "ssim": 0.9947130503686434,
+    "psnr": 39.6600880185738,
+    "paths": 7,
+    "kb": 27.6,
+    "isDefault": false
+  },
+  {
+    "colors": 16,
+    "ssim": 0.998220856611444,
+    "psnr": 44.99263571663495,
+    "paths": 12,
+    "kb": 37.8,
+    "isDefault": true
+  },
+  {
+    "colors": 32,
+    "ssim": 0.9984748060152797,
+    "psnr": 47.143584289626126,
+    "paths": 20,
+    "kb": 42.6,
+    "isDefault": false
+  }
+]

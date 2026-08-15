@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<defs>
+  <linearGradient id="vgrad" x1="0" y1="1" x2="1" y2="0">
+    <stop offset="0" stop-color="#A3005A"/><stop offset="1" stop-color="#FF4D9E"/>
+  </linearGradient>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+    <path d="M48 0H0V48" fill="none" stroke="#241D2D" stroke-width="1"/>
+  </pattern>
+</defs>
+<rect width="1920" height="1080" fill="#120E18"/>
+<rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+
+<g transform="translate(100 74) scale(0.13333333333333333)" fill-rule="evenodd">
+    <path fill="#F3EDF4" d="M7 96L130 96L179 173L153 197L110 130L70 131L128 221L102 246L7 98ZM353 96L187 377L139 303L164 277L187 310L264 180L353 97Z"/>
+    <path fill="url(#vgrad)" d="M395 6L399 8L380 87L358 69L48 368L23 344L336 45L318 25L395 7Z"/>
+  </g>
+<text x="168" y="118" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700"
+      letter-spacing="1" fill="#F3EDF4">VECLINE</text>
+
+<text x="100" y="232" font-family="'Arial Narrow', sans-serif" font-size="86" font-weight="700"
+      letter-spacing="0.5" fill="#F3EDF4">The same engine, wherever you work.</text>
+<text x="100" y="288" font-family="'Segoe UI', system-ui, sans-serif" font-size="32" fill="#B9AEC2">This plugin is one surface on a toolkit, not a one-off.</text>
+
+<g>
+      <rect x="100" y="366" width="546" height="206" rx="14" fill="#1C1624" stroke="#302839"/>
+      <rect x="100" y="366" width="6" height="206" rx="3" fill="#FF4D9E"/>
+      <text x="136" y="442" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">In Figma</text>
+      <text x="136" y="488" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">This plugin. Select, trace, keep the</text>
+<text x="136" y="524" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">paths.</text>
+    </g>
+<g>
+      <rect x="690" y="366" width="546" height="206" rx="14" fill="#1C1624" stroke="#302839"/>
+      <rect x="690" y="366" width="6" height="206" rx="3" fill="#FF4D9E"/>
+      <text x="726" y="442" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">In VS Code</text>
+      <text x="726" y="488" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Right-click a PNG, get a verified SVG.</text>
+    </g>
+<g>
+      <rect x="1280" y="366" width="546" height="206" rx="14" fill="#1C1624" stroke="#302839"/>
+      <rect x="1280" y="366" width="6" height="206" rx="3" fill="#FF4D9E"/>
+      <text x="1316" y="442" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">On the command line</text>
+      <text x="1316" y="488" font-family="Consolas, monospace" font-size="22" fill="#4BD3A0">npx vecline vectorize logo.png --verify</text>
+    </g>
+<g>
+      <rect x="100" y="616" width="546" height="206" rx="14" fill="#1C1624" stroke="#302839"/>
+      <rect x="100" y="616" width="6" height="206" rx="3" fill="#FF4D9E"/>
+      <text x="136" y="692" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">In the browser</text>
+      <text x="136" y="738" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">vecline.xyz. No upload, no signup, no</text>
+<text x="136" y="774" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">limit.</text>
+    </g>
+<g>
+      <rect x="690" y="616" width="546" height="206" rx="14" fill="#1C1624" stroke="#302839"/>
+      <rect x="690" y="616" width="6" height="206" rx="3" fill="#FF4D9E"/>
+      <text x="726" y="692" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">To an AI agent</text>
+      <text x="726" y="738" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">An MCP server, so agents can trace and</text>
+<text x="726" y="774" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">measure.</text>
+    </g>
+<g>
+      <rect x="1280" y="616" width="546" height="206" rx="14" fill="#1C1624" stroke="#302839"/>
+      <rect x="1280" y="616" width="6" height="206" rx="3" fill="#FF4D9E"/>
+      <text x="1316" y="692" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">In your build</text>
+      <text x="1316" y="738" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Vite plugin, GitHub Action, DXF and</text>
+<text x="1316" y="774" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">G-code out.</text>
+    </g>
+  <text x="100" y="948" font-family="'Segoe UI', system-ui, sans-serif" font-size="26" fill="#B9AEC2">One MIT codebase behind all six&#160;&#8212;&#160;so a result you get here is the result you get anywhere.</text>
+
+<text x="100" y="1016" font-family="'Segoe UI', system-ui, sans-serif" font-size="24" fill="#8E819A">Free and open source (MIT)&#160;&#183;&#160;vecline.xyz</text>
+</svg>

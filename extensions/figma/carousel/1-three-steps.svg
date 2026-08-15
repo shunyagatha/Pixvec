@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<defs>
+  <linearGradient id="vgrad" x1="0" y1="1" x2="1" y2="0">
+    <stop offset="0" stop-color="#A3005A"/><stop offset="1" stop-color="#FF4D9E"/>
+  </linearGradient>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+    <path d="M48 0H0V48" fill="none" stroke="#241D2D" stroke-width="1"/>
+  </pattern>
+</defs>
+<rect width="1920" height="1080" fill="#120E18"/>
+<rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+
+<g transform="translate(100 74) scale(0.13333333333333333)" fill-rule="evenodd">
+    <path fill="#F3EDF4" d="M7 96L130 96L179 173L153 197L110 130L70 131L128 221L102 246L7 98ZM353 96L187 377L139 303L164 277L187 310L264 180L353 97Z"/>
+    <path fill="url(#vgrad)" d="M395 6L399 8L380 87L358 69L48 368L23 344L336 45L318 25L395 7Z"/>
+  </g>
+<text x="168" y="118" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700"
+      letter-spacing="1" fill="#F3EDF4">VECLINE</text>
+
+<text x="100" y="232" font-family="'Arial Narrow', sans-serif" font-size="86" font-weight="700"
+      letter-spacing="0.5" fill="#F3EDF4">Three steps. Nothing overwritten.</text>
+<text x="100" y="288" font-family="'Segoe UI', system-ui, sans-serif" font-size="32" fill="#B9AEC2">The result is placed next to the original, never on top of it.</text>
+
+<g>
+      <rect x="100" y="380" width="546" height="330" rx="14" fill="#1C1624" stroke="#302839"/>
+      <circle cx="158" cy="452" r="34" fill="#FF4D9E"/>
+      <text x="158" y="466" text-anchor="middle" font-family="'Arial Narrow', sans-serif" font-size="42"
+            font-weight="700" fill="#210415">1</text>
+      <text x="140" y="560" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">Select a layer</text>
+      <text x="140" y="610" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Any layer with pixels. A frame, a</text>
+<text x="140" y="646" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">group, a placed image, even text.</text>
+    </g>
+<g>
+      <rect x="690" y="380" width="546" height="330" rx="14" fill="#1C1624" stroke="#302839"/>
+      <circle cx="748" cy="452" r="34" fill="#FF4D9E"/>
+      <text x="748" y="466" text-anchor="middle" font-family="'Arial Narrow', sans-serif" font-size="42"
+            font-weight="700" fill="#210415">2</text>
+      <text x="730" y="560" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">Press Trace</text>
+      <text x="730" y="610" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">The engine runs inside the plugin.</text>
+<text x="730" y="646" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Colours and gradients are yours to</text>
+<text x="730" y="682" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">set.</text>
+    </g>
+<g>
+      <rect x="1280" y="380" width="546" height="330" rx="14" fill="#1C1624" stroke="#302839"/>
+      <circle cx="1338" cy="452" r="34" fill="#FF4D9E"/>
+      <text x="1338" y="466" text-anchor="middle" font-family="'Arial Narrow', sans-serif" font-size="42"
+            font-weight="700" fill="#210415">3</text>
+      <text x="1320" y="560" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">It lands beside it</text>
+      <text x="1320" y="610" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Never on top. Your original layer is</text>
+<text x="1320" y="646" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">untouched, so you can compare.</text>
+    </g>
+  <g>
+    <rect x="100" y="762" width="1720" height="118" rx="12" fill="#0C0910" stroke="#2C2338"/>
+    <text x="132" y="812" font-family="'Segoe UI', system-ui, sans-serif" font-size="22" fill="#8E819A" letter-spacing="2">THE NOTIFICATION YOU GET</text>
+    <text x="132" y="856" font-family="Consolas, monospace" font-size="27" fill="#4BD3A0">Vecline&#160;&#8594;&#160;37.8&#160;KB&#160;&#183;&#160;SSIM&#160;0.9982&#160;&#183;&#160;PSNR&#160;45.0&#160;dB&#160;&#183;&#160;870&#160;ms</text>
+  </g>
+
+<text x="100" y="1016" font-family="'Segoe UI', system-ui, sans-serif" font-size="24" fill="#8E819A">Free and open source (MIT)&#160;&#183;&#160;vecline.xyz</text>
+</svg>

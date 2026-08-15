@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<defs>
+  <linearGradient id="vgrad" x1="0" y1="1" x2="1" y2="0">
+    <stop offset="0" stop-color="#A3005A"/><stop offset="1" stop-color="#FF4D9E"/>
+  </linearGradient>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+    <path d="M48 0H0V48" fill="none" stroke="#241D2D" stroke-width="1"/>
+  </pattern>
+</defs>
+<rect width="1920" height="1080" fill="#120E18"/>
+<rect width="1920" height="1080" fill="url(#grid)" opacity="0.55"/>
+
+<g transform="translate(100 74) scale(0.13333333333333333)" fill-rule="evenodd">
+    <path fill="#F3EDF4" d="M7 96L130 96L179 173L153 197L110 130L70 131L128 221L102 246L7 98ZM353 96L187 377L139 303L164 277L187 310L264 180L353 97Z"/>
+    <path fill="url(#vgrad)" d="M395 6L399 8L380 87L358 69L48 368L23 344L336 45L318 25L395 7Z"/>
+  </g>
+<text x="168" y="118" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700"
+      letter-spacing="1" fill="#F3EDF4">VECLINE</text>
+
+<text x="100" y="232" font-family="'Arial Narrow', sans-serif" font-size="86" font-weight="700"
+      letter-spacing="0.5" fill="#F3EDF4">Nothing leaves the document.</text>
+<text x="100" y="288" font-family="'Segoe UI', system-ui, sans-serif" font-size="32" fill="#B9AEC2">Not "we do not look at it". There is no request to look at.</text>
+
+<g>
+    <rect x="100" y="368" width="900" height="330" rx="14" fill="#0C0910" stroke="#2C2338"/>
+    <text x="132" y="418" font-family="'Segoe UI', system-ui, sans-serif" font-size="22" fill="#8E819A" letter-spacing="2">manifest.json</text>
+    <text x="132" y="472" font-family="Consolas, monospace" font-size="30" fill="#F3EDF4" xml:space="preserve">"networkAccess":&#160;{</text>
+<text x="132" y="518" font-family="Consolas, monospace" font-size="30" fill="#FF83BB" xml:space="preserve">&#160;&#160;"allowedDomains":&#160;["none"]</text>
+<text x="132" y="564" font-family="Consolas, monospace" font-size="30" fill="#F3EDF4" xml:space="preserve">}</text>
+    <text x="132" y="654" font-family="'Segoe UI', system-ui, sans-serif" font-size="23" fill="#8E819A">Figma enforces this. The plugin cannot reach the network even if it tried.</text>
+  </g>
+  <g transform="translate(1060 390)">
+      <path d="M0 -14L16 0L0 14Z" fill="#FF4D9E"/>
+      <text x="34" y="4" font-family="'Arial Narrow', sans-serif" font-size="42" font-weight="700" fill="#F3EDF4">The tracer runs in the plugin iframe</text>
+      <text x="34" y="44" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Your pixels are decoded, traced and scored on your machine.</text>
+    </g>
+<g transform="translate(1060 508)">
+      <path d="M0 -14L16 0L0 14Z" fill="#FF4D9E"/>
+      <text x="34" y="4" font-family="'Arial Narrow', sans-serif" font-size="42" font-weight="700" fill="#F3EDF4">No account, no key, no quota</text>
+      <text x="34" y="44" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">Nothing to sign up for and nothing to run out of.</text>
+    </g>
+<g transform="translate(1060 626)">
+      <path d="M0 -14L16 0L0 14Z" fill="#FF4D9E"/>
+      <text x="34" y="4" font-family="'Arial Narrow', sans-serif" font-size="42" font-weight="700" fill="#F3EDF4">No analytics, no telemetry</text>
+      <text x="34" y="44" font-family="'Segoe UI', system-ui, sans-serif" font-size="25" fill="#B9AEC2">The plugin does not phone home about what you traced.</text>
+    </g>
+  <g>
+    <rect x="100" y="760" width="1720" height="150" rx="14" fill="#1C1624" stroke="#302839"/>
+    <text x="132" y="822" font-family="'Arial Narrow', sans-serif" font-size="46" font-weight="700" fill="#F3EDF4">Open source, so you do not have to take our word for it.</text>
+    <text x="132" y="872" font-family="'Segoe UI', system-ui, sans-serif" font-size="27" fill="#B9AEC2">MIT licensed. Read the tracer, the metrics and this plugin at github.com/shunyagatha/Vecline.</text>
+  </g>
+
+<text x="100" y="1016" font-family="'Segoe UI', system-ui, sans-serif" font-size="24" fill="#8E819A">Free and open source (MIT)&#160;&#183;&#160;vecline.xyz</text>
+</svg>
