@@ -116,4 +116,62 @@ describe('centerline binarisation across colour and ground', () => {
     const out = centerlineTrace(blank);
     expect(out.paths).toBe(0);
   });
+
+  /**
+   * Low contrast is not the same as no contrast.
+   *
+   * The binariser used to declare "every opaque pixel is ink" whenever Otsu's
+   * two class means sat within 24 luma of each other, meaning to catch a
+   * tight-cropped fill with no background. On a fully opaque image that says
+   * the whole frame is ink, whose skeleton prunes away to nothing — so faint
+   * pencil, a washed-out scan, or any near-isoluminant ink/paper pair traced to
+   * zero paths while a high-contrast copy of the same drawing traced fine.
+   *
+   * Alpha can only carry the shape when alpha actually varies. When the image
+   * is opaque, luminance is the only signal there is, however weak.
+   */
+  describe('low-contrast opaque line art', () => {
+    const cross = (paper: number, ink: number): RasterImage => {
+      const img = createImage(48, 48);
+      for (let y = 0; y < 48; y++) {
+        for (let x = 0; x < 48; x++) {
+          const onInk = (y >= 22 && y <= 25) || (x >= 22 && x <= 25);
+          const v = onInk ? ink : paper;
+          setPixel(img, x, y, v, v, v, 255);
+        }
+      }
+      return img;
+    };
+
+    // 368 is the drawn ink; 2304 is the whole frame. The bug reported the frame.
+    const DRAWN = 4 * 48 + 4 * 48 - 16;
+
+    it.each([
+      ['barely separable', 128, 110],
+      ['very low contrast', 128, 120],
+      ['normal contrast', 128, 60],
+      ['maximum contrast', 255, 0],
+    ])('finds the strokes at %s (paper %d, ink %d)', (_label, paper, ink) => {
+      const out = centerlineTrace(cross(paper, ink));
+      expect(out.inkPixels).toBe(DRAWN);
+      expect(out.paths).toBeGreaterThan(0);
+    });
+
+    it('does not vary its answer with contrast', () => {
+      // The whole point: the same drawing at different contrasts is the same
+      // drawing, so it must skeletonise to the same thing.
+      const faint = centerlineTrace(cross(128, 110));
+      const bold = centerlineTrace(cross(255, 0));
+      expect(faint.inkPixels).toBe(bold.inkPixels);
+      expect(faint.paths).toBe(bold.paths);
+    });
+
+    it('still routes a transparent-ground export through alpha', () => {
+      // The regime the branch legitimately serves must keep working.
+      const img = createImage(48, 48);
+      for (let y = 14; y < 34; y++) for (let x = 4; x < 44; x++) setPixel(img, x, y, 90, 200, 90, 255);
+      const polys = centerlinePolylines(img);
+      expect(polys.length).toBeGreaterThan(0);
+    });
+  });
 });

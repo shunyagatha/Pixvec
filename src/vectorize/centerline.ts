@@ -100,7 +100,7 @@ function centerlineSkeleton(
   //
   // Detected, not assumed, and only in the default auto/non-adaptive case: an
   // explicit threshold or the adaptive mode is a deliberate luminance decision.
-  const opaqueIsInk = auto && !local && alphaCarriesShape(image, cutoff);
+  const opaqueIsInk = auto && !local && alphaCarriesShape(image);
 
   // Binarise into a 1-pixel-padded mask so strokes touching the edge still thin.
   const P = width + 2, Q = height + 2;
@@ -145,33 +145,38 @@ function centerlineSkeleton(
 /**
  * True when the opaque pixels ARE the shape, so luminance polarity is moot.
  *
- * Two regimes want this. Either the image carries real transparency — a
- * design-tool export is ink on nothing — or its opaque pixels are a single
- * luminance population that Otsu cannot split into ink and paper, such as a
- * tight-cropped fill with no background at all. In both, every opaque pixel is
- * a stroke.
+ * That is the design-tool regime: an exported logo or glyph is ink on nothing,
+ * and a luminance split has no background to separate the ink from. Alpha is
+ * the only channel carrying the shape, so every opaque pixel is a stroke.
  *
- * The single-population test compares the MEANS of Otsu's two classes rather
- * than their sizes: a genuine ink-on-paper image separates into two clusters
- * whose means sit far apart even when the ink is sparse, whereas one colour
- * splits into two arbitrary halves whose means are almost together. That keeps
- * sparse line art (means ~200 apart) on the luminance path while catching a
- * flat fill (means within a pixel or two).
+ * It requires alpha to actually vary. An earlier version also returned true
+ * when the two Otsu classes had means within 24 luma of each other, meaning to
+ * catch a tight-cropped fill with no background. But on a fully opaque image
+ * "every opaque pixel is ink" says the whole frame is ink, whose skeleton is a
+ * degenerate fan that prunes away to nothing — measured across a flat fill, a
+ * low-contrast cross and a plain grey field, that branch returned 0 paths every
+ * time. It could not help the case it was written for, and it destroyed the
+ * case it caught by accident: clean two-tone line art whose ink and paper are
+ * close in *luminance* (faint pencil, a washed-out scan, or any near-isoluminant
+ * colour pair) traced to nothing at all.
+ *
+ * Otsu separability was measured as a replacement and rejected: it scores 1.00
+ * on clean two-tone art at any contrast, but a noisy scan of the same drawing
+ * scores 0.66 — below a smooth gradient's 0.75 — so it cannot separate the two
+ * populations either, and any threshold just moves which inputs break.
+ *
+ * When the image is opaque, luminance is the only signal there is. Use it, even
+ * when the contrast is poor: a weak split still yields the strokes, whereas
+ * declaring the frame solid yields nothing.
  */
-function alphaCarriesShape(image: RasterImage, cutoff: number): boolean {
+function alphaCarriesShape(image: RasterImage): boolean {
   const { data, width, height } = image;
   const n = width * height;
   let transparent = 0;
-  let loN = 0, loSum = 0, hiN = 0, hiSum = 0;
   for (let i = 0; i < n; i++) {
-    const o = i * 4;
-    if (data[o + 3] < 8) { transparent++; continue; }
-    const l = luma709(data[o], data[o + 1], data[o + 2]);
-    if (Math.round(l) <= cutoff) { loN++; loSum += l; } else { hiN++; hiSum += l; }
+    if (data[i * 4 + 3] < 8) transparent++;
   }
-  if (transparent / n > 0.01) return true;
-  const separation = loN > 0 && hiN > 0 ? Math.abs(hiSum / hiN - loSum / loN) : 0;
-  return separation < 24;
+  return transparent / n > 0.01;
 }
 
 /** Trace an image to single-stroke centreline geometry (SVG). */

@@ -101,12 +101,38 @@ export class SvgDoc {
  * so alpha goes through `fill-opacity` — which every renderer has supported
  * since 2001.
  */
+/**
+ * The opacity attribute value for an alpha, or null when it is fully opaque and
+ * the attribute should be omitted.
+ */
+function opacityValue(a: number): string | null {
+  if (a >= 255) return null;
+  // Three decimals resolves all 256 alpha steps unambiguously (1/255 ≈ 0.0039).
+  const o = (a / 255).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  return o.startsWith('0.') ? o.slice(1) : o;
+}
+
 export function fillAttrs(c: Rgba): string {
   const fill = ` fill="${shortHex(c.r, c.g, c.b)}"`;
-  if (c.a >= 255) return fill;
-  // Three decimals resolves all 256 alpha steps unambiguously (1/255 ≈ 0.0039).
-  const o = (c.a / 255).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-  return `${fill} fill-opacity="${o.startsWith('0.') ? o.slice(1) : o}"`;
+  const o = opacityValue(c.a);
+  return o === null ? fill : `${fill} fill-opacity="${o}"`;
+}
+
+/**
+ * Stroke attributes for the seam-hiding hairline, carrying the same alpha the
+ * fill does.
+ *
+ * `fill-opacity` does not apply to strokes. Emitting the colour without
+ * `stroke-opacity` therefore drew a fully opaque outline around a translucent
+ * region — a hard ring at the region's own hue, most visible exactly where the
+ * stroke was meant to be invisible. It lives beside {@link fillAttrs} so the
+ * two cannot drift apart again.
+ */
+export function strokeAttrs(c: Rgba, width: number): string {
+  if (!(width > 0)) return '';
+  const base = ` stroke="${shortHex(c.r, c.g, c.b)}" stroke-width="${width}"`;
+  const o = opacityValue(c.a);
+  return o === null ? base : `${base} stroke-opacity="${o}"`;
 }
 
 export function escapeText(s: string): string {
