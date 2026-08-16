@@ -139,7 +139,9 @@ describe('vecline/core portability', () => {
 
     // Files known to require Node. Everything else must be in CORE_MODULES.
     const nodeOnly = new Set([
-      'index.ts', 'api.ts', 'cli.ts', 'ops.ts',
+      // cli-help.ts imports commander, so it belongs with cli.ts rather than
+      // with anything the browser bundle can reach.
+      'index.ts', 'api.ts', 'cli.ts', 'cli-help.ts', 'ops.ts',
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts', 'io/batch-summary.ts', 'io/pdf.ts', 'io/office.ts', 'io/images-pdf.ts',
       // Opens a socket and spawns LibreOffice — node:http, node:fs, node:crypto.
       'io/bridge.ts',

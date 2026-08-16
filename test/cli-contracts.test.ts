@@ -217,6 +217,50 @@ describe.skipIf(!built)('CLI: verify scores foreign SVGs fairly', () => {
   });
 });
 
+describe.skipIf(!built)('CLI: --help groups the big commands', () => {
+  it('splits vectorize into named groups instead of one flat block', async () => {
+    // 56 options in declaration order put --adaptive-t between --adaptive-window
+    // and --stroke-width. Exhaustive and unreadable at the same time.
+    const r = await cli(['vectorize', '--help']);
+    for (const heading of [
+      'Strategy:',
+      'Colour and palette:',
+      'Geometry and curve fitting:',
+      'Thresholding (bilevel / line art):',
+      'Budgets and measurement:',
+      'Transparency and background:',
+      'Output and document:',
+    ]) {
+      expect(r.stdout, `missing group: ${heading}`).toContain(`\n${heading}\n`);
+    }
+  });
+
+  it('leaves --help in its own section, not in whichever group came last', async () => {
+    // Commander synthesises it after everything declared, so a positional rule
+    // silently files it under the final group.
+    const r = await cli(['vectorize', '--help']);
+    expect(r.stdout).toMatch(/\nOptions:\n\s+-h, --help/);
+  });
+
+  it('does not change commands that declare no groups', async () => {
+    // The whole design rests on this: grouping is opt-in per command, and a
+    // command that opts out must render exactly as commander would.
+    const r = await cli(['palette', '--help']);
+    expect(r.stdout).toContain('Options:');
+    expect(r.stdout).toMatch(/-c, --colors <n>\s+palette size/);
+    // No stray group headings leaked in from the root configuration.
+    expect(r.stdout).not.toContain('Geometry and curve fitting:');
+  });
+
+  it('keeps the did-you-mean suggestion working', async () => {
+    // The alternative implementation (emptying visibleOptions and printing via
+    // addHelpText) silently kills these, which is worst on the command with the
+    // most options.
+    const r = await cli(['vectorize', 'x.png', '--palete', '4']);
+    expect(r.stderr).toContain('--palette');
+  });
+});
+
 describe.skipIf(!built)('CLI: exit codes are documented', () => {
   it('explains 0, 1 and 2 in --help', async () => {
     // They were designed deliberately — 1 is "could not run", 2 is "ran, and the
