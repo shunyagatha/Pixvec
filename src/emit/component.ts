@@ -57,6 +57,40 @@ export function toComponent(svg: string, opts: ComponentOptions): string {
 
   if (jsx) {
     body = body
+      // A `<style>` block's CSS braces are read by JSX as an expression
+      // container, so `.a{fill:red}` produced `'}' expected`. Wrapping the text
+      // in a template literal hands it to JSX as a string and keeps the rules.
+      // Illustrator and Figma both emit these, so it is the common case for any
+      // SVG not written by vecline.
+      .replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_m, attrs: string, css: string) =>
+        `<style${attrs}>{\`${css.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')}\`}</style>`)
+      // Void HTML tags are legal inside <foreignObject> and illegal in JSX,
+      // which demands every element be closed: `<br>` gave "JSX element 'br'
+      // has no corresponding closing tag".
+      .replace(/<(br|hr|img|input|meta|link|area|base|col|embed|source|track|wbr)\b([^>]*?)\/?>/gi,
+        (_m, tag: string, attrs: string) => `<${tag}${attrs.replace(/\/\s*$/, '')} />`)
+      // `class` is a reserved word in JS and React wants `className`. This
+      // parses either way, so it is the quieter of the two failures: the
+      // component renders with no styling and nothing says why.
+      .replace(/\sclass=/g, ' className=')
+      // React requires `style` to be an object, not a CSS string. Same silent
+      // shape: it parses, then throws at render time.
+      .replace(/\sstyle="([^"]*)"/g, (_m, css: string) => {
+        const props = css
+          .split(';')
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .map((d) => {
+            const i = d.indexOf(':');
+            if (i === -1) return '';
+            const key = d.slice(0, i).trim().replace(/-([a-z])/g, (_x, c: string) => c.toUpperCase());
+            const value = d.slice(i + 1).trim().replace(/'/g, "\\'");
+            return `${key}: '${value}'`;
+          })
+          .filter(Boolean)
+          .join(', ');
+        return props ? ` style={{ ${props} }}` : '';
+      })
       // `<!-- … -->` is not JSX. Convert rather than delete, so a hand-authored
       // note survives into the generated component instead of vanishing.
       .replace(/<!--([\s\S]*?)-->/g, (_m, text: string) =>

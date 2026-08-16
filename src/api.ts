@@ -342,7 +342,11 @@ async function findDominatingExact(
   notes: string[],
 ): Promise<VectorizeResult | null> {
   const tracedBytes = Buffer.byteLength(traced.svg);
-  if (tracedBytes <= input.meta.bytes) return null;
+  // `meta` is required by the type, but plain-JS callers reach here through the
+  // CJS build with `vectorize({ image })` — which works for the pixel and embed
+  // paths and then crashes here, only when auto happens to pick trace. Nothing
+  // downstream needs the comparison if we do not know the source size.
+  if (input.meta === undefined || tracedBytes <= input.meta.bytes) return null;
 
   try {
     // `preserve` first because it is smaller and keeps the original file, then

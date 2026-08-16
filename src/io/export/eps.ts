@@ -1,8 +1,11 @@
 /**
  * EPS / PostScript export — the print/prepress interchange format.
  *
- * PostScript has native cubic curves, so the fitted Béziers map straight to
- * `curveto` with no flattening. Y is flipped to PostScript's up-is-up page
+ * PostScript has native cubic curves, so any fitted Bézier maps straight to
+ * `curveto` with no flattening. Note that at the default `tolerance` the fitter
+ * currently produces none — every segment arrives as a line — so a file written
+ * without an explicit `tolerance`/`fitError` is polygons. Raising them fires the
+ * fitter and, measured on a 96px disc, cuts 4754 bytes to 900. Y is flipped to PostScript's up-is-up page
  * space, colours are emitted as `setrgbcolor` (or CMYK `setcmykcolor` for
  * prepress), and each colour's contours fill with the even-odd rule to match the
  * SVG output's holes. Pure text.

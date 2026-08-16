@@ -2,7 +2,8 @@
  * PDF export — print-ready vector output, optionally CMYK.
  *
  * A minimal but valid PDF: one page whose content stream draws the fitted paths
- * with native cubic operators (`m`/`l`/`c`), even-odd fill (`f*`) to preserve
+ * with native cubic operators (`m`/`l`/`c` — see the note in eps.ts about when
+ * `c` is actually emitted), even-odd fill (`f*`) to preserve
  * holes, Y flipped to PDF's up-is-up page space, and RGB (`rg`) or CMYK (`k`)
  * colour. CMYK is the differentiator — free/JS tools collapse everything to sRGB,
  * which a commercial printer cannot use. Pure text assembled to bytes.
