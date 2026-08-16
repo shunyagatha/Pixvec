@@ -20,6 +20,7 @@
  * would surface rather than pass silently.
  */
 
+import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -68,6 +69,49 @@ if (vscode.version !== engineVersion) {
     vscode.version = engineVersion;
     writeFileSync(vscodePath, JSON.stringify(vscode, null, 2) + '\n');
     changes.push(`extensions/vscode → version ${engineVersion}`);
+  }
+}
+
+/*
+ * The lockfile has to move with the dependency range, or `npm ci` refuses.
+ *
+ * Bumping `dependencies.vecline` above leaves the extension's lockfile still
+ * resolving the previous engine, and `npm ci` — which the publish workflow uses
+ * precisely because it is reproducible — fails outright rather than adapting:
+ *
+ *   npm error Invalid: lock file's vecline@1.45.0 does not satisfy vecline@1.46.0
+ *
+ * That failed all eight platform jobs on the v1.46.0 tag, after a separate race
+ * had already failed them once. Refreshing the lock is part of the same edit
+ * that causes the drift, so it belongs here rather than in a release runbook
+ * step somebody has to remember.
+ */
+const lockPath = join(ROOT, 'extensions/vscode/package-lock.json');
+if (existsSync(lockPath)) {
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  const locked = lock.packages?.['node_modules/vecline']?.version;
+  if (locked !== engineVersion) {
+    if (check) {
+      problems.push(
+        `extensions/vscode/package-lock.json resolves vecline ${locked}, but this repo is ${engineVersion}. ` +
+        '`npm ci` refuses to install when the lock and the manifest disagree, so every packaging job would fail. ' +
+        'Run: node scripts/sync-extension-versions.mjs',
+      );
+    } else {
+      // --package-lock-only rewrites the lock without materialising node_modules,
+      // which keeps this cheap and avoids pulling a platform's binaries here.
+      //
+      // A fixed command string rather than an argv array: on Windows `npm` is a
+      // .cmd shim, which Node refuses to execFile without a shell, and passing
+      // an args array *with* a shell is the pattern Node warns about as an
+      // injection hazard (DEP0190). Nothing here is interpolated, so a literal
+      // string is both safe and portable.
+      execSync('npm install --package-lock-only --no-audit --no-fund', {
+        cwd: join(ROOT, 'extensions/vscode'),
+        stdio: 'inherit',
+      });
+      changes.push(`extensions/vscode/package-lock.json → vecline ${engineVersion}`);
+    }
   }
 }
 
