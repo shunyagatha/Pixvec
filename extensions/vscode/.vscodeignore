@@ -1,5 +1,19 @@
 src/**
 tsconfig.json
-node_modules/**
 .vscode/**
 *.map
+.gitignore
+
+# node_modules is deliberately NOT ignored.
+#
+# The extension resolves the engine at runtime with `await import('vecline')`,
+# so the engine has to travel inside the .vsix — there is no install step on the
+# user's machine to fetch it. Ignoring node_modules produced a 13 KB package of
+# eight files with no engine in it at all, which installs fine and then fails on
+# first use with "Cannot find module 'vecline'".
+#
+# vsce walks the production dependency tree from package.json and includes only
+# that, so devDependencies (typescript, @types/*) stay out without needing a
+# rule here. The package is large because the engine carries native decoders
+# with per-platform prebuilds; that is the cost of the extension working
+# offline, which is the whole point of it.
