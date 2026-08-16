@@ -8,29 +8,76 @@
 # places it physically cannot reach: hosted document conversion, enterprise
 # self-hosting and support, a managed API for CI.
 #
-# --------------------------------------------------------------------------
-# TO ACTIVATE: uncomment the `github:` line below, once — and only once — the
-# GitHub Sponsors listing actually exists.
+# ---------------------------------------------------------------------------
+# EVERY LINE HERE IS COMMENTED, DELIBERATELY.
 #
 # GitHub renders a "Sponsor" button from this file without checking that the
-# account underneath it accepts sponsorships. Enabling it before enrolment
-# gives every visitor a prominent button that leads to a page which cannot take
-# their money, which is worse than having no button at all.
+# account behind it can actually take money. An entry pointing at an account
+# that does not exist yet gives every visitor a prominent button leading to a
+# dead end, which is worse than no button at all. Uncomment a line only once
+# that account is live and has been loaded once in a browser to confirm it.
 #
-# Enrol first at https://github.com/sponsors — it needs identity verification,
-# a bank account and a tax form, so it is not instant. Confirm the listing is
-# live by checking that this returns a real profile rather than GitHub's
-# marketing page:
-#
-#     curl -sL https://github.com/sponsors/shunyagatha | grep -c "Sponsor shunyagatha"
-#
-# then uncomment.
-# --------------------------------------------------------------------------
+# Pick TWO. A wall of donate buttons converts worse than one obvious one —
+# every extra option is a decision the visitor has to make instead of paying.
+# The recommended pair is `github` (0% fee, most trusted) plus one low-friction
+# tip jar for people who will not sign up for anything.
+# ---------------------------------------------------------------------------
 
+# --- Recurring, and the lowest fees -----------------------------------------
+#
+# GitHub Sponsors takes 0% from personal sponsors and up to 6% from orgs. It is
+# the most trusted button on this list because it never leaves github.com.
+# Setup is the slowest here: Stripe Connect onboarding, PAN and identity
+# verification, Form W-8BEN as a non-US person, and an Indian bank account
+# whose holder name matches PAN and the GitHub legal name exactly. Payouts
+# arrive in INR by IMPS/NEFT; budget 10-15% lost to fees and FX.
+# Enrol: https://github.com/sponsors
+#
 # github: shunyagatha
 
-# Other platforms this file supports, each needing its own account first:
+# --- One-off tips, minutes to set up ----------------------------------------
 #
-# open_collective: vecline      # fiscal host; good for company sponsors who need invoices
-# ko_fi: shunyagatha            # one-off tips, lowest friction, no recurring commitment
-# custom: ['https://vecline.xyz/sponsor']
+# For the large majority who will never set up a recurring pledge but will pay
+# once for something that saved them an afternoon. Both work from India.
+#
+# ko_fi: shunyagatha
+# buy_me_a_coffee: shunyagatha
+
+# --- Company money ----------------------------------------------------------
+#
+# Open Collective is the one a finance department can actually approve: a
+# transparent ledger and real invoices. Needs a fiscal host to accept you, and
+# the host takes a percentage.
+#
+# open_collective: vecline
+#
+# Tidelift pays maintainers of packages enterprises already depend on, via
+# their subscription rather than goodwill. Requires being accepted into their
+# catalogue; the package name is the npm one.
+#
+# tidelift: npm/vecline
+#
+# thanks.dev distributes from companies according to their actual dependency
+# graph, so it pays without anyone choosing to sponsor you specifically.
+#
+# thanks_dev: u/gh/shunyagatha
+
+# --- Others GitHub supports, listed for completeness ------------------------
+#
+# patreon: shunyagatha
+# liberapay: shunyagatha
+# polar: shunyagatha
+# issuehunt: shunyagatha
+# community_bridge: vecline
+
+# --- The escape hatch: any URL, up to four ----------------------------------
+#
+# `custom` is not gated by any platform's approval, which makes it the fastest
+# route from India specifically: a Razorpay, UPI or Tip Top Jar page can be
+# live in an afternoon, where Stripe onboarding takes days. Wrap URLs in quotes
+# when they contain a colon, which every https:// URL does.
+#
+# ACTIVE, and verified live before being enabled: the page returns HTTP 200 and
+# names the project. It is the only uncommented line in this file, deliberately
+# — one button people can actually use beats five that lead nowhere.
+custom: ["https://tiptopjar.com/vecline"]
