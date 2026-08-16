@@ -87,9 +87,32 @@ function progressLine(): { report: (stage: string, pct: number) => void; done: (
   };
 }
 
-function fail(msg: string): never {
+/**
+ * Whether the running command was asked for machine-readable output.
+ *
+ * Set once from the parsed options, because failures are reported from `fail()`
+ * and from the top-level catch, neither of which can see the command's own
+ * option object.
+ */
+let jsonRequested = false;
+
+/**
+ * Stop, with a reason the caller can actually read.
+ *
+ * A `--json` run that failed used to print nothing at all on stdout and a
+ * human sentence on stderr. A script got an empty string and an exit code, and
+ * had to guess whether that meant "no results" or "it broke" — so the flag was
+ * honest about success and silent about everything else.
+ *
+ * The error goes to stdout under `--json`, with the same shape every time, so a
+ * consumer parses one stream rather than parsing one and scraping the other.
+ * stderr keeps the human sentence regardless, because a person watching a
+ * terminal should not have to pipe through a parser to read an error.
+ */
+function fail(msg: string, code = 1): never {
+  if (jsonRequested) emitJson({ ok: false, error: msg, exitCode: code });
   process.stderr.write(`${red('error')} ${msg}\n`);
-  process.exit(1);
+  process.exit(code);
 }
 
 function formatBytes(n: number): string {
@@ -110,15 +133,28 @@ function formatPsnr(v: number): string {
  * lossless result should communicate. Emitting the string `"Infinity"` keeps it
  * unambiguous and still parses everywhere.
  */
+function jsonReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'number' && !Number.isFinite(value)
+    ? (Number.isNaN(value) ? 'NaN' : value > 0 ? 'Infinity' : '-Infinity')
+    : value;
+}
+
+/**
+ * One command, one document — or one document per line when streaming.
+ *
+ * A command that converts a single file prints one indented object, which is
+ * what a person reading a terminal wants. `batch` converts many, and printing
+ * one indented object per file produced output that was neither a JSON document
+ * nor NDJSON: `JSON.parse` failed on the second object, and line-by-line parsing
+ * failed on the first line of the first. It was machine-readable in name only.
+ *
+ * Streaming mode switches to one compact document per line, which is NDJSON, and
+ * which every log pipeline and `jq -c` already understands.
+ */
+let jsonStream = false;
+
 function emitJson(payload: unknown): void {
-  const json = JSON.stringify(
-    payload,
-    (_key, value) =>
-      typeof value === 'number' && !Number.isFinite(value)
-        ? (Number.isNaN(value) ? 'NaN' : value > 0 ? 'Infinity' : '-Infinity')
-        : value,
-    2,
-  );
+  const json = JSON.stringify(payload, jsonReplacer, jsonStream ? undefined : 2);
   process.stdout.write(`${json}\n`);
 }
 
@@ -388,6 +424,28 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
   // all — indistinguishable from having hung. Suppressed under --json, where
   // the only thing on the wire should be the payload.
   const bar = o.json ? { report: () => {}, done: () => {} } : progressLine();
+
+  // Two strategies asked for at once is a question, not an instruction.
+  //
+  // `-l` used to overwrite `-m` without a word, so `-m embed -l` quietly
+  // produced whatever the measured path preferred — pixel on flat art, embed on
+  // a photograph. The user got a real result, and no reason to doubt it was the
+  // one they asked for. `--lossless` is described in its own help text as "same
+  // as --mode lossless", which makes that combination two mode values in one
+  // command line.
+  //
+  // Only an explicit `-m` counts: it defaults to 'auto', so anything else was
+  // typed. `-m lossless -l` is redundant rather than contradictory, and is
+  // allowed to pass.
+  if (o.lossless && o.mode !== 'auto' && o.mode !== 'lossless') {
+    fail(
+      `--lossless and --mode ${o.mode} ask for two different strategies. ` +
+        (o.mode === 'trace'
+          ? 'Tracing approximates with curves and can never be bit-exact, so it cannot also be lossless. '
+          : `--lossless measures the candidates and picks whichever is exact, which may not be ${o.mode}. `) +
+        `Drop one: --mode ${o.mode} for exactly that, or --lossless for a guaranteed bit-exact result.`,
+    );
+  }
 
   const result = await vectorize(source, {
     compare: o.severity ? { severity: true } : undefined,
@@ -1758,6 +1816,17 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
     return target;
   };
 
+  // Many files means many documents, so `--json` here is NDJSON: one compact
+  // record per line, terminated by a summary record carrying `event: "summary"`.
+  // The per-file records keep the shape a single `vectorize --json` produces, so
+  // the same consumer handles both.
+  //
+  // The order is not the order of the arguments. Workers run concurrently and a
+  // small file finishes before a large one queued ahead of it, so a consumer has
+  // to key on `input` rather than position — which is exactly why each record
+  // carries its own path.
+  if (o.json) jsonStream = true;
+
   // A count, because the per-file lines alone give no sense of how far through
   // a few hundred files a run is, and there is no other signal — the workers
   // are concurrent, so the output does not even arrive in order.
@@ -1792,7 +1861,14 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
 
   await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
   counter.done();
-  info(`\n${done} succeeded, ${failed} failed.`);
+  if (o.json) {
+    // A terminating record, so a consumer can tell "the run finished with two
+    // failures" from "the pipe was cut after two files" — indistinguishable
+    // otherwise, and the difference matters to anything running this in CI.
+    emitJson({ event: 'summary', total: files.length, succeeded: done, failed });
+  } else {
+    info(`\n${done} succeeded, ${failed} failed.`);
+  }
   if (o.summary) await writeFile(o.summary, formatBatchSummary(rows, done, failed));
   if (failed > 0) process.exit(1);
 }
@@ -1815,6 +1891,24 @@ program
       'SVG to raster is exact at any resolution you ask for.',
   )
   .version(VERSION, '-v, --version');
+
+// Three exit codes, and the difference between the last two is the point of
+// having them. "I could not do this" and "I did it, and the answer is no" are
+// different outcomes, and a CI job needs to treat them differently — the same
+// distinction grep and diff make. They were designed this way from the start and
+// documented nowhere, which meant every script had to rediscover them by
+// experiment.
+program.addHelpText(
+  'after',
+  '\nExit codes:\n' +
+    '  0  success\n' +
+    '  1  the command could not run — bad arguments, unreadable input, a failure\n' +
+    '  2  the command ran and its assertion failed — verify --fail-under,\n' +
+    '     diff --fail-over, or extract finding a digest that does not match\n' +
+    '\nWith --json, failures are reported on stdout as {"ok":false,"error":...,"exitCode":n},\n' +
+    'so one stream carries both results and errors. batch --json emits NDJSON:\n' +
+    'one record per line, ending with {"event":"summary",...}.\n',
+);
 
 program
   .command('vectorize')
@@ -1915,7 +2009,7 @@ program
   .argument('<input>', 'source SVG')
   .option('-o, --output <file>', 'output path (defaults to <input>.png)')
   .option('-w, --width <px>', 'output width', intArg('--width', 1, 100000))
-  .option('-h, --height <px>', 'output height', intArg('--height', 1, 100000))
+  .option('--height <px>', 'output height', intArg('--height', 1, 100000))
   .option('-s, --scale <factor>', 'uniform zoom', floatArg('--scale', 0.001, 1000))
   .option('--dpi <n>', 'resolution for physical units', floatArg('--dpi', 1, 10000))
   .option('-b, --background <color>', 'paint under the artwork', colorArg)
@@ -2069,7 +2163,7 @@ program
   .option('-o, --output <file>', 'output path (default <input>-crop.<ext>)')
   .option('-a, --aspect <w:h>', 'target aspect ratio, e.g. 1:1, 16:9, 4:5', '1:1')
   .option('-w, --width <px>', 'exact output width', intArg('--width', 1, 1e5))
-  .option('-h, --height <px>', 'exact output height', intArg('--height', 1, 1e5))
+  .option('--height <px>', 'exact output height', intArg('--height', 1, 1e5))
   .option('--min-scale <n>', 'smallest window as a fraction of the max fitting window', floatArg('--min-scale', 0.1, 1))
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100))
   .option('--json', 'machine-readable output on stdout')
@@ -2233,7 +2327,7 @@ program
   .option('--tolerance <px>', 'outline simplification tolerance', floatArg('--tolerance', 0, 100))
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('-w, --width <px>', 'output width for SVG → raster', intArg('--width', 1, 100000))
-  .option('-h, --height <px>', 'output height for SVG → raster', intArg('--height', 1, 100000))
+  .option('--height <px>', 'output height for SVG → raster', intArg('--height', 1, 100000))
   .option('-s, --scale <factor>', 'uniform zoom', floatArg('--scale', 0.001, 1000))
   .option('-b, --background <color>', 'background colour', colorArg)
   .option('-q, --quality <n>', 'lossy encoder quality', intArg('--quality', 1, 100), 92)
@@ -2325,8 +2419,18 @@ program
     runBatch(patterns, opts as unknown as BatchCliOptions),
   );
 
+// Every command declares `--json` separately, so rather than thread a flag
+// through two dozen action handlers this reads it once, before any of them run.
+// It has to happen here because `fail()` and the catch below both report errors
+// without ever seeing the command's own options object.
+program.hook('preAction', (_thisCommand, actionCommand) => {
+  jsonRequested = Boolean((actionCommand.opts() as { json?: boolean }).json);
+});
+
 program.parseAsync(process.argv).catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
+  // An unexpected throw is still a failure the caller asked to receive as JSON.
+  if (jsonRequested) emitJson({ ok: false, error: message, exitCode: 1 });
   process.stderr.write(`${red('error')} ${message}\n`);
   if (process.env.VECLINE_DEBUG && err instanceof Error && err.stack) {
     process.stderr.write(`${dim(err.stack)}\n`);
