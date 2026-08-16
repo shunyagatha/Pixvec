@@ -23,6 +23,24 @@ import { join } from 'node:path';
 
 const DIST = join(__dirname, '..', 'extensions', 'figma', 'dist', 'code.js');
 
+/**
+ * The plugin's `dist/` is gitignored, so on a fresh clone there is nothing to
+ * test until it is built. These cases skip rather than fail in that situation —
+ * but loudly, and CI does not rely on the skip: the `figma-plugin` job in
+ * ci.yml installs the extension, builds it, and runs this file against the real
+ * bundle, so the guard is always exercised somewhere. Failing here instead
+ * would break every contributor who has not built an extension they are not
+ * touching.
+ */
+const built = existsSync(DIST);
+if (!built) {
+  console.warn(
+    `\n[figma-sandbox] SKIPPED — ${DIST} is missing.\n` +
+    '  Build it with:  cd extensions/figma && npm install && npm run build\n' +
+    '  CI runs these in the dedicated figma-plugin job.\n',
+  );
+}
+
 interface FakeNode {
   id: string;
   type: string;
@@ -89,7 +107,7 @@ async function cycle(source: FakeNode): Promise<FakeNode> {
 }
 
 beforeAll(async () => {
-  if (!existsSync(DIST)) throw new Error(`build the plugin first: ${DIST} is missing`);
+  if (!built) return;
 
   registry = new Map();
   selection = [];
@@ -126,7 +144,7 @@ beforeAll(async () => {
   if (typeof handler !== 'function') throw new Error('code.js did not register a ui.onmessage handler');
 });
 
-describe('figma plugin sandbox', () => {
+describe.skipIf(!built)('figma plugin sandbox', () => {
   it('places the copy beside a top-level layer and names it after the source', async () => {
     const out = await cycle(node({ x: 10, y: 20 }));
     expect(inserted).toHaveLength(1);
