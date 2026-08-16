@@ -51,6 +51,7 @@ const dim = paint('2');
 const green = paint('32');
 const red = paint('31');
 const cyan = paint('36');
+const yellow = paint('33');
 
 function info(msg: string): void {
   process.stderr.write(`${msg}\n`);
@@ -909,20 +910,64 @@ async function runVectorExport(
 interface VerifyCliOptions {
   alphaMode: string;
   background: Rgba;
+  renderBackground?: Rgba;
   width?: number;
   json?: boolean;
   failUnder?: number;
 }
 
+/** Whether every pixel is fully opaque — cheap, and it short-circuits. */
+function isFullyOpaque(img: RasterImage): boolean {
+  const d = img.data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] !== 255) return false;
+  return true;
+}
+
+/** Fraction of pixels that are fully transparent. */
+function transparentFraction(img: RasterImage): number {
+  const d = img.data;
+  let clear = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] === 0) clear++;
+  return clear / (d.length / 4);
+}
+
 async function runVerify(a: string, b: string, o: VerifyCliOptions): Promise<void> {
   const [bytesA, bytesB] = await Promise.all([readInput(a), readInput(b)]);
 
-  const loadedA = await loadAnyAsRaster(bytesA, a, { baseDir: baseDirFor(a), width: o.width });
+  const loadedA = await loadAnyAsRaster(bytesA, a, {
+    baseDir: baseDirFor(a),
+    width: o.width,
+    background: o.renderBackground,
+  });
   const loadedB = await loadAnyAsRaster(bytesB, b, {
     baseDir: baseDirFor(b),
     // Match the reference size so an SVG compared against a PNG lines up.
     width: o.width ?? (loadedA.kind === 'raster' ? loadedA.image.width : undefined),
+    background: o.renderBackground,
   });
+
+  // Scoring a transparent SVG against an opaque photograph compares artwork
+  // against nothing and reports the difference as error. Most tracers emit a
+  // transparent ground — potrace and vtracer both do — so this is the normal
+  // case for anyone measuring a competitor, not an edge case.
+  //
+  // Measured on one 200x200 disc: the same artwork scores 29.92 dB with a white
+  // rect baked in and 2.12 dB without one. Left silent, `vecline verify` tells
+  // a rival their tracer scored 2 dB against ours. This repo's own comparison
+  // script has always passed a white ground for exactly this reason, with a
+  // comment calling the alternative a rigged fight; the shipped command never
+  // got the same courtesy.
+  if (o.renderBackground === undefined && loadedB.kind === 'svg' && loadedA.kind === 'raster') {
+    const opaqueReference = isFullyOpaque(loadedA.image);
+    const transparent = transparentFraction(loadedB.image);
+    if (opaqueReference && transparent > 0.1) {
+      process.stderr.write(
+        `${yellow('note')} ${(transparent * 100).toFixed(0)}% of ${basename(b)} is transparent, but ` +
+          `${basename(a)} is fully opaque, so every transparent pixel counts as a difference. ` +
+          `Most tracers emit a transparent ground — pass --render-background '#ffffff' to score it fairly.\n`,
+      );
+    }
+  }
 
   if (
     loadedA.image.width !== loadedB.image.width ||
@@ -961,13 +1006,19 @@ async function runVerify(a: string, b: string, o: VerifyCliOptions): Promise<voi
 async function runDiff(
   a: string,
   b: string,
-  o: { output: string; threshold: number; width?: number; failOver?: number; json?: boolean },
+  o: {
+    output: string; threshold: number; width?: number; failOver?: number; json?: boolean;
+    renderBackground?: Rgba;
+  },
 ): Promise<void> {
   const [bytesA, bytesB] = await Promise.all([readInput(a), readInput(b)]);
-  const loadedA = await loadAnyAsRaster(bytesA, a, { baseDir: baseDirFor(a), width: o.width });
+  const loadedA = await loadAnyAsRaster(bytesA, a, {
+    baseDir: baseDirFor(a), width: o.width, background: o.renderBackground,
+  });
   const loadedB = await loadAnyAsRaster(bytesB, b, {
     baseDir: baseDirFor(b),
     width: o.width ?? (loadedA.kind === 'raster' ? loadedA.image.width : undefined),
+    background: o.renderBackground,
   });
 
   if (
@@ -2359,6 +2410,14 @@ program
     r: 255, g: 255, b: 255, a: 255,
   })
   .option('-w, --width <px>', 'render both at this width first', intArg('--width', 1, 100000))
+  // Deliberately NOT -b/--background, which already means "flattening colour for
+  // CIEDE2000" here. Overloading it would silently move every number anyone has
+  // ever recorded from this command.
+  .option(
+    '--render-background <color>',
+    'paint SVGs onto this colour before scoring — most tracers emit a transparent ground',
+    colorArg,
+  )
   .option('--fail-under <ssim>', 'exit non-zero if SSIM falls below this', floatArg('--fail-under', 0, 1))
   .option('--json', 'machine-readable output')
   .action(runVerify);
@@ -2371,6 +2430,11 @@ program
   .option('-o, --output <file>', 'heatmap output path (default diff.png)', 'diff.png')
   .option('-t, --threshold <de>', 'CIEDE2000 above which a pixel counts as changed', floatArg('--threshold', 0, 100), 2)
   .option('-w, --width <px>', 'render both at this width first', intArg('--width', 1, 100000))
+  .option(
+    '--render-background <color>',
+    'paint SVGs onto this colour before scoring — most tracers emit a transparent ground',
+    colorArg,
+  )
   .option('--fail-over <fraction>', 'exit non-zero if the changed fraction exceeds this (0-1)', floatArg('--fail-over', 0, 1))
   .option('--json', 'machine-readable output')
   .action(runDiff);
