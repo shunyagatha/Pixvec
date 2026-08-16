@@ -301,10 +301,27 @@ function walkSkeleton(m: Uint8Array, P: number, Q: number): Point[][] {
     return c;
   };
   const used = new Set<number>();
+  /**
+   * A collision-free id for the undirected edge between two 8-neighbours.
+   *
+   * The obvious pairing — `lo * P * Q + hi` — is quadratic in the pixel count
+   * and silently leaves the exact-integer range at **94.9 megapixels**
+   * (`sqrt(2^53)`): beyond that, distinct edges collapse onto the same key, the
+   * walk believes it has already visited an edge it has not, and arms of the
+   * skeleton terminate early. A 10000x10000 scan is 100 MP, so this was
+   * reachable well inside what the decoder now allows.
+   *
+   * Two 8-neighbours can only differ by one of four positive deltas — 1, P-1, P
+   * or P+1 — so the direction fits in two bits and the id is linear in pixels
+   * rather than quadratic. The worst case at the decoder's 268 MP cap is about
+   * 1.07e9, four million times under the limit.
+   */
   const edgeKey = (ax: number, ay: number, bx: number, by: number): number => {
     const a = ay * P + ax, b = by * P + bx;
     const lo = Math.min(a, b), hi = Math.max(a, b);
-    return lo * P * Q + hi;
+    const delta = hi - lo;
+    const dir = delta === 1 ? 0 : delta === P - 1 ? 1 : delta === P ? 2 : 3;
+    return lo * 4 + dir;
   };
   // A diagonal edge whose orthogonal "shoulder" is also foreground is the
   // hypotenuse of a filled right-angle corner — a shortcut that would let the

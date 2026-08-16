@@ -17,7 +17,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, rm, mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 
 /** A representative set of formats LibreOffice converts among (for help/validation). */
 export const OFFICE_FORMATS = [
@@ -33,10 +33,19 @@ export function isOfficeDocument(path: string): boolean {
   return OFFICE_DOC_EXTS.has(extname(path).replace(/^\./, '').toLowerCase());
 }
 
-/** Locate a LibreOffice `soffice` binary, or `null` if none of the usual spots have one. */
+/**
+ * Locate a LibreOffice `soffice` binary, or `null` if none of the usual spots
+ * have one.
+ *
+ * The environment override must be an **absolute** path. A relative one is
+ * resolved against the working directory, so `VECLINE_SOFFICE=soffice.exe`
+ * combined with running the CLI inside a directory somebody else populated
+ * would execute their binary. Every built-in candidate below is absolute for
+ * the same reason.
+ */
 export function findSoffice(): string | null {
   const env = process.env.VECLINE_SOFFICE || process.env.SOFFICE_PATH;
-  if (env && existsSync(env)) return env;
+  if (env && isAbsolute(env) && existsSync(env)) return env;
   const candidates =
     process.platform === 'win32'
       ? ['C:\\Program Files\\LibreOffice\\program\\soffice.exe', 'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe']
@@ -44,7 +53,7 @@ export function findSoffice(): string | null {
         ? ['/Applications/LibreOffice.app/Contents/MacOS/soffice']
         : ['/usr/bin/soffice', '/usr/bin/libreoffice', '/usr/local/bin/soffice', '/snap/bin/libreoffice', '/opt/libreoffice/program/soffice'];
   for (const c of candidates) if (existsSync(c)) return c;
-  return null; // might still be on PATH; convertOffice falls back to bare 'soffice'
+  return null;
 }
 
 export interface OfficeConvertOptions {
@@ -81,7 +90,22 @@ export async function convertOffice(
   outPath: string,
   opts: OfficeConvertOptions = {},
 ): Promise<OfficeConvertResult> {
-  const bin = opts.soffice ?? findSoffice() ?? 'soffice';
+  // No bare-name fallback. `execFile('soffice', …)` resolves through PATH, and
+  // on Windows CreateProcess searches the *current directory first*, so running
+  // a conversion inside a directory containing soffice.exe would run that one.
+  // An explicit `opts.soffice` is the caller's own choice and is honoured as
+  // given; everything else must be a path we found ourselves.
+  //
+  // Only required when we are the ones spawning: `opts.run` replaces the engine
+  // outright, which is how the orchestration is tested without LibreOffice
+  // installed, and demanding a binary that will never be executed would break
+  // that seam for no safety gain.
+  const bin = opts.soffice ?? findSoffice();
+  if (!bin && !opts.run) {
+    const missing = new Error(sofficeMissingMessage());
+    missing.name = 'OfficeUserError';
+    throw missing;
+  }
   const targetExt = extname(outPath).replace(/^\./, '').toLowerCase();
   if (!targetExt) throw new Error('The output path needs an extension, e.g. -o out.pdf');
 
@@ -94,7 +118,7 @@ export async function convertOffice(
   try {
     const args = buildSofficeArgs(absInput, targetExt, tmp);
     const run = opts.run ?? ((b, a) => spawnSoffice(b, a, opts.timeoutMs ?? 120_000));
-    await run(bin, args);
+    await run(bin ?? '', args);
 
     // LibreOffice writes `<inputStem>.<ext>` into the --outdir; move it to the
     // path the caller actually asked for.
@@ -112,7 +136,9 @@ export async function convertOffice(
     }
     await mkdir(dirname(resolve(outPath)), { recursive: true });
     await writeFile(outPath, await readFile(produced));
-    return { output: outPath, engine: bin };
+    // `bin` is only null when `opts.run` replaced the engine, in which case the
+    // caller supplied the conversion and there is no binary to name.
+    return { output: outPath, engine: bin ?? '(supplied run)' };
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -172,18 +198,31 @@ export async function convertOfficeBatch(
   return results;
 }
 
+/**
+ * The one message for "there is no LibreOffice here".
+ *
+ * Shared by the lookup and the spawn, so the two cannot drift into saying
+ * different things about the same situation. `VECLINE_SOFFICE` is called out as
+ * needing an absolute path because a relative one is resolved against the
+ * working directory, which is not a safe place to find a binary.
+ */
+function sofficeMissingMessage(): string {
+  return (
+    'LibreOffice was not found. vecline drives your local LibreOffice for ' +
+    'Office⇄PDF conversion — nothing is bundled, so the install stays tiny. ' +
+    'Install it from https://www.libreoffice.org/ (or `brew install --cask libreoffice`, ' +
+    '`apt install libreoffice`), or point VECLINE_SOFFICE at the soffice binary ' +
+    'as an absolute path.'
+  );
+}
+
 function spawnSoffice(bin: string, args: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(bin, args, { timeout: timeoutMs, windowsHide: true }, (err) => {
       if (!err) return resolve();
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
-        const missing = new Error(
-          'LibreOffice was not found. vecline drives your local LibreOffice for ' +
-            'Office⇄PDF conversion — nothing is bundled, so the install stays tiny. ' +
-            'Install it from https://www.libreoffice.org/ (or `brew install --cask libreoffice`, ' +
-            '`apt install libreoffice`), or point VECLINE_SOFFICE at the soffice binary.',
-        );
+        const missing = new Error(sofficeMissingMessage());
         missing.name = 'OfficeUserError';
         reject(missing);
       } else {
