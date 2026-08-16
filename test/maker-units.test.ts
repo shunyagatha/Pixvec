@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { traceGeometry, toDxf, DXF_UNITS } from '../src/io/export/index.js';
+import { traceGeometry, toDxf, toGcode, DXF_UNITS } from '../src/io/export/index.js';
 import { flatArtwork } from './fixtures.js';
 
 /**
@@ -118,5 +118,44 @@ describe('DXF physical units', () => {
     // Nothing may fall below the origin; a mishandled flip is the usual way a
     // part ends up mirrored or off the bed.
     expect(Math.min(...ys)).toBeGreaterThanOrEqual(-0.01);
+  });
+});
+
+/**
+ * The three ways these exporters used to produce a file that looked fine and
+ * ruined a piece of material. All of them exited 0.
+ */
+describe('exports refuse rather than mislead', () => {
+  it('will not scale a DXF without saying what the numbers mean', () => {
+    // `pixelsPerUnit` divides every coordinate, but the HEADER declaring
+    // $INSUNITS is written only when `units` is set — so this emitted a drawing
+    // spanning 8.00 of *something*, and the importer guessed. That is the exact
+    // failure the file's own doc comment warns about.
+    const g = traceGeometry(flatArtwork(64, 64), {});
+    expect(() => toDxf(g, { pixelsPerUnit: 8 })).toThrow(/units/i);
+    // With both, it is fine — the guard must not block the legitimate call.
+    expect(() => toDxf(g, { pixelsPerUnit: 8, units: 'mm' })).not.toThrow();
+    // And no scale at all is fine: unscaled pixel coordinates are honest.
+    expect(() => toDxf(g, {})).not.toThrow();
+  });
+
+  it('will not emit G-code that cuts nothing', () => {
+    // Centreline returns [] for a blank image, an over-eager threshold, or ink
+    // that is light on dark. The old behaviour was a valid 9-line program with
+    // zero cutting moves, discovered at the machine.
+    expect(() => toGcode([], { height: 64, units: 'mm' })).toThrow(/no polylines/i);
+    expect(() => toGcode([[{ x: 0, y: 0 }]], { height: 64, units: 'mm' })).toThrow(/no polylines/i);
+  });
+
+  it('will not emit G-code with the whole job below the origin', () => {
+    // Y is flipped as `height - y`, so a missing height made every coordinate
+    // negative — measured -62..0 on a 64px drawing, the entire job off the bed.
+    const poly = [[{ x: 0, y: 0 }, { x: 10, y: 10 }]];
+    // @ts-expect-error height is required now; this is the call that used to work
+    expect(() => toGcode(poly, { units: 'mm' })).toThrow(/height/i);
+
+    const out = toGcode(poly, { height: 64, units: 'mm' });
+    const ys = [...out.matchAll(/Y(-?[\d.]+)/g)].map((m) => Number(m[1]));
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
   });
 });

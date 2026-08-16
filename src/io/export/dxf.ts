@@ -39,6 +39,25 @@ export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
   const steps = opts.curveSteps ?? 12;
   const H = geometry.height;
   const units = opts.units ?? 'none';
+
+  // A scale without a unit is the failure this file's own comment warns about,
+  // arriving through the door it left open. `pixelsPerUnit` divides every
+  // coordinate, but the HEADER that says what the resulting numbers *mean* is
+  // written only when `units` is set — so `{ pixelsPerUnit: 12 }` alone emits a
+  // drawing spanning 8.00 of something, with no $INSUNITS, and the receiving
+  // program guesses. The maker finds out after the cut, in material.
+  //
+  // The CLI already refuses the mirror case (`--physical-width` without
+  // `--units`); the library API had no equivalent.
+  if (opts.pixelsPerUnit !== undefined && units === 'none') {
+    throw new Error(
+      'toDxf: `pixelsPerUnit` scales the drawing but `units` says what the numbers mean, ' +
+        'so passing one without the other emits a file whose size the importer has to guess — ' +
+        "and it usually guesses wrong. Pass `units: 'mm'` (or 'in', 'cm') alongside it, or drop " +
+        '`pixelsPerUnit` to emit unscaled pixel coordinates.',
+    );
+  }
+
   // Guard against 0 and negatives as well as undefined: a scale of zero would
   // collapse every coordinate to the origin and emit a valid-looking file
   // containing nothing, which is worse than refusing.
