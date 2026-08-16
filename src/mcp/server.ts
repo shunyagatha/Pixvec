@@ -14,7 +14,7 @@
 import { createInterface } from 'node:readline';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, extname, join } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { loadRaster, vectorize, VERSION } from '../api.js';
 import { compareImages } from '../metrics/index.js';
 import { rasterizeSvg, baseDirFor } from '../io/rasterize.js';
@@ -206,6 +206,39 @@ async function describeTools(): Promise<typeof TOOLS> {
   });
 }
 
+/**
+ * Largest reply returned inline, in characters.
+ *
+ * Omitting `output` used to return the whole SVG as text with no ceiling. A
+ * trivial four-colour logo came back at 7,723 characters; a photograph traced
+ * in this repo is 2,090,768 — roughly half a million tokens, straight into the
+ * model's context, from one tool call the agent had no way to know was
+ * expensive. Past this size the result goes to a file and the agent is told
+ * where, which is the answer it wanted anyway: something it can read a piece of
+ * or hand to another tool.
+ */
+const MAX_INLINE_CHARS = 64_000;
+
+/** How long any one tool call may run before it is abandoned. */
+const CALL_TIMEOUT_MS = 120_000;
+
+/**
+ * Spill an over-large reply to a file rather than into the conversation.
+ *
+ * Written next to the input when we can, because that is where the agent is
+ * already working and where it will look; the system temp directory otherwise.
+ */
+async function spill(text: string, hint: string, ext: string): Promise<string> {
+  const stem = hint ? basename(hint, extname(hint)) : 'vecline';
+  const dir = hint ? dirname(resolve(hint)) : tmpdir();
+  const out = join(dir, `${stem}.vecline${ext}`);
+  await writeFile(out, text);
+  return (
+    `The result is ${text.length.toLocaleString('en-US')} characters, too large to return inline, ` +
+    `so it was written to ${out} instead. Read it from there, or pass an explicit \`output\` path next time.`
+  );
+}
+
 async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
   const inPath = String(args.input ?? args.reference ?? '');
   switch (name) {
@@ -217,7 +250,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         trace: args.colors ? { colors: Number(args.colors) } : undefined,
       });
       if (args.output) { await writeFile(String(args.output), r.svg); return `Wrote ${args.output} — ${r.mode} mode, ${r.shapes} shapes, ${r.colors} colours, lossless=${r.lossless}.`; }
-      return r.svg;
+      return r.svg.length > MAX_INLINE_CHARS ? spill(r.svg, inPath, '.svg') : r.svg;
     }
     case 'convert': {
       const out = String(args.output);
@@ -250,7 +283,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       }
       const r = centerlineTrace(src.image, {});
       if (args.output) { await writeFile(String(args.output), r.svg); return `Wrote ${args.output} — ${r.paths} stroke paths.`; }
-      return r.svg;
+      return r.svg.length > MAX_INLINE_CHARS ? spill(r.svg, inPath, '.svg') : r.svg;
     }
     case 'measure': {
       const load = async (p: string) => {
@@ -414,7 +447,24 @@ export async function handleMcpMessage(msg: Rpc): Promise<string | null> {
       return reply(id, { tools: await describeTools() });
     case 'tools/call':
       try {
-        const text = await callTool(String(params?.name), (params?.arguments as Record<string, unknown>) ?? {});
+        // A call that never returns takes the whole session with it, because
+        // the queue behind it never drains. Nothing here should take two
+        // minutes on any sane input; if it does, the agent is better told so
+        // than left waiting.
+        let timer: NodeJS.Timeout | undefined;
+        const text = await Promise.race([
+          callTool(String(params?.name), (params?.arguments as Record<string, unknown>) ?? {}),
+          new Promise<never>((_, rejectCall) => {
+            timer = setTimeout(
+              () => rejectCall(new Error(
+                `This call passed ${CALL_TIMEOUT_MS / 1000}s and was abandoned. The input is probably far ` +
+                'larger than it looks — try a smaller image, or an explicit `output` path so the result ' +
+                'is written rather than returned.',
+              )),
+              CALL_TIMEOUT_MS,
+            );
+          }),
+        ]).finally(() => { if (timer) clearTimeout(timer); });
         return reply(id, { content: [{ type: 'text', text }] });
       } catch (e) {
         return reply(id, { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true });
@@ -424,14 +474,32 @@ export async function handleMcpMessage(msg: Rpc): Promise<string | null> {
   }
 }
 
-/** Start the MCP stdio server: read JSON-RPC lines from stdin, reply on stdout. */
+/**
+ * Start the MCP stdio server: read JSON-RPC lines from stdin, reply on stdout.
+ *
+ * Messages are handled **one at a time**. Every tool here is CPU-bound and
+ * synchronous inside — tracing a photograph pins a core for seconds — so
+ * dispatching each line the moment it arrives let a batching client start N
+ * traces at once and take the machine with it. Replies also came back out of
+ * order (measured: eight requests answered 1,7,8,6,5,2,3,4), which is legal
+ * JSON-RPC but makes a transcript very hard to read.
+ *
+ * The local bridge already bounds concurrency for the same reason; this is the
+ * same idea with a queue of one, because there is nothing to gain from
+ * overlapping work that cannot overlap.
+ */
 export function startMcpServer(): void {
   const rl = createInterface({ input: process.stdin, terminal: false });
+  let queue: Promise<void> = Promise.resolve();
+
   rl.on('line', (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
     let msg: Rpc;
     try { msg = JSON.parse(trimmed); } catch { return; }
-    void handleMcpMessage(msg).then((out) => { if (out) process.stdout.write(out + '\n'); });
+    queue = queue.then(async () => {
+      const out = await handleMcpMessage(msg);
+      if (out) process.stdout.write(out + '\n');
+    });
   });
 }
