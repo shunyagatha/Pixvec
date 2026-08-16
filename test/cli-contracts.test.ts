@@ -167,6 +167,56 @@ describe.skipIf(!built)('CLI: contradictory strategies are refused', () => {
   });
 });
 
+describe.skipIf(!built)('CLI: verify scores foreign SVGs fairly', () => {
+  let src: string;
+  let opaque: string;
+  let transparent: string;
+
+  beforeAll(async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vecline-ground-'));
+    src = join(dir, 'source.png');
+    await writeFile(src, await encode(flatArtwork(60, 40), 'png'));
+    // The same artwork twice. Most tracers — potrace and vtracer among them —
+    // emit the transparent form, so it is the normal input when measuring a
+    // competitor, not a curiosity.
+    opaque = join(dir, 'opaque.svg');
+    transparent = join(dir, 'transparent.svg');
+    const shape = '<circle cx="30" cy="20" r="14" fill="#d64541"/>';
+    await writeFile(opaque, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40"><rect width="60" height="40" fill="#ffffff"/>${shape}</svg>`);
+    await writeFile(transparent, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40">${shape}</svg>`);
+  });
+
+  const ssimOf = (out: string): number => Number(JSON.parse(out.trim()).ssim);
+
+  it('scores a transparent SVG the same as the identical opaque one', async () => {
+    // This is the whole point. Without the flag the two differ by an order of
+    // magnitude, and the transparent one — anybody else's output — loses.
+    const a = await cli(['verify', src, opaque, '--json']);
+    const b = await cli(['verify', src, transparent, '--render-background', '#ffffff', '--json']);
+    expect(ssimOf(b.stdout)).toBeCloseTo(ssimOf(a.stdout), 6);
+  });
+
+  it('warns when the candidate is transparent and the reference is not', async () => {
+    // Silence here is what made the wrong number look like a real measurement.
+    const r = await cli(['verify', src, transparent]);
+    expect(r.stderr).toContain('--render-background');
+    expect(r.stderr).toMatch(/transparent/i);
+  });
+
+  it('does not warn when the flag was given', async () => {
+    const r = await cli(['verify', src, transparent, '--render-background', '#ffffff']);
+    expect(r.stderr).not.toContain('--render-background');
+  });
+
+  it('leaves the default scoring untouched', async () => {
+    // The flag must add a capability, not silently move numbers people have
+    // already recorded. An opaque candidate scores the same either way.
+    const withFlag = await cli(['verify', src, opaque, '--render-background', '#ffffff', '--json']);
+    const without = await cli(['verify', src, opaque, '--json']);
+    expect(ssimOf(withFlag.stdout)).toBeCloseTo(ssimOf(without.stdout), 9);
+  });
+});
+
 describe.skipIf(!built)('CLI: exit codes are documented', () => {
   it('explains 0, 1 and 2 in --help', async () => {
     // They were designed deliberately — 1 is "could not run", 2 is "ran, and the

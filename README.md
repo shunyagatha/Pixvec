@@ -336,6 +336,26 @@ Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a 
 
 Comparisons default to **premultiplied** alpha, because colour stored beneath a fully transparent pixel is invisible: two images that render identically must measure identically. Use `--alpha-mode straight` to compare raw stored bytes instead.
 
+### Measure any tracer, including someone else's
+
+`verify` and `diff` are not vecline-only. They take **any** SVG from **any** producer and score it against a source raster — nothing in the path knows or cares which tool wrote the file:
+
+```bash
+# Score another tool's output. Most tracers emit a transparent ground, so give
+# it the colour the artwork was meant to sit on, or every transparent pixel
+# counts as a difference.
+vecline verify source.png their-output.svg --render-background '#ffffff'
+
+# As a CI gate: exit code 2 if it misses the bar.
+vecline verify source.png their-output.svg --render-background '#ffffff' --fail-under 0.98
+```
+
+That flag is not a detail. On one 200×200 disc the *same artwork* scores **29.92 dB** with a white ground and **2.12 dB** without one, so a comparison run without it does not measure a rival tracer, it measures whether they happened to emit a background rect. Vecline warns when it detects the mismatch rather than letting the number stand.
+
+`--json` emits a stable object — `psnr`, `ssim`, `ssimLuma`, `rmse`, `exactRatio`, `deltaE{mean,p95,max}`, `maxChannelDiff`, `lossless`, plus dimensions — so a script can gate on any of them. Exit codes are `0`, `1`, `2` as documented in `--help`.
+
+For a full head-to-head against potrace, imagetracerjs and vtracer on a shared corpus, `npm run compare` in a clone of this repo runs the whole panel; `node scripts/fetch-corpus.mjs` fetches the images with their provenance and licences recorded.
+
 ## How it works
 
 ### `pixel` — exact geometry from flat artwork
