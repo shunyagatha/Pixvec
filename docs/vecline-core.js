@@ -3028,6 +3028,7 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
   const RA = new Float64Array(K * 3);
   const RB = new Float64Array(K * 3);
   const lab = new Float64Array(3);
+  const labCache = new Float64Array(n2 * 3);
   const paletteColors = Math.max(1, Math.floor(palette.rgb.length / 3));
   const bandSeen = new Uint8Array(K * paletteColors);
   const bandCount = new Int32Array(K);
@@ -3047,6 +3048,9 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
       }
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
+      labCache[i * 3] = lab[0];
+      labCache[i * 3 + 1] = lab[1];
+      labCache[i * 3 + 2] = lab[2];
       const m = k * 6;
       M[m] += 1;
       M[m + 1] += x;
@@ -3113,8 +3117,9 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
       }
       const r = Math.hypot(x - cxArr[k], y - cyArr[k]);
       if (r > radRMax[k]) radRMax[k] = r;
-      const o = i * 4;
-      srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
+      lab[0] = labCache[i * 3];
+      lab[1] = labCache[i * 3 + 1];
+      lab[2] = labCache[i * 3 + 2];
       const ci = colorIdx(classes[i]) * 3;
       flatSum[k] += sq(lab[0] - palette.lab[ci]) + sq(lab[1] - palette.lab[ci + 1]) + sq(lab[2] - palette.lab[ci + 2]);
     }
@@ -3135,8 +3140,9 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
       const k = kOf(i);
       if (k < 0) continue;
       const mdl = models[k];
-      const o = i * 4;
-      srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
+      lab[0] = labCache[i * 3];
+      lab[1] = labCache[i * 3 + 1];
+      lab[2] = labCache[i * 3 + 2];
       if (mdl && tMax[k] > tMin[k]) {
         const u = clamp012((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
         const b = k * FINE + Math.min(FINE - 1, Math.floor(u * FINE));
@@ -3183,8 +3189,9 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
       if (classes[i] < 0) continue;
       const k = kOf(i);
       if (k < 0) continue;
-      const o = i * 4;
-      srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
+      lab[0] = labCache[i * 3];
+      lab[1] = labCache[i * 3 + 1];
+      lab[2] = labCache[i * 3 + 2];
       const mdl = models[k];
       if (mdl && stopList[k]) {
         const u = clamp012((mdl.dx * x + mdl.dy * y - tMin[k]) / (tMax[k] - tMin[k]));
