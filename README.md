@@ -707,6 +707,28 @@ Full policy: **https://vecline.xyz/privacy.html** ·
 Contact: [open an issue](https://github.com/shunyagatha/Vecline/issues)
 
 
+## Supporting Vecline
+
+Vecline is free and stays that way. The library, the CLI, the MCP server and
+[Studio](https://vecline.xyz) are MIT, unlimited and signup-free — permanently,
+not as a trial of something else. Nothing here is withheld from anyone who does
+not pay, and there is no paid tier to be nudged towards.
+
+If it saved you an afternoon and you want to say so:
+
+<a href="https://tiptopjar.com/vecline"><img src="https://raw.githubusercontent.com/shunyagatha/Vecline/main/assets/tip-qr.png" width="150" align="right" alt="QR code linking to tiptopjar.com/vecline"></a>
+
+**[tiptopjar.com/vecline](https://tiptopjar.com/vecline)** — one-off, no account
+needed. The QR is the same link, for a phone.
+
+Things that help at least as much and cost nothing: a bug report with the image
+that broke it, a measurement showing Vecline losing to something else, or a
+[star](https://github.com/shunyagatha/Vecline). The first two are worth more
+than the tips — this project's whole claim is that its output is measured, and
+that only holds while people keep checking it.
+
+<br clear="right">
+
 ## License
 
 [MIT](LICENSE)
