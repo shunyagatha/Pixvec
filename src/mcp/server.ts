@@ -15,7 +15,7 @@ import { createInterface } from 'node:readline';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
-import { loadRaster, vectorize, VERSION } from '../api.js';
+import { loadRaster, vectorize, measureFlatness, VERSION } from '../api.js';
 import { compareImages } from '../metrics/index.js';
 import { rasterizeSvg, baseDirFor } from '../io/rasterize.js';
 import { decodeRaster, looksLikeSvg } from '../io/decode.js';
@@ -51,14 +51,28 @@ const TOOLS = [
       + 'vector geometry that rasterises back BIT-EXACT (verified, not asserted). '
       + 'For photographs it produces a measured approximation; a neural cloud vectoriser will often '
       + 'look better, so prefer this when determinism, privacy or provable exactness matter. '
-      + 'Auto-picks pixel/trace/embed, or force a mode. Writes to `output` if given, else returns the SVG.',
+      + 'Auto-picks pixel/trace/embed, or force a mode. Writes to `output` if given, else returns the SVG. '
+      + 'Pass `verify: true` to render the SVG back and return SSIM/PSNR/ΔE and whether it is pixel-identical — '
+      + 'the proof, in the same call.',
     inputSchema: s({
       properties: {
         input: { type: 'string', description: 'Path to the source raster image' },
         output: { type: 'string', description: 'Optional .svg output path' },
-        mode: { type: 'string', enum: ['auto', 'lossless', 'pixel', 'trace', 'embed'] },
-        preset: { type: 'string', enum: ['auto', 'logo', 'lineart', 'poster', 'photo', 'detailed'] },
-        colors: { type: 'number' },
+        mode: {
+          type: 'string', enum: ['auto', 'lossless', 'pixel', 'trace', 'embed'],
+          description: 'auto (default) picks per image; pixel/lossless are bit-exact on flat art; '
+            + 'trace approximates with paths; embed wraps the original raster losslessly',
+        },
+        preset: {
+          type: 'string', enum: ['auto', 'logo', 'lineart', 'poster', 'photo', 'detailed', 'pixelart', 'exact'],
+          description: 'Tuning for the trace path; ignored by pixel and embed modes',
+        },
+        colors: { type: 'number', description: 'Palette size for trace mode (2–256)' },
+        verify: {
+          type: 'boolean',
+          description: 'Rasterise the result back and measure it. Returns JSON with ssim, psnr, '
+            + 'meanDeltaE, pixelIdentical and svgBytes instead of the SVG text. Costs one extra render.',
+        },
       },
       required: ['input'],
     }),
@@ -66,50 +80,104 @@ const TOOLS = [
   {
     name: 'convert',
     description: 'Convert between formats by extension. Supports raster↔SVG plus vector export to .dxf/.eps/.pdf (CAD/CNC/print).',
-    inputSchema: s({ properties: { input: { type: 'string' }, output: { type: 'string' }, cmyk: { type: 'boolean' } }, required: ['input', 'output'] }),
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the source file (raster or SVG)' },
+        output: { type: 'string', description: 'Destination path; its extension chooses the target format' },
+        cmyk: { type: 'boolean', description: 'Emit CMYK colour in EPS/PDF output, for print workflows' },
+      },
+      required: ['input', 'output'],
+    }),
   },
   {
     name: 'centerline',
     description: 'Trace line art to single-stroke centreline SVG (for plotters, lasers, CNC). Optionally emit G-code with tool=laser|pen.',
-    inputSchema: s({ properties: { input: { type: 'string' }, output: { type: 'string' }, gcode: { type: 'boolean' }, tool: { type: 'string', enum: ['laser', 'pen'] } }, required: ['input'] }),
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the line-art image' },
+        output: { type: 'string', description: 'Optional output path; extension should match the format produced' },
+        // Not cosmetic: this flag changes what the tool returns, not just how.
+        // Undescribed, an agent could ask for an SVG and be handed G-code.
+        gcode: { type: 'boolean', description: 'Emit G-code toolpaths instead of an SVG. Changes the output format.' },
+        tool: { type: 'string', enum: ['laser', 'pen'], description: 'G-code dialect; only used when gcode is true' },
+      },
+      required: ['input'],
+    }),
   },
   {
     name: 'measure',
     description: 'Measure how close two images (raster or SVG) are: PSNR, SSIM, mean CIEDE2000, and whether they are pixel-identical.',
-    inputSchema: s({ properties: { reference: { type: 'string' }, candidate: { type: 'string' } }, required: ['reference', 'candidate'] }),
+    inputSchema: s({
+      properties: {
+        reference: { type: 'string', description: 'Path to the original / expected image (raster or SVG)' },
+        candidate: { type: 'string', description: 'Path to the image being scored against the reference' },
+      },
+      required: ['reference', 'candidate'],
+    }),
   },
   {
     name: 'diff',
     description: 'Perceptual visual-regression diff. Paints a CIEDE2000 heatmap of what changed between two images (raster or SVG) and reports changed-pixel count/fraction, max & mean ΔE, and SSIM. Give an output path to save the heatmap.',
-    inputSchema: s({ properties: { reference: { type: 'string' }, candidate: { type: 'string' }, output: { type: 'string', description: 'Optional .png heatmap path' }, threshold: { type: 'number', description: 'CIEDE2000 above which a pixel counts as changed (default 2)' } }, required: ['reference', 'candidate'] }),
+    inputSchema: s({
+      properties: {
+        reference: { type: 'string', description: 'Path to the baseline image (raster or SVG)' },
+        candidate: { type: 'string', description: 'Path to the image being compared; must match the reference size' },
+        output: { type: 'string', description: 'Optional .png heatmap path' },
+        threshold: { type: 'number', description: 'CIEDE2000 above which a pixel counts as changed (default 2)' },
+      },
+      required: ['reference', 'candidate'],
+    }),
   },
   {
     name: 'crop',
     description: 'Content-aware crop to an aspect ratio, keeping the salient subject (edges + saturation) rather than the centre. aspect like "1:1", "16:9", "4:5".',
-    inputSchema: s({ properties: { input: { type: 'string' }, output: { type: 'string' }, aspect: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' } }, required: ['input', 'output'] }),
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the image to crop' },
+        output: { type: 'string', description: 'Destination path; its extension chooses the encoder' },
+        aspect: { type: 'string', description: 'Target ratio as "W:H", e.g. "1:1", "16:9", "4:5". Default "1:1"' },
+        width: { type: 'number', description: 'Explicit target width in pixels; an alternative to aspect' },
+        height: { type: 'number', description: 'Explicit target height in pixels; an alternative to aspect' },
+      },
+      required: ['input', 'output'],
+    }),
   },
   {
     name: 'palette',
     description: 'Extract a perceptual dominant-colour palette (hex + weight) from an image.',
-    inputSchema: s({ properties: { input: { type: 'string' }, colors: { type: 'number' } }, required: ['input'] }),
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the image to sample' },
+        colors: { type: 'number', description: 'How many dominant colours to return (default 6)' },
+      },
+      required: ['input'],
+    }),
   },
   {
     name: 'placeholder',
     description: 'Generate a BlurHash string for lazy-loading a raster image.',
-    inputSchema: s({ properties: { input: { type: 'string' } }, required: ['input'] }),
+    inputSchema: s({
+      properties: { input: { type: 'string', description: 'Path to the raster image to summarise' } },
+      required: ['input'],
+    }),
   },
   {
     name: 'image_info',
-    description: 'Inspect an image: dimensions, format, colour count, and the recommended vectorisation strategy.',
-    inputSchema: s({ properties: { input: { type: 'string' } }, required: ['input'] }),
+    description:
+      'Inspect an image without converting it: dimensions, format, colour space, alpha, distinct colour '
+      + 'count and run density — and which vectorize mode suits it, including whether bit-exact output is '
+      + 'achievable. Call this first when choosing between `pixel` and `trace`.',
+    inputSchema: s({ properties: { input: { type: 'string', description: 'Path to the image to inspect' } }, required: ['input'] }),
   },
   {
     name: 'doc_to_images',
     description: 'Render a document (PDF, SVG, or Office docx/xlsx/pptx) to one image per page. PDF needs the optional mupdf package; Office needs local LibreOffice.',
     inputSchema: s({
       properties: {
-        input: { type: 'string' }, outDir: { type: 'string', description: 'directory to write page images into' },
-        format: { type: 'string', description: 'png (default), jpeg, webp, avif' }, dpi: { type: 'number' },
+        input: { type: 'string', description: 'Path to the PDF, SVG or Office document' },
+        outDir: { type: 'string', description: 'Directory to write page images into; created if absent' },
+        format: { type: 'string', description: 'png (default), jpeg, webp, avif' },
+        dpi: { type: 'number', description: 'Render resolution; higher is sharper and slower (default 144)' },
         pages: { type: 'string', description: '1-based page spec, e.g. "1,3-5" (PDF/Office)' },
       },
       required: ['input', 'outDir'],
@@ -118,12 +186,25 @@ const TOOLS = [
   {
     name: 'office_convert',
     description: 'Convert an Office document ⇄ PDF (and between Office formats) via local LibreOffice. Target format is the output file extension.',
-    inputSchema: s({ properties: { input: { type: 'string' }, output: { type: 'string' } }, required: ['input', 'output'] }),
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the source document' },
+        output: { type: 'string', description: 'Destination path; its extension chooses the target format' },
+      },
+      required: ['input', 'output'],
+    }),
   },
   {
     name: 'images_to_pdf',
     description: 'Combine images into one multi-page PDF (one image per page).',
-    inputSchema: s({ properties: { inputs: { type: 'array', items: { type: 'string' } }, output: { type: 'string' }, dpi: { type: 'number' } }, required: ['inputs', 'output'] }),
+    inputSchema: s({
+      properties: {
+        inputs: { type: 'array', items: { type: 'string' }, description: 'Image paths, in the page order you want' },
+        output: { type: 'string', description: 'Destination .pdf path' },
+        dpi: { type: 'number', description: 'Assumed image resolution, which sets the physical page size (default 72)' },
+      },
+      required: ['inputs', 'output'],
+    }),
   },
 ];
 
@@ -239,7 +320,37 @@ async function spill(text: string, hint: string, ext: string): Promise<string> {
   );
 }
 
+/**
+ * Hold a call to the shape its own schema advertises.
+ *
+ * Every tool declares `required`, and nothing checked it. A missing argument
+ * fell through `String(args.input ?? '')` to the empty string and surfaced as
+ * `ENOENT: no such file or directory, open ''` — which tells an agent nothing
+ * about what it did wrong, and reads as a broken server rather than a
+ * malformed call. A model that gets this error retries the same way.
+ *
+ * The check is deliberately shallow: presence and non-emptiness, not types.
+ * The schemas are the contract an agent already saw, so restating them here in
+ * a second, stricter form would mean two places to keep in step.
+ */
+function assertArgs(name: string, args: Record<string, unknown>): void {
+  const tool = TOOLS.find((t) => t.name === name);
+  const required = tool?.inputSchema.required ?? [];
+  const missing = required.filter((k) => {
+    const v = args[k];
+    return v === undefined || v === null || (typeof v === 'string' && v.trim() === '')
+      || (Array.isArray(v) && v.length === 0);
+  });
+  if (missing.length) {
+    throw new Error(
+      `${name} needs ${missing.map((m) => `\`${m}\``).join(' and ')}. `
+      + `Required: ${required.join(', ')}.`,
+    );
+  }
+}
+
 async function callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  assertArgs(name, args);
   const inPath = String(args.input ?? args.reference ?? '');
   switch (name) {
     case 'vectorize': {
@@ -249,7 +360,34 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
         preset: (args.preset as never) ?? 'auto',
         trace: args.colors ? { colors: Number(args.colors) } : undefined,
       });
-      if (args.output) { await writeFile(String(args.output), r.svg); return `Wrote ${args.output} — ${r.mode} mode, ${r.shapes} shapes, ${r.colors} colours, lossless=${r.lossless}.`; }
+
+      // "Measured, not asserted" is this project's whole claim, and an agent
+      // could not reach it: the tool returned an SVG or a one-line summary and
+      // nothing about how close the result actually is. Proving it took a
+      // second `measure` call, which needs the SVG on disk first — so the
+      // headline guarantee cost three round trips and was usually skipped.
+      //
+      // Opt-in rather than automatic, because verifying means rasterising the
+      // output back and comparing every pixel; an agent converting a folder of
+      // icons should not pay for that unasked.
+      if (args.verify) {
+        const rendered = await rasterizeSvg(r.svg, { baseDir: baseDirFor(inPath) });
+        const q = compareImages(src.image, rendered.image);
+        if (args.output) await writeFile(String(args.output), r.svg);
+        return JSON.stringify({
+          output: args.output ?? null,
+          mode: r.mode, shapes: r.shapes, colors: r.colors,
+          width: src.image.width, height: src.image.height,
+          svgBytes: Buffer.byteLength(r.svg, 'utf8'),
+          // `lossless` from the converter is what the mode intended; `verified`
+          // is what the pixels say after a round trip. They should agree, and
+          // reporting both is what makes disagreement visible instead of silent.
+          lossless: r.lossless,
+          verified: { pixelIdentical: q.lossless, ssim: q.ssim, psnr: q.psnr === Infinity ? 'Infinity' : q.psnr, meanDeltaE: +q.deltaE.mean.toFixed(4) },
+        }, null, 2);
+      }
+
+      if (args.output) { await writeFile(String(args.output), r.svg); return `Wrote ${args.output} — ${r.mode} mode, ${r.shapes} shapes, ${r.colors} colours, lossless=${r.lossless}. Pass verify:true to measure the result.`; }
       return r.svg.length > MAX_INLINE_CHARS ? spill(r.svg, inPath, '.svg') : r.svg;
     }
     case 'convert': {
@@ -339,8 +477,34 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       return blurHash(src.image);
     }
     case 'image_info': {
+      // The description promised colour count and a recommended strategy and
+      // returned neither — four fields, none of them the ones an agent asks
+      // this tool for. Deciding between `pixel` (bit-exact) and `trace`
+      // (approximate) is the whole reason to inspect an image first, and the
+      // CLI's `info` has answered it since v1; this is the same measurement,
+      // so the two surfaces cannot drift apart in their advice.
       const { image, meta } = await decodeRaster(await readFile(inPath));
-      return JSON.stringify({ width: image.width, height: image.height, format: meta.format, hasAlpha: meta.hasAlpha }, null, 2);
+      const flat = measureFlatness(image, 4096);
+      const losslessAchievable = !flat.capped && flat.runRatio <= 0.12;
+      return JSON.stringify({
+        width: image.width,
+        height: image.height,
+        format: meta.format,
+        space: meta.space,
+        depth: meta.depth,
+        hasAlpha: meta.hasAlpha,
+        hasProfile: meta.hasProfile,
+        // Counting stops at 4096 — for a photograph the answer is "basically
+        // all of them", and the cap is what makes this cheap on large inputs.
+        distinctColors: flat.capped ? '>4096' : flat.distinctColors,
+        runDensity: +flat.runRatio.toFixed(4),
+        recommendedMode: losslessAchievable ? 'pixel' : 'trace',
+        losslessAchievable,
+        recommendation: losslessAchievable
+          ? 'Flat art: `pixel` mode returns geometry that rasterises back bit-exact.'
+          : 'Photographic or heavily dithered: `trace` gives a measured approximation, '
+            + '`embed` stays exact but wraps the original raster.',
+      }, null, 2);
     }
     case 'doc_to_images': {
       const bytes = new Uint8Array(await readFile(inPath));
