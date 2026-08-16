@@ -190,6 +190,29 @@ export interface TraceOptions {
   groupByColor?: boolean;
   title?: string;
   generator?: string;
+  /**
+   * Called as each stage begins, with a name and a percentage.
+   *
+   * The percentage describes position in the *stage list*, not work completed,
+   * and the names say which stage — because a bar that invents a countdown is
+   * worse than one that names the step. Tracing is a single synchronous call
+   * that cannot be subdivided, so this fires at boundaries and nowhere else.
+   *
+   * It exists so every surface reports the same stages instead of six of them
+   * inventing their own vocabulary, or — as the CLI, the playground and the MCP
+   * server all did — saying nothing at all for several seconds.
+   */
+  onProgress?: (stage: string, pct: number) => void;
+  /**
+   * Abandon the trace at the next stage boundary.
+   *
+   * Checked between stages rather than inside them, for the same reason: the
+   * stages are synchronous. That is enough for the case that matters — a user
+   * dragging a slider supersedes a run that is now pointless, and without this
+   * the superseded work still runs to completion and the new one queues behind
+   * it.
+   */
+  signal?: { readonly aborted: boolean };
 }
 
 export interface TraceOutput {
@@ -265,11 +288,21 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     ...clean,
   };
 
+  // Progress and cancellation share one helper so a stage cannot report itself
+  // without also being a place the caller can bail out. `aborted` is thrown as
+  // a plain Error rather than returning a partial result: half a trace is not a
+  // smaller trace, it is a wrong one.
+  const report = (stage: string, pct: number): void => {
+    if (o.signal?.aborted) throw new Error('Trace aborted.');
+    o.onProgress?.(stage, pct);
+  };
+
   // --- Preprocess before the tracer ever sees the pixels. ---
   //
   // Order matters: blur removes grain first, then threshold (if requested)
   // collapses to two colours. A blur after thresholding would just soften the
   // clean edge the threshold produced.
+  report('Preparing', 2);
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
@@ -285,6 +318,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   const n = width * height;
 
   // --- Quantise colour and alpha independently. ---
+  report('Quantising colour', 10);
   const alphaLevels = quantizeAlpha(img, Math.max(1, o.alphaLevels));
   const palette = quantize(img, o.colors, {
     refineIterations: o.refineIterations,
@@ -331,6 +365,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   }
 
   // --- Segment, optionally removing specks. ---
+  report('Finding regions', 40);
   let comps: ComponentMap = connectedComponents(classes, width, height, -1);
   let despeckled = 0;
 
@@ -351,6 +386,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     }
   }
 
+  report('Tracing contours', 55);
   const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
 
   /**

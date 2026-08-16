@@ -51,6 +51,35 @@
     color: var(--figma-color-text-secondary, #777);
   }
   #status[data-kind="error"] { color: var(--figma-color-text-danger, #d1006f); }
+
+  /*
+   * Busy had no rule at all, so `data-kind="busy"` rendered exactly like idle —
+   * the same colour, weight and size. The only sign anything was happening was
+   * the button greying out.
+   *
+   * A determinate bar would be a lie here: the trace is one synchronous call in
+   * this frame, so there is nothing to sample between stages. An indeterminate
+   * sweep says "working" without inventing a countdown, and the stage name
+   * beside it says which step. Figma's own tokens, so it follows the editor's
+   * light/dark setting rather than guessing.
+   */
+  #status[data-kind="busy"] { color: var(--figma-color-text, #333); }
+  #status[data-kind="busy"]::after {
+    content: ""; display: block; margin: 7px auto 0; width: 120px; height: 2px;
+    border-radius: 2px; background: var(--figma-color-bg-tertiary, #e5e5e5);
+    background-image: linear-gradient(90deg,
+      transparent, var(--figma-color-bg-brand, #0d99ff), transparent);
+    background-size: 50% 100%; background-repeat: no-repeat;
+    animation: sweep 1.05s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    from { background-position: -60% 0; }
+    to   { background-position: 160% 0; }
+  }
+  /* Someone who asked not to see motion should not get a looping gradient. */
+  @media (prefers-reduced-motion: reduce) {
+    #status[data-kind="busy"]::after { animation: none; background-position: 50% 0; }
+  }
   .note {
     margin-top: 14px; padding-top: 12px; font-size: 11px; line-height: 1.5;
     border-top: 1px solid var(--figma-color-border, #eee);
