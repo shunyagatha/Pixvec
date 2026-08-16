@@ -40,6 +40,17 @@
   button.dl:disabled { opacity: .4; cursor: default; }
   .hint { color: var(--muted); font-size: 12px; }
   input[type=checkbox] { accent-color: var(--accent); }
+
+  /* Staged progress. Visible only while a conversion is running, and it names
+     the step rather than animating a number: the percentages say how far
+     through the stage list we are, not how far through the work. */
+  .progress { display: none; align-items: center; gap: 10px; }
+  body[data-busy="1"] .progress { display: flex; }
+  .progress .stage { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 152px; }
+  .progress .track { position: relative; flex: 1 1 auto; height: 4px; border-radius: 99px; background: var(--border); overflow: hidden; }
+  .progress .fill { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); border-radius: 99px; transition: width .2s ease; }
+  .progress .pct { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+  @media (prefers-reduced-motion: reduce) { .progress .fill { transition: none; } }
 </style>
 </head>
 <body>
@@ -103,15 +114,88 @@
       <div class="metric"><div class="k">Shapes</div><div class="v" id="mShapes">—</div></div>
       <div class="metric"><div class="k">Trace time</div><div class="v" id="mTime">—</div></div>
     </div>
+    <div class="progress" id="progress" role="status" aria-live="polite">
+      <span class="stage" id="progStage">Working&#8230;</span>
+      <span class="track" id="progTrack" role="progressbar"
+            aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+            aria-labelledby="progStage"><i class="fill" id="progFill"></i></span>
+      <span class="pct" id="progPct">0%</span>
+    </div>
     <p class="hint">Every number is measured in-browser: the output SVG is rendered back and compared to the source with the same SSIM / PSNR / CIEDE2000 vecline uses internally. Nothing leaves your machine.</p>
   </section>
 </main>
 
 <script type="module">
-import { trace, vectorizeExact, centerlineTrace, compareImages, optimizeSvg } from './vecline-core.js';
-
 const $ = (id) => document.getElementById(id);
 let source = null; // { width, height, data }
+
+/**
+ * The engine runs in a worker, not here.
+ *
+ * On this thread a conversion did not just feel slow, it stopped the page: no
+ * repaint, no scroll, no way to move the control you had just moved. The engine
+ * is imported by ./worker.js instead, and this file keeps only the two jobs a
+ * worker cannot do — decoding a dropped file and rendering an SVG back to
+ * pixels, both of which need an Image and a canvas.
+ */
+let worker = spawn();
+let seq = 0;
+const pending = new Map();
+
+function spawn() {
+  const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  w.onmessage = (e) => {
+    const res = e.data;
+    // Progress is commentary on a request that has not finished, so it must not
+    // settle the promise or clear the slot.
+    if (res.ok && res.kind === 'progress') {
+      if (res.id === seq) setProgress(res.stage, res.pct);
+      return;
+    }
+    const slot = pending.get(res.id);
+    if (!slot) return;
+    pending.delete(res.id);
+    if (res.ok) slot.resolve(res); else slot.reject(new Error(res.error));
+  };
+  return w;
+}
+
+function send(body) {
+  const id = ++seq;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ ...body, id });
+  });
+}
+
+/**
+ * Abandon whatever the worker is doing.
+ *
+ * A worker handles messages serially and the conversion inside it is one
+ * synchronous call, so a superseded run cannot be asked to stop — it holds the
+ * thread and the next request queues behind it. Terminating is the only thing
+ * that frees it. The worker keeps no state between requests, so a replacement
+ * costs one module instantiation.
+ */
+function cancelAll() {
+  for (const slot of pending.values()) slot.reject(new Error('Superseded.'));
+  pending.clear();
+  worker.terminate();
+  worker = spawn();
+}
+
+function setBusy(on) {
+  document.body.dataset.busy = on ? '1' : '0';
+  if (on) setProgress('Working', 0);
+}
+
+function setProgress(stage, pct) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  if (stage) $('progStage').textContent = stage + '…';
+  $('progFill').style.width = clamped + '%';
+  $('progPct').textContent = Math.round(clamped) + '%';
+  $('progTrack').setAttribute('aria-valuenow', String(Math.round(clamped)));
+}
 
 const fmtBytes = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB';
 
@@ -151,50 +235,95 @@ function loadFile(file) {
   img.src = url;
 }
 
-let pending;
-function schedule() { clearTimeout(pending); pending = setTimeout(run, 120); }
+let debounceTimer;
+function schedule() { clearTimeout(debounceTimer); debounceTimer = setTimeout(run, 120); }
+
+/**
+ * Every run takes a ticket.
+ *
+ * Conversions are not uniform in cost, so a slow one can finish after a fast
+ * one that started later. Worse, `source` is module state: this function used
+ * to read it again *after* awaiting the render, so dropping a second image
+ * mid-run scored the new source against the old render — either printing
+ * numbers for a pairing that never existed, or throwing on the size mismatch
+ * and showing "n/a". Both look like the engine got it wrong.
+ *
+ * The ticket fixes the correctness half: nothing paints unless it is still the
+ * newest run. Terminating the worker fixes the latency half.
+ */
+let runSeq = 0;
 
 async function run() {
   if (!source) return;
+  const token = ++runSeq;
+
+  // Free the thread before asking for more work, or this run queues behind one
+  // the user has already moved past.
+  if (document.body.dataset.busy === '1') cancelAll();
+
   const mode = $('mode').value;
   document.querySelectorAll('[data-trace]').forEach((el) => el.style.display = mode === 'trace' || mode === 'auto' ? '' : 'none');
-  let svg, shapes = 0;
-  const t0 = performance.now();
+
+  // Pinned now, so the rest of this function cannot be handed a different image
+  // by a `loadFile` that lands while it is awaiting.
+  const image = source;
+
+  setBusy(true);
   try {
-    if (mode === 'centerline') {
-      const r = centerlineTrace(source, {}); svg = r.svg; shapes = r.paths;
-    } else if (mode === 'pixel') {
-      const r = vectorizeExact(source); svg = r.svg; shapes = r.shapes;
-    } else {
-      const r = trace(source, { colors: +$('colors').value, tolerance: +$('tol').value, fitError: +$('tol').value, gradients: $('gradients').checked, primitives: $('primitives').checked });
-      svg = r.svg; shapes = r.shapes;
+    const out = await send({
+      kind: 'convert',
+      image,
+      settings: {
+        mode,
+        colors: +$('colors').value,
+        tolerance: +$('tol').value,
+        gradients: $('gradients').checked,
+        primitives: $('primitives').checked,
+        minify: $('minify').checked,
+      },
+    });
+    if (token !== runSeq) return;
+
+    const svg = out.svg;
+    const bytes = fmtBytes(new Blob([svg]).size);
+    $('outView').innerHTML = svg;
+    $('outSize').textContent = bytes;
+    $('mSize').textContent = bytes;
+    $('mShapes').textContent = out.shapes;
+    $('mTime').textContent = out.ms.toFixed(0) + ' ms';
+    $('download').disabled = false;
+    $('download').onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+      a.download = 'vecline.svg'; a.click();
+    };
+
+    // Measured quality: render the SVG back and compare to the source it was
+    // actually made from. The render needs a canvas so it happens here; the
+    // comparison is the expensive half and goes back to the worker.
+    setProgress('Scoring the result', 88);
+    try {
+      const rendered = await renderSvgToRaster(svg, image.width, image.height);
+      if (token !== runSeq) return;
+      const q = await send({ kind: 'measure', a: image, b: rendered });
+      if (token !== runSeq) return;
+      $('mSsim').textContent = q.ssim.toFixed(4);
+      $('mSsim').className = 'v' + (q.ssim > 0.95 ? ' good' : '');
+      $('mPsnr').textContent = q.psnr === Infinity ? '∞' : q.psnr.toFixed(1) + ' dB';
+      $('mPsnr').className = 'v' + (q.psnr === Infinity ? ' good' : '');
+      $('mDe').textContent = q.deltaE.toFixed(2);
+    } catch (e) {
+      if (e.message === 'Superseded.' || token !== runSeq) return;
+      $('mSsim').textContent = $('mPsnr').textContent = $('mDe').textContent = 'n/a';
     }
-  } catch (e) { $('outView').innerHTML = '<span class="hint">' + e.message + '</span>'; return; }
-  const ms = performance.now() - t0;
-  if ($('minify').checked) svg = optimizeSvg(svg);
-
-  $('outView').innerHTML = svg;
-  $('outSize').textContent = fmtBytes(new Blob([svg]).size);
-  $('mSize').textContent = fmtBytes(new Blob([svg]).size);
-  $('mShapes').textContent = shapes;
-  $('mTime').textContent = ms.toFixed(0) + ' ms';
-  $('download').disabled = false;
-  $('download').onclick = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-    a.download = 'vecline.svg'; a.click();
-  };
-
-  // Measured quality: render the SVG back and compare to the source.
-  try {
-    const rendered = await renderSvgToRaster(svg, source.width, source.height);
-    const q = compareImages(source, rendered);
-    const ssim = q.ssim.toFixed(4);
-    $('mSsim').textContent = ssim; $('mSsim').className = 'v' + (q.ssim > 0.95 ? ' good' : '');
-    $('mPsnr').textContent = q.psnr === Infinity ? '∞' : q.psnr.toFixed(1) + ' dB';
-    $('mPsnr').className = 'v' + (q.psnr === Infinity ? ' good' : '');
-    $('mDe').textContent = q.deltaE.mean.toFixed(2);
-  } catch { $('mSsim').textContent = $('mPsnr').textContent = $('mDe').textContent = 'n/a'; }
+    setProgress('Done', 100);
+  } catch (e) {
+    // A run we abandoned on purpose is not a failure worth reporting.
+    if (e.message === 'Superseded.' || token !== runSeq) return;
+    $('outView').innerHTML = '<span class="hint">' + e.message + '</span>';
+  } finally {
+    if (token === runSeq) setBusy(false);
+  }
 }
 
 // Wire controls.
