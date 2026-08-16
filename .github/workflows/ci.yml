@@ -81,6 +81,33 @@ jobs:
             exit 1
           }
 
+  # The accuracy table is the project's central claim, and it has been wrong
+  # twice — both corrections are recorded in the README itself, and the v1.38.1
+  # note says plainly that the earlier claim was false. Both were caught because
+  # a person decided to re-run the harness; nothing forced it.
+  #
+  # This compares the published rows against a fresh measurement rather than
+  # against a committed snapshot. A snapshot would let the README and the
+  # numbers drift together while the check stayed green.
+  readme-numbers:
+    name: README numbers still reproduce
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the engine
+        run: npm run build
+
+      - name: Re-measure and compare
+        run: npm run check:readme
+
   # The plugin's dist/ is gitignored, so the sandbox tests skip in the matrix
   # above rather than failing every contributor who has not built an extension
   # they are not touching. This job is what stops that skip becoming a place for
