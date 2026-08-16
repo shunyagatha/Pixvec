@@ -1,4 +1,4 @@
-import { SvgDoc, fillAttrs } from '../svg/build.js';
+import { SvgDoc, fillAttrs, strokeAttrs } from '../svg/build.js';
 import { shortHex } from '../color.js';
 import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
@@ -437,9 +437,9 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
 
   // A same-colour stroke of a pixel or so overpaints the hairline seam that can
   // appear between two abutting regions when a renderer antialiases their shared
-  // edge. Emitted per path in the path's own fill colour.
-  const strokeFor = (svgColor: string): string =>
-    o.strokeWidth > 0 ? ` stroke="${svgColor}" stroke-width="${o.strokeWidth}"` : '';
+  // edge. Emitted per path in the path's own fill colour — and at the path's own
+  // alpha, since `fill-opacity` does not apply to strokes.
+  const strokeFor = (c: Rgba): string => strokeAttrs(c, o.strokeWidth);
 
   let regions = 0;
 
@@ -512,7 +512,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       label = paint.ref.replace(/^url\(#/, '').replace(/\)$/, '');
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
-      const stroke = strokeFor(shortHex(color.r, color.g, color.b));
+      const stroke = strokeFor(color);
       const attrs = `${fillAttrs(color)}${stroke}`;
       // Recognised loops become true shapes; whatever is left of the class stays
       // one shared evenodd path, exactly as before.
