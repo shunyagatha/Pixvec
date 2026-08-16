@@ -64,6 +64,27 @@ jobs:
       - name: Extensions track the released engine
         run: node scripts/sync-extension-versions.mjs --check
 
+      # The extension depends on the PUBLISHED engine, so packaging cannot start
+      # until npm serves the version this tag names. Pushing the tag and running
+      # `npm publish` are separate steps by hand, and the tag wins the race: all
+      # eight jobs failed with "No matching version found for vecline@^1.46.0"
+      # seconds before the package appeared. publish-registry.yml already waits
+      # for exactly this reason; this job needed the same patience.
+      - name: Wait for npm to serve this version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            if npm view "vecline@$tag" version >/dev/null 2>&1; then
+              echo "vecline@$tag is live on npm"
+              exit 0
+            fi
+            echo "waiting for vecline@$tag on npm ($i/30)"
+            sleep 10
+          done
+          echo "::error::vecline@$tag never appeared on npm"
+          exit 1
+
       # `npm ci` honours --os/--cpu/--libc against the committed lockfile, which
       # already contains every platform variant, so this selects a different
       # subset of the same resolved tree rather than re-resolving it.
