@@ -103,11 +103,19 @@ console.log(`verifying ${file} for ${target}`);
 
 // --- structure ---
 const has = (p) => names.some((n) => n === p);
-for (const required of ['extension/out/extension.js', 'extension/package.json', 'extension/LICENSE']) {
+for (const required of ['extension/out/extension.js', 'extension/package.json']) {
   const ok = has(required);
   note(ok, required);
   if (!ok) failures.push(`missing ${required}`);
 }
+
+// vsce normalises the licence filename on the way in: a repo file called
+// LICENSE arrives as extension/LICENSE.txt. Asserting the repo's name here
+// failed a package that was actually correct, so accept the names vsce emits.
+const LICENCE_NAMES = ['extension/LICENSE.txt', 'extension/LICENSE', 'extension/LICENSE.md'];
+const licence = LICENCE_NAMES.find((n) => has(n));
+note(!!licence, `licence (${licence ?? LICENCE_NAMES.join(' | ')})`);
+if (!licence) failures.push('no licence file in the package');
 
 // --- the engine, at the right version ---
 const enginePkg = 'extension/node_modules/vecline/package.json';
