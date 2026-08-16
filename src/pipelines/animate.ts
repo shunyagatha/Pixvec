@@ -14,12 +14,18 @@ import type { RasterImage, Rgba } from '../types.js';
 import { trace, type TraceOptions } from '../vectorize/trace.js';
 import { quantize } from '../vectorize/quantize.js';
 import { framesToAnimatedSvg, type AnimateOptions } from '../emit/animate.js';
+import { DEFAULT_MAX_INPUT_PIXELS } from '../io/decode.js';
 
 export interface TraceAnimationOptions extends AnimateOptions {
   /** Tracing options applied to every frame. */
   trace?: TraceOptions;
   /** Cap the number of frames (sampled evenly) to bound output size. */
   maxFrames?: number;
+  /**
+   * Guard against decompression bombs, as {@link DEFAULT_MAX_INPUT_PIXELS}.
+   * Counts every frame, since libvips decodes the pages into one strip.
+   */
+  limitInputPixels?: number | false;
 }
 
 export interface AnimationResult {
@@ -39,7 +45,14 @@ export async function traceAnimation(
   bytes: Uint8Array,
   opts: TraceAnimationOptions = {},
 ): Promise<AnimationResult> {
-  const img = sharp(Buffer.from(bytes), { animated: true, unlimited: true });
+  // An animated source multiplies the risk rather than reducing it: libvips
+  // reports `pageHeight` per frame but decodes every page into one strip, so
+  // the pixel budget covers width x pageHeight x pages. Left unguarded, a small
+  // GIF declaring a large canvas and many frames allocates the product.
+  const img = sharp(Buffer.from(bytes), {
+    animated: true,
+    limitInputPixels: opts.limitInputPixels ?? DEFAULT_MAX_INPUT_PIXELS,
+  });
   const meta = await img.metadata();
   const width = meta.width ?? 0;
   const pages = meta.pages ?? 1;
