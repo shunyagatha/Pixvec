@@ -1,0 +1,74 @@
+name: Publish VS Code extension
+
+# Runs on the same `v*` tag that releases the engine, so the extension is
+# republished with the version it was tested against rather than drifting behind
+# npm. The extension bundles `node_modules/vecline` into its .vsix, so a user's
+# copy only picks up a new engine when the extension itself is republished —
+# there is no dependency refresh on the Marketplace side.
+#
+# Needs a VSCE_PAT secret: an Azure DevOps personal access token with
+# Marketplace → Manage, scoped to "All accessible organizations". Without it the
+# job reports what it would have done and stops, so a release is never blocked
+# by a missing token.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Package and publish to the Marketplace
+    runs-on: ubuntu-latest
+    # Lifted to job level deliberately: the `secrets` context is NOT available in
+    # a step's `if:`, only `env` is, so testing the secret directly there would
+    # silently evaluate to empty and skip publishing on every run.
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # The .vsix bundles whatever `vecline` resolves to, so the engine must be
+      # built and the extension's dependency must match this tag.
+      - name: Build the engine
+        run: npm run build
+
+      - name: Extensions track the released engine
+        run: node scripts/sync-extension-versions.mjs --check
+
+      - name: Install extension dependencies
+        working-directory: extensions/vscode
+        run: npm install --no-audit --no-fund
+
+      - name: Compile
+        working-directory: extensions/vscode
+        run: npm run compile
+
+      - name: Package
+        working-directory: extensions/vscode
+        run: npx --yes @vscode/vsce package --out vecline-vscode.vsix
+
+      # Uploaded either way, so a tag always produces an installable artefact
+      # even when publishing is skipped.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vecline-vscode-vsix
+          path: extensions/vscode/vecline-vscode.vsix
+
+      - name: Publish
+        if: ${{ env.VSCE_PAT != '' }}
+        working-directory: extensions/vscode
+        run: npx --yes @vscode/vsce publish --packagePath vecline-vscode.vsix
+
+      - name: Explain the skip
+        if: ${{ env.VSCE_PAT == '' }}
+        run: |
+          echo "VSCE_PAT is not set, so nothing was published."
+          echo "The packaged .vsix is attached to this run and can be uploaded by hand"
+          echo "at https://marketplace.visualstudio.com/manage/publishers/shunyagatha"

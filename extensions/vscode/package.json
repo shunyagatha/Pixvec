@@ -5,19 +5,44 @@
   "version": "0.1.0",
   "publisher": "shunyagatha",
   "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other", "Formatters"],
-  "keywords": ["svg", "vector", "vectorize", "png to svg", "trace", "icon"],
-  "repository": { "type": "git", "url": "https://github.com/shunyagatha/Vecline", "directory": "extensions/vscode" },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Formatters"
+  ],
+  "keywords": [
+    "svg",
+    "vector",
+    "vectorize",
+    "png to svg",
+    "trace",
+    "icon"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shunyagatha/Vecline",
+    "directory": "extensions/vscode"
+  },
   "homepage": "https://vecline.xyz",
   "icon": "icon.png",
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "vecline.vectorize", "title": "Vecline: Convert to SVG" },
-      { "command": "vecline.component", "title": "Vecline: Convert to Component" },
-      { "command": "vecline.lossless", "title": "Vecline: Convert to SVG (lossless, or fail)" }
+      {
+        "command": "vecline.vectorize",
+        "title": "Vecline: Convert to SVG"
+      },
+      {
+        "command": "vecline.component",
+        "title": "Vecline: Convert to Component"
+      },
+      {
+        "command": "vecline.lossless",
+        "title": "Vecline: Convert to SVG (lossless, or fail)"
+      }
     ],
     "menus": {
       "explorer/context": [
@@ -43,13 +68,26 @@
       "properties": {
         "vecline.preset": {
           "type": "string",
-          "enum": ["auto", "logo", "lineart", "poster", "photo", "detailed", "pixelart"],
+          "enum": [
+            "auto",
+            "logo",
+            "lineart",
+            "poster",
+            "photo",
+            "detailed",
+            "pixelart"
+          ],
           "default": "auto",
           "description": "Tracing preset. `auto` inspects the image and picks."
         },
         "vecline.framework": {
           "type": "string",
-          "enum": ["react", "vue", "svelte", "solid"],
+          "enum": [
+            "react",
+            "vue",
+            "svelte",
+            "solid"
+          ],
           "default": "react",
           "description": "Target framework for 'Convert to Component'."
         },
@@ -72,7 +110,7 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "vecline": "^1.44.0"
+    "vecline": "^1.45.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

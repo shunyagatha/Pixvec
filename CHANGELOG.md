@@ -4,6 +4,10 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v1.45.0](https://github.com/shunyagatha/Vecline/releases/tag/v1.45.0)
+
+Centreline, corrected at the root. Zhang–Suen thinning erased a two-pixel-wide diagonal from both ends, so a filled diagonal shape thinned to a 2px stub the length filter then dropped — an empty result for any rotated stroke; Guo–Hall, whose connectivity test is over neighbour pairs, keeps it. Binarisation now takes alpha as the shape when the image carries transparency or its opaque pixels are one luminance population — a design-tool export is ink on nothing, and a luminance split there traced to nothing. And it compares `round(luma)` against the Otsu cutoff it was binned from, not the raw float, which had silently dropped about half of all flat fill colours (e.g. `#334155` at 63.47 against a cutoff of 63). `CenterlineOutput` gains `length` and `inkPixels` so a caller can tell a stroke from a filled blob.
+
 ## [v1.44.1](https://github.com/shunyagatha/Vecline/releases/tag/v1.44.1)
 
 MCP setup for Codex and VS Code, and a correction: the old text said Cursor, Windsurf and Continue share the Claude Desktop config shape — true — but VS Code does not. Its `.vscode/mcp.json` keys the map as `servers`, not `mcpServers`, so following that line in VS Code produced a file the editor ignores. Codex takes TOML and was not mentioned at all. Three blocks now, one per shape that exists, plus the CLI one-liners. The registry listing carries the Vecline mark.

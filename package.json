@@ -1,6 +1,6 @@
 {
   "name": "vecline",
-  "version": "1.44.1",
+  "version": "1.45.0",
   "mcpName": "io.github.shunyagatha/vecline",
   "description": "The measurable image + document toolkit for JavaScript. On flat art -- logos, icons, UI, screenshots, pixel art -- the SVG is bit-exact: SSIM 1.0000, zero differing pixels, verified by rendering it back. On photographs it leads potrace, imagetracerjs and vtracer on SSIM, and says how close it landed instead of claiming perfection. Converts any of 11 raster formats to any other, writes cut-ready DXF that declares its own physical size, plus EPS, PDF and G-code for lasers, plotters and CNC. Renders PDF and Office (docx/xlsx/pptx), images-to-PDF, centerline tracing, gradients, content-aware crop and image editing. Zero-dependency portable core, an MCP server for AI agents, and a local bridge (vecline serve) so a browser can drive your LibreOffice without uploading anything.",
   "keywords": [

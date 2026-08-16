@@ -40,3 +40,10 @@ jobs:
           node dist/esm/cli.js --version
           node dist/esm/cli.js --help > /dev/null
           node scripts/smoke.mjs
+
+      # The extensions embed the engine at packaging time, so a version drift
+      # here means their users keep an older tracer than the one released — the
+      # way the Figma plugin once bundled a published engine while this repo's
+      # fixes sat unused. Fail the build rather than let that ship again.
+      - name: Extensions track the released engine
+        run: node scripts/sync-extension-versions.mjs --check
