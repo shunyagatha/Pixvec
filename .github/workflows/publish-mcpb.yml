@@ -1,0 +1,76 @@
+name: Attach MCPB bundle to the release
+
+# The README tells Claude Desktop users to one-click install from
+# releases/latest/download/vecline.mcpb. That asset was uploaded by hand, and
+# the hand stopped after v1.40.1 — so the link has 404'd for every release
+# since, on the most prominent install path in the document.
+#
+# Building it in CI is the only version of this that stays true: the asset is
+# produced from the tag it belongs to, and a release cannot quietly ship without
+# it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Pack and attach vecline.mcpb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the engine
+        run: npm run build
+
+      # The bundle carries the version in three places. This is the check that
+      # stops it launching an engine it was never tested against.
+      - name: Versions are in sync
+        run: node scripts/sync-extension-versions.mjs --check
+
+      - name: Pack
+        run: npm run mcpb
+
+      - name: Show what was packed
+        run: ls -lh vecline.mcpb
+
+      # Always keep a copy on the run, so a failed upload never means a lost
+      # artefact.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vecline-mcpb
+          path: vecline.mcpb
+          if-no-files-found: error
+
+      # The release is usually created by hand shortly after the tag is pushed,
+      # so the asset upload has to tolerate the release not existing yet rather
+      # than failing the run and leaving the link broken again.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" vecline.mcpb --clobber
+              echo "attached vecline.mcpb to $TAG"
+              exit 0
+            fi
+            echo "release $TAG does not exist yet (attempt $attempt); waiting 30s"
+            sleep 30
+          done
+          echo "::error::release $TAG was never created, so vecline.mcpb could not be attached."
+          echo "Download it from this run's artifacts and upload it with:"
+          echo "  gh release upload $TAG vecline.mcpb --clobber"
+          exit 1

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import sharp from 'sharp';
+// sharp 0.35 replaced its `sharp.*` type namespace with named exports.
+import sharp, { type Sharp } from 'sharp';
 import { SvgDoc, escapeAttr } from '../svg/build.js';
 import { fromBase64, toBase64 } from '../io/formats/bytes.js';
 import type { RasterImage, SourceMeta } from '../types.js';
@@ -242,7 +243,7 @@ export function extractEmbedded(svg: string): ExtractedPayload | null {
   };
 }
 
-function rawPipeline(img: RasterImage): sharp.Sharp {
+function rawPipeline(img: RasterImage): Sharp {
   return sharp(Buffer.from(img.data.buffer, img.data.byteOffset, img.data.byteLength), {
     raw: { width: img.width, height: img.height, channels: 4 },
   });

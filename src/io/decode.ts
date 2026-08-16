@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import sharp from 'sharp';
+// sharp 0.35 replaced its `sharp.*` type namespace with named exports, so the
+// types are imported explicitly rather than reached through the default.
+import sharp, { type Metadata } from 'sharp';
 import type { RasterImage, SourceMeta } from '../types.js';
 import { decodeFallback, decodeTgaFallback, type FallbackResult } from './formats/index.js';
 import { findDecoder, registeredFormats, type CustomDecoder } from '../codecs.js';
@@ -81,7 +83,7 @@ export async function decodeRaster(
 
   const base = () => sharp(asBuffer(bytes), { limitInputPixels, unlimited: true, animated: false });
 
-  let raw: sharp.Metadata;
+  let raw: Metadata;
   try {
     raw = await base().metadata();
   } catch (err) {

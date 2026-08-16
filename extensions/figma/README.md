@@ -16,9 +16,13 @@ immediate. Your original is never modified.
 and flat artwork. **Centreline** is a different operation, not a flag on the same
 one: it binarises, thins the ink to a one-pixel skeleton and emits open stroked
 polylines, which is what you want for a line drawing, a signature or a scanned
-sketch. Adaptive thresholding is on for it, because the images people centreline
-usually are photographs of paper, where one cutoff for the whole frame loses the
-shadowed corner.
+sketch. It thresholds against one cutoff for the whole frame, which is what a
+design tool's mostly-flat artwork wants. Adaptive (Bradley–Roth) thresholding is
+a checkbox — **Uneven lighting** — for the photograph-of-paper case, where a
+shadow across the page defeats a single cutoff. It is off by default because
+turning it on by default was measured to be wrong: on a Figma frame of flat
+shapes it skeletonised the background, with 56.3% of the skeleton's vertices
+landing on empty canvas against 100% on-ink with a global cutoff.
 
 **Pixel-exact** reconstructs the image as real vector regions, *bit for bit* —
 and if it cannot, it refuses rather than approximating. On a placed logo or icon
