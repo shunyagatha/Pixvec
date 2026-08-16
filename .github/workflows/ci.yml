@@ -47,3 +47,35 @@ jobs:
       # fixes sat unused. Fail the build rather than let that ship again.
       - name: Extensions track the released engine
         run: node scripts/sync-extension-versions.mjs --check
+
+  # The plugin's dist/ is gitignored, so the sandbox tests skip in the matrix
+  # above rather than failing every contributor who has not built an extension
+  # they are not touching. This job is what stops that skip becoming a place for
+  # bugs to hide: it builds the real bundle and runs the tests against it. One
+  # platform is enough — the bundle is plain JS with no native parts.
+  figma-plugin:
+    name: Figma plugin bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # build.mjs aliases vecline/core to ../../dist, so the engine must exist
+      # before the plugin can bundle it.
+      - name: Build the engine
+        run: npm run build
+
+      - name: Build the plugin
+        working-directory: extensions/figma
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Test the built bundle
+        run: npx vitest run test/figma-sandbox.test.ts test/figma-placement.test.ts test/figma-exact-mode.test.ts
