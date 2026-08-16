@@ -197,7 +197,8 @@
     "diagnose": "node scripts/diagnose-photo.mjs",
     "playground": "node scripts/build-playground.mjs",
     "figma:art": "node scripts/build-figma-art-trace.mjs && node scripts/build-figma-art-sweep.mjs && node scripts/build-figma-art.mjs && node scripts/build-figma-carousel.mjs",
-    "mcpb": "npx -y @anthropic-ai/mcpb pack mcpb vecline.mcpb"
+    "mcpb": "npx -y @anthropic-ai/mcpb pack mcpb vecline.mcpb",
+    "check:readme": "node scripts/check-readme-bench.mjs"
   },
   "dependencies": {
     "commander": "^12.1.0",

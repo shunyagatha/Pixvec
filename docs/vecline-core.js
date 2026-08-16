@@ -6000,6 +6000,24 @@ function toEps(geometry, opts = {}) {
 }
 
 // src/io/export/pdf.ts
+var KAPPA = 0.5522847498307936;
+function circleOps(prim, fy) {
+  const { cx, cy, r } = prim;
+  const k = r * KAPPA;
+  const x = (v) => n(v);
+  const y = (v) => n(fy(v));
+  return [
+    `${x(cx + r)} ${y(cy)} m`,
+    `${x(cx + r)} ${y(cy + k)} ${x(cx + k)} ${y(cy + r)} ${x(cx)} ${y(cy + r)} c`,
+    `${x(cx - k)} ${y(cy + r)} ${x(cx - r)} ${y(cy + k)} ${x(cx - r)} ${y(cy)} c`,
+    `${x(cx - r)} ${y(cy - k)} ${x(cx - k)} ${y(cy - r)} ${x(cx)} ${y(cy - r)} c`,
+    `${x(cx + k)} ${y(cy - r)} ${x(cx + r)} ${y(cy - k)} ${x(cx + r)} ${y(cy)} c`,
+    "h"
+  ];
+}
+function shorter(a, b) {
+  return b.join("\n").length < a.join("\n").length ? b : a;
+}
 function toPdf(geometry, opts = {}) {
   const w = Math.ceil(geometry.width);
   const h = Math.ceil(geometry.height);
@@ -6008,13 +6026,16 @@ function toPdf(geometry, opts = {}) {
   for (const path of geometry.paths) {
     const { r, g, b } = path.color;
     ops.push(opts.cmyk ? `${rgbToCmyk(r, g, b).map((v) => n(v)).join(" ")} k` : `${n(r / 255)} ${n(g / 255)} ${n(b / 255)} rg`);
-    for (const sub of path.subpaths) {
-      ops.push(`${n(sub.start.x)} ${n(fy(sub.start.y))} m`);
+    path.subpaths.forEach((sub, i) => {
+      const flattened = [`${n(sub.start.x)} ${n(fy(sub.start.y))} m`];
       for (const seg of sub.segments) {
-        ops.push(seg.kind === "line" ? `${n(seg.x)} ${n(fy(seg.y))} l` : `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} c`);
+        flattened.push(seg.kind === "line" ? `${n(seg.x)} ${n(fy(seg.y))} l` : `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} c`);
       }
-      ops.push("h");
-    }
+      flattened.push("h");
+      const prim = path.primitives?.[i];
+      const chosen = prim?.kind === "circle" ? shorter(flattened, circleOps(prim, fy)) : flattened;
+      ops.push(...chosen);
+    });
     ops.push("f*");
   }
   const content = ops.join("\n");
