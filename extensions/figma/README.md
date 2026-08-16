@@ -10,7 +10,7 @@ Vecline → 4.1 KB · SSIM 0.9825 · PSNR 33.8 dB · 428 ms
 The result is placed **beside** your layer, never over it, so the comparison is
 immediate. Your original is never modified.
 
-## Two modes
+## Three modes
 
 **Trace** turns colour regions into filled contours — the mode for logos, icons
 and flat artwork. **Centreline** is a different operation, not a flag on the same
@@ -20,8 +20,20 @@ sketch. Adaptive thresholding is on for it, because the images people centreline
 usually are photographs of paper, where one cutoff for the whole frame loses the
 shadowed corner.
 
-The colours and gradients controls belong to Trace and are dimmed under
-Centreline, which binarises and has no palette to speak of.
+**Pixel-exact** reconstructs the image as real vector regions, *bit for bit* —
+and if it cannot, it refuses rather than approximating. On a placed logo or icon
+that is a guarantee Trace only gets close to: the render-back is verified
+pixel-identical before anything is inserted, so a success is `Lossless ✓`, not a
+high SSIM. It is for flat artwork with a countable number of colours. A
+photograph or a soft gradient would need tens of thousands of rectangles and
+several megabytes to be exact, so the mode declines and tells you the numbers,
+pointing you at Trace — which handles the same photo in a few hundred shapes.
+Measured: a flat logo is ~200 shapes at ~150 KB; a photo is ~70,000 at 5–20 MB,
+which is where it draws the line.
+
+Each mode dims the controls it ignores: colours and gradients belong to Trace;
+the uneven-lighting toggle to Centreline; Pixel-exact takes no parameters,
+because it reconstructs every pixel.
 
 ## Why the numbers
 

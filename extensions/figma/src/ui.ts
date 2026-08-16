@@ -12,7 +12,7 @@
  * saying how close the vector actually is to the pixels it came from.
  */
 
-import { trace, centerlineTrace, compareImages, type RasterImage } from 'vecline/core';
+import { trace, centerlineTrace, vectorizeExact, compareImages, type RasterImage } from 'vecline/core';
 
 /**
  * The two things the Mode control chooses between.
@@ -25,7 +25,7 @@ import { trace, centerlineTrace, compareImages, type RasterImage } from 'vecline
  * hid it. Without them TypeScript rejects the object outright, which is why
  * they are gone and the types below are the real ones from the engine.
  */
-type Mode = 'trace' | 'centerline';
+type Mode = 'trace' | 'centerline' | 'exact';
 
 /**
  * Douglas–Peucker tolerance for the skeleton, in pixels. The engine's default
@@ -82,8 +82,28 @@ function inkIsDark(image: RasterImage): boolean {
   return dark <= light;
 }
 
-/** The SVG, its stroke count, and an optional advisory about the input. */
-interface Traced { svg: string; strokes: number; note?: string }
+/**
+ * The result of one vectorize call.
+ *
+ * `refuse` is set when the chosen mode cannot honestly serve this image — the
+ * pixel-exact mode on a photograph, where a bit-exact vector would be tens of
+ * thousands of rectangles and several megabytes. Rather than drop that into the
+ * document, the plugin declines and says why. `requireExact` asks run() to
+ * insert only if the render-back is bit-identical, never a near-miss.
+ */
+interface Traced { svg: string; strokes: number; note?: string; refuse?: string; requireExact?: boolean }
+
+/**
+ * Ceilings above which a pixel-exact vector stops being worth having in Figma.
+ *
+ * Measured: a flat logo is ~200 shapes and ~150 KB and imports cleanly; a
+ * photograph or a soft-gradient-heavy image is 70,000–100,000 shapes and 5–23
+ * MB, which chokes the canvas and is not "vectors" in any useful sense. These
+ * cut cleanly between the two. Past them the mode refuses and points at Trace,
+ * which handles the same photo in a few hundred shapes.
+ */
+const EXACT_MAX_SHAPES = 8000;
+const EXACT_MAX_BYTES = 2_000_000;
 
 /**
  * A centreline is the medial axis, and a solid filled shape does not have one —
@@ -131,6 +151,24 @@ function vectorize(
       : undefined;
     return { svg: out.svg, strokes: out.paths, note };
   }
+
+  if (mode === 'exact') {
+    // Pixel-exact: reconstruct the image as real vector regions, bit for bit,
+    // or decline. Cheap to generate, so the size gate is on the RESULT — a flat
+    // logo is a couple of hundred shapes, a photograph is a hundred thousand.
+    // run() then renders the SVG back and inserts it only if it is bit-identical,
+    // which is what makes "lossless" a guarantee rather than a hope.
+    const out = vectorizeExact(image);
+    if (out.shapes > EXACT_MAX_SHAPES || out.svg.length > EXACT_MAX_BYTES) {
+      const mb = (out.svg.length / 1_048_576).toFixed(1);
+      return {
+        svg: '', strokes: 0,
+        refuse: `Too many colours to make pixel-exact vectors — that would be ${out.shapes.toLocaleString()} shapes, ${mb} MB. This is a photograph or gradient; use Trace.`,
+      };
+    }
+    return { svg: out.svg, strokes: out.shapes, requireExact: true };
+  }
+
   const svg = trace(image, { colors, gradients }).svg;
   return { svg, strokes: (svg.match(/<path|<rect|<circle|<ellipse|<polygon/g) ?? []).length };
 }
@@ -149,11 +187,13 @@ let pending: { bytes: Uint8Array; name: string; id: string } | null = null;
  * something, which is the same failure the dead Mode control was.
  */
 function syncControls(): void {
-  const centreline = mode() === 'centerline';
+  const m = mode();
+  // Pixel-exact is parameter-free: it reconstructs every pixel, so a colour
+  // count, gradient reconstruction and a lighting model all mean nothing to it.
   const applies: [string, boolean][] = [
-    ['colors', centreline],       // trace's palette; centreline binarises
-    ['gradients', centreline],    // likewise
-    ['uneven', !centreline],      // thresholding, so centreline only
+    ['colors', m !== 'trace'],                 // trace's palette only
+    ['gradients', m !== 'trace'],              // trace's, likewise
+    ['uneven', m !== 'centerline'],            // thresholding, so centreline only
   ];
   for (const [id, off] of applies) {
     ($(id) as HTMLInputElement).disabled = off;
@@ -229,11 +269,20 @@ async function run(): Promise<void> {
     const started = performance.now();
     const image = await decode(pending.bytes);
 
-    setStatus(mode() === 'centerline' ? 'Thinning…' : 'Tracing…', 'busy');
+    const m = mode();
+    setStatus(m === 'centerline' ? 'Thinning…' : m === 'exact' ? 'Reconstructing…' : 'Tracing…', 'busy');
     const colors = Number(($('colors') as HTMLInputElement).value);
     const gradients = ($('gradients') as HTMLInputElement).checked;
     const uneven = ($('uneven') as HTMLInputElement).checked;
-    const { svg, strokes, note } = vectorize(image, mode(), colors, gradients, uneven);
+    const { svg, strokes, note, refuse, requireExact } = vectorize(image, m, colors, gradients, uneven);
+
+    // Pixel-exact declined because the image is too complex to be lossless
+    // vectors worth having. Say why, insert nothing.
+    if (refuse) {
+      setStatus(refuse, 'error');
+      parent.postMessage({ pluginMessage: { type: 'failed', message: refuse } }, '*');
+      return;
+    }
 
     // A result with no geometry is a failure, not a success worth scoring. It
     // used to be reported as a triumph: an empty centreline trace of a
@@ -256,6 +305,23 @@ async function run(): Promise<void> {
     const rendered = await rasterize(svg, image.width, image.height);
     const q = rendered ? compareImages(image, rendered) : null;
 
+    // "Lossless, or fail." Pixel-exact promises bit-identical, so it is held to
+    // that: only a render-back with zero error (PSNR infinite) is inserted. A
+    // near-miss is refused rather than passed off as exact — the whole point of
+    // the mode is the guarantee. A render that could not be scored at all is
+    // also a fail here, where it is merely "not measured" for the other modes.
+    if (requireExact) {
+      const exact = q !== null && !isFinite(q.psnr);
+      if (!exact) {
+        const why = q === null
+          ? 'could not verify the result, so cannot promise it is lossless'
+          : 'the reconstruction was not bit-identical';
+        setStatus(`Not lossless — ${why}.`, 'error');
+        parent.postMessage({ pluginMessage: { type: 'failed', message: `pixel-exact failed: ${why}` } }, '*');
+        return;
+      }
+    }
+
     parent.postMessage({
       pluginMessage: {
         type: 'traced',
@@ -271,9 +337,12 @@ async function run(): Promise<void> {
         note,
       },
     }, '*');
-    // The advisory, if any, is what a designer needs to see — lead with it.
-    // Otherwise the measured score, which is the point of the plugin.
-    setStatus(note ?? (q ? `Done · SSIM ${q.ssim.toFixed(4)}` : 'Done · not measured'), note ? 'idle' : 'idle');
+    // Lead with the advisory when there is one; otherwise the measured score,
+    // which for pixel-exact is a bit-exact badge rather than a fraction.
+    const done = requireExact
+      ? `Lossless ✓ · bit-exact · ${strokes.toLocaleString()} shapes`
+      : q ? `Done · SSIM ${q.ssim.toFixed(4)}` : 'Done · not measured';
+    setStatus(note ?? done, 'idle');
   } catch (err) {
     setStatus((err as Error).message, 'error');
     parent.postMessage({ pluginMessage: { type: 'failed', message: (err as Error).message } }, '*');
