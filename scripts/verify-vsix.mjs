@@ -46,8 +46,19 @@ const EXPECTED = {
   'darwin-arm64': ['@img/sharp-darwin-arm64', '@img/sharp-libvips-darwin-arm64', '@resvg/resvg-js-darwin-arm64'],
 };
 
-/** Scoped packages that are pure JS and therefore expected on every target. */
-const PORTABLE = new Set(['@img/colour', '@resvg/resvg-js']);
+/**
+ * Scoped packages that carry no platform of their own, and so are expected on
+ * every target rather than counted as a foreign prebuild.
+ *
+ * `@img/sharp-wasm32` looks like a platform package and is not one: sharp 0.35
+ * ships it as the architecture-independent WASM fallback. Checked in the
+ * lockfile rather than assumed from the name — it declares `os: null, cpu: null`
+ * exactly as `@img/colour` does, where every real prebuild is gated (e.g.
+ * `@img/sharp-linux-x64` is `os: ["linux"], cpu: ["x64"]`). It is a genuine
+ * fallback that lets the extension still work where no binding exists, so it
+ * belongs in every package.
+ */
+const PORTABLE = new Set(['@img/colour', '@img/sharp-wasm32', '@resvg/resvg-js']);
 
 /**
  * List the entries of a zip by walking its central directory.
