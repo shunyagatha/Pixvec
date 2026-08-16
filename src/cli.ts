@@ -56,6 +56,37 @@ function info(msg: string): void {
   process.stderr.write(`${msg}\n`);
 }
 
+/**
+ * A single-line progress indicator on stderr, rewritten in place.
+ *
+ * stderr because stdout carries `--json`, and a status line spliced into a
+ * machine-readable payload would corrupt it. Only drawn when stderr is a TTY:
+ * redirected to a file or a CI log, carriage returns leave a trail of
+ * half-overwritten lines instead of a bar.
+ *
+ * A photograph takes seconds to trace and the CLI printed nothing at all until
+ * it was done, which is indistinguishable from having hung.
+ */
+function progressLine(): { report: (stage: string, pct: number) => void; done: () => void } {
+  const live = process.stderr.isTTY === true && !process.env['NO_COLOR'];
+  if (!live) return { report: () => {}, done: () => {} };
+
+  let width = 0;
+  return {
+    report(stage: string, pct: number): void {
+      const filled = Math.round((Math.max(0, Math.min(100, pct)) / 100) * 20);
+      const bar = '█'.repeat(filled) + '░'.repeat(20 - filled);
+      const line = `  ${dim(bar)} ${String(Math.round(pct)).padStart(3)}%  ${stage}…`;
+      width = Math.max(width, line.length);
+      process.stderr.write('\r' + line.padEnd(width));
+    },
+    done(): void {
+      // Wipe the line rather than leave it above the result.
+      if (width > 0) process.stderr.write('\r' + ' '.repeat(width) + '\r');
+    },
+  };
+}
+
 function fail(msg: string): never {
   process.stderr.write(`${red('error')} ${msg}\n`);
   process.exit(1);
@@ -353,6 +384,11 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
     );
   }
 
+  // Tracing a photograph takes seconds, during which this printed nothing at
+  // all — indistinguishable from having hung. Suppressed under --json, where
+  // the only thing on the wire should be the payload.
+  const bar = o.json ? { report: () => {}, done: () => {} } : progressLine();
+
   const result = await vectorize(source, {
     compare: o.severity ? { severity: true } : undefined,
     mode: (o.lossless ? 'lossless' : o.mode) as never,
@@ -369,6 +405,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
     title: o.title ?? suggestTitle(input),
     noGenerator: !o.generator,
     trace: {
+      onProgress: bar.report,
       colors: o.colors,
       alphaLevels: o.alphaLevels,
       minArea: o.minArea,
@@ -410,6 +447,8 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       imageRendering: o.imageRendering as never,
     },
   });
+
+  bar.done();
 
   const svg = o.minify ? optimizeSvg(result.svg) : result.svg;
   await writeOutput(outPath, svg);
@@ -1719,6 +1758,12 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
     return target;
   };
 
+  // A count, because the per-file lines alone give no sense of how far through
+  // a few hundred files a run is, and there is no other signal — the workers
+  // are concurrent, so the output does not even arrive in order.
+  const counter = o.json ? { report: () => {}, done: () => {} } : progressLine();
+  const tick = (): void => counter.report(`${done + failed}/${files.length} files`, ((done + failed) / files.length) * 100);
+
   const worker = async (): Promise<void> => {
     for (;;) {
       const file = queue.shift();
@@ -1731,18 +1776,22 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
           await runRasterize(file, toRasterizeOptions(o, target));
         }
         done++;
+        tick();
         if (o.summary) {
           const [inS, outS] = await Promise.all([stat(file), stat(target)]);
           rows.push({ file: basename(file), target: basename(target), inBytes: inS.size, outBytes: outS.size });
         }
       } catch (err) {
         failed++;
+        counter.done();
         info(`${red('✗')} ${file}: ${(err as Error).message}`);
+        tick();
       }
     }
   };
 
   await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
+  counter.done();
   info(`\n${done} succeeded, ${failed} failed.`);
   if (o.summary) await writeFile(o.summary, formatBatchSummary(rows, done, failed));
   if (failed > 0) process.exit(1);

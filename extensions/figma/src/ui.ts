@@ -271,6 +271,17 @@ async function run(): Promise<void> {
 
     const m = mode();
     setStatus(m === 'centerline' ? 'Thinning…' : m === 'exact' ? 'Reconstructing…' : 'Tracing…', 'busy');
+
+    // Let the frame paint before the synchronous trace begins.
+    //
+    // Without this the status text never appeared: `setStatus` mutates the DOM,
+    // then `vectorize()` occupies the thread for the whole conversion, and the
+    // browser only repaints once it returns — by which point the label has
+    // already been overwritten with the result. The user saw `Decoding…` sit
+    // frozen and then jump straight to `Done`, which is precisely the opposite
+    // of what a status line is for.
+    await new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); });
+
     const colors = Number(($('colors') as HTMLInputElement).value);
     const gradients = ($('gradients') as HTMLInputElement).checked;
     const uneven = ($('uneven') as HTMLInputElement).checked;
