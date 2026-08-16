@@ -37,6 +37,7 @@ import { convertOffice, convertOfficeBatch, isOfficeDocument, findSoffice } from
 import { startBridge } from './io/bridge.js';
 import type { DxfUnit } from './io/export/index.js';
 import { imagesToPdf } from './io/images-pdf.js';
+import { installGroupedHelp } from './cli-help.js';
 import type { AlphaMode, QualityReport, RasterFormat, RasterImage, Rgba, SizeBudgetReport } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -1931,6 +1932,11 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
 
 const program = new Command();
 
+// Grouped --help for the commands large enough to need it. Installed before any
+// command is declared, because configureHelp is copied to subcommands as they
+// are created.
+installGroupedHelp(program);
+
 program
   .name('vecline')
   .description(
@@ -1966,6 +1972,7 @@ program
   .alias('trace')
   .description('Convert a raster image (PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM, TGA) to SVG')
   .argument('<input>', 'source image')
+  .optionsGroup('Strategy:')
   .option('-o, --output <file>', 'output path (defaults to <input>.svg)')
   .addOption(
     new Option('-m, --mode <mode>', 'conversion strategy')
@@ -1977,8 +1984,10 @@ program
       .choices(['auto', ...Object.keys(PRESETS), 'pixelart', 'exact'])
       .default('auto'),
   )
+  .optionsGroup('Colour and palette:')
   .option('-c, --colors <n>', 'palette size for trace mode', intArg('--colors', 1, 256))
   .option('--alpha-levels <n>', 'distinct alpha levels to keep', intArg('--alpha-levels', 1, 64))
+  .optionsGroup('Geometry and curve fitting:')
   .option('--min-area <px>', 'absorb regions smaller than this', intArg('--min-area', 0, 1e6))
   .option('--tolerance <px>', 'outline simplification tolerance', floatArg('--tolerance', 0, 100))
   .option('--fit-error <px>', 'maximum curve fitting error', floatArg('--fit-error', 0.01, 100))
@@ -1988,15 +1997,18 @@ program
   .option('--primitive-error <px>', 'per-vertex residual budget for --primitives', floatArg('--primitive-error', 0.1, 10))
   .option('--no-optimize', 'do not merge adjacent curves that a single curve fits')
   .option('--opt-tolerance <n>', 'error budget for a curve merge (defaults to --fit-error)', floatArg('--opt-tolerance', 0.01, 100))
+  .optionsGroup('Colour and palette:')
   .option('--refine-iterations <n>', 'Lloyd relaxation passes during palette construction', intArg('--refine-iterations', 0, 32))
   .option('--blur <radius>', 'selective (edge-preserving) blur before quantisation, 1-5', intArg('--blur', 0, 5))
   .option('--blur-delta <n>', 'edge-preservation threshold for --blur', intArg('--blur-delta', 0, 255))
+  .optionsGroup('Thresholding (bilevel / line art):')
   .option('--threshold <cutoff>', 'reduce to two colours by luminance: a 0-255 number or "auto" (Otsu)', thresholdArg)
   .addOption(new Option('--speckle-scope <scope>', 'which small regions --min-area may absorb: every one under the cutoff, or only specks surrounded by a single colour (sparing antialiasing fringe)').choices(['all','isolated']))
   .option('--black-on-white <bool>', 'with --threshold: dark pixels are the shape (default true)', boolArg)
   .option('--adaptive', 'threshold against each pixel\'s own neighbourhood (Bradley–Roth) instead of one global cutoff — for photos of paper, where one corner is in shadow')
   .option('--adaptive-window <px>', 'neighbourhood side length for --adaptive; 0 = an eighth of the shorter side', intArg('--adaptive-window', 0, 4096))
   .option('--adaptive-t <pct>', 'how far below the local mean counts as ink, in percent (default 15)', intArg('--adaptive-t', 0, 100))
+  .optionsGroup('Geometry and curve fitting:')
   .option('--stroke-width <n>', 'stroke each path in its fill colour to hide seams between regions', floatArg('--stroke-width', 0, 100))
   .addOption(
     new Option('--turn-policy <policy>', 'how to resolve diagonal self-touches (checkerboard saddles)')
@@ -2012,9 +2024,11 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
+  .optionsGroup('Output and document:')
   .option('--minify', 'minify the output SVG (render-preserving: round coords, strip defaults)')
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))
   .option('--no-background', 'do not collapse the dominant colour into one rectangle')
+  .optionsGroup('Budgets and measurement:')
   .option('--target-ssim <v>', 'escalate settings until SSIM reaches this', floatArg('--target-ssim', 0, 1))
   .option('--target-psnr <db>', 'escalate settings until PSNR reaches this', floatArg('--target-psnr', 0, 200))
   .option('--severity', 'with --verify: also report where the error is (coherent regions vs edge dust) and a single composite score')
@@ -2022,6 +2036,7 @@ program
   .option('--max-nodes <n>', 'complexity budget: relax until the geometry has at most this many anchor points', intArg('--max-nodes', 4, 10_000_000))
   .option('--max-colors <n>', 'palette ceiling during refinement', intArg('--max-colors', 2, 256))
   .option('--max-steps <n>', 'refinement attempts', intArg('--max-steps', 1, 12))
+  .optionsGroup('Strategy:')
   .option('-l, --lossless', 'guarantee a bit-exact result, or fail (same as --mode lossless)')
   .addOption(
     new Option('--prefer <what>', 'what lossless optimises for once exactness is assured')
@@ -2033,16 +2048,19 @@ program
     'how much larger real geometry may be than the alternative under --prefer auto',
     floatArg('--max-geometry-ratio', 1, 1000),
   )
+  .optionsGroup('Transparency and background:')
   .option('-t, --transparent [color]', 'make the background transparent; detects the colour when omitted')
   .option('--bg-tolerance <n>', 'how far a pixel may sit from the background colour (Oklab distance)', floatArg('--bg-tolerance', 0, 1))
   .option('--bg-everywhere', 'remove matching pixels anywhere, not just those reachable from the edge')
   .option('--feather', 'fade the cut instead of a hard edge')
+  .optionsGroup('Budgets and measurement:')
   .option('--verify', 'render the result and measure it against the input')
   .addOption(
     new Option('--embed-strategy <s>', 'payload handling for embed mode')
       .choices(['auto', 'preserve', 'png', 'webp'])
       .default('auto'),
   )
+  .optionsGroup('Output and document:')
   .option('--xlink', 'use xlink:href for SVG 1.1 consumers')
   .addOption(
     new Option('--image-rendering <mode>', 'scaling hint for embedded bitmaps')
