@@ -243,10 +243,9 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 |---|---|--:|--:|--:|--:|--:|--:|
 | Flat artwork, 400×300 | `pixel` | 2.1 KB | 7.5 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Pixel art sprite, 128×128 | `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
-| Flat artwork | `embed` | 2.1 KB | 3.1 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
+| Flat artwork, 400×300 | `embed` | 2.1 KB | 3.2 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Photo, 320×240 | `embed` | 14.5 KB | 19.7 KB | 87.94% | 58.04 dB | 0.9982 | 0.060 |
-| Photo, 320×240 | `trace` auto | 14.5 KB | 23.1 KB | 0.01% | 27.02 dB | 0.8376 | 4.798 |
-| Photo, 320×240 | `trace --preset photo` | 14.5 KB | 35.8 KB | 0.01% | 32.30 dB | 0.8608 | 2.570 |
+| Photo, 320×240 | `trace` (`auto` and `--preset photo` alike) | 14.5 KB | 52.9 KB | 0.01% | 31.31 dB | 0.8476 | 2.931 |
 | Flat artwork, 400×300 | `lossless` → `pixel` | 2.1 KB | 3.9 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Pixel art sprite, 128×128 | `lossless` → `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Photo, 320×240 | `lossless` → `embed` | 14.5 KB | 230.5 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
