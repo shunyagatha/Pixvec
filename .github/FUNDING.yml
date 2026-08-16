@@ -73,8 +73,11 @@
 # --- The escape hatch: any URL, up to four ----------------------------------
 #
 # `custom` is not gated by any platform's approval, which makes it the fastest
-# route from India specifically: a Razorpay or UPI payment page can be live in
-# an afternoon, where Stripe onboarding takes days. Wrap URLs in quotes when
-# they contain a colon, which every https:// URL does.
+# route from India specifically: a Razorpay, UPI or Tip Top Jar page can be
+# live in an afternoon, where Stripe onboarding takes days. Wrap URLs in quotes
+# when they contain a colon, which every https:// URL does.
 #
-# custom: ["https://vecline.xyz/sponsor"]
+# ACTIVE, and verified live before being enabled: the page returns HTTP 200 and
+# names the project. It is the only uncommented line in this file, deliberately
+# — one button people can actually use beats five that lead nowhere.
+custom: ["https://tiptopjar.com/vecline"]
