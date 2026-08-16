@@ -3129,10 +3129,12 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
   const fineA = new Float64Array(K * FINE);
   const fineB = new Float64Array(K * FINE);
   const fineN = new Float64Array(K * FINE);
+  const fineQ = new Float64Array(K * FINE);
   const fineLR = new Float64Array(K * FINE);
   const fineAR = new Float64Array(K * FINE);
   const fineBR = new Float64Array(K * FINE);
   const fineNR = new Float64Array(K * FINE);
+  const fineQR = new Float64Array(K * FINE);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
@@ -3150,6 +3152,7 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
         fineA[b] += lab[1];
         fineB[b] += lab[2];
         fineN[b] += 1;
+        fineQ[b] += sq(lab[0]) + sq(lab[1]) + sq(lab[2]);
       }
       if (radRMax[k] > 0) {
         const uR = clamp012(Math.hypot(x - cxArr[k], y - cyArr[k]) / radRMax[k]);
@@ -3158,9 +3161,23 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
         fineAR[jR] += lab[1];
         fineBR[jR] += lab[2];
         fineNR[jR] += 1;
+        fineQR[jR] += sq(lab[0]) + sq(lab[1]) + sq(lab[2]);
       }
     }
   }
+  const withinBinRms = (sumL, sumA, sumB, sumN, sumQ, k) => {
+    let sse = 0;
+    let total = 0;
+    for (let b = 0; b < FINE; b++) {
+      const idx = k * FINE + b;
+      const nb = sumN[idx];
+      if (nb <= 0) continue;
+      const dev = sumQ[idx] - (sq(sumL[idx]) + sq(sumA[idx]) + sq(sumB[idx])) / nb;
+      if (dev > 0) sse += dev;
+      total += nb;
+    }
+    return total > 0 ? Math.sqrt(sse / total) : 0;
+  };
   const maxStops = Math.max(2, opts.gradientStops);
   const stopList = new Array(K).fill(null);
   const stopListRad = new Array(K).fill(null);
@@ -3169,12 +3186,16 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
     if (count2 <= 0) continue;
     const target = flatSum[k] / count2 * (1 - opts.gradientMargin);
     if (models[k] && tMax[k] > tMin[k]) {
-      const lin = buildCurve(fineL, fineA, fineB, fineN, k, FINE);
-      stopList[k] = selectStops(lin.curve, lin.w, FINE, maxStops, target);
+      if (withinBinRms(fineL, fineA, fineB, fineN, fineQ, k) > opts.gradientMaxError) {
+        models[k] = null;
+      } else {
+        const lin = buildCurve(fineL, fineA, fineB, fineN, k, FINE);
+        stopList[k] = selectStops(lin.curve, lin.w, FINE, maxStops, target);
+      }
     } else {
       models[k] = null;
     }
-    if (radRMax[k] > 0) {
+    if (radRMax[k] > 0 && withinBinRms(fineLR, fineAR, fineBR, fineNR, fineQR, k) <= opts.gradientMaxError) {
       const rad = buildCurve(fineLR, fineAR, fineBR, fineNR, k, FINE);
       stopListRad[k] = selectStops(rad.curve, rad.w, FINE, maxStops, target);
     }
