@@ -1,0 +1,36 @@
+# Funding for Vecline.
+#
+# Vecline is MIT and stays that way. The library, the CLI, the MCP server and
+# the in-browser Studio are free, unlimited and signup-free — permanently, and
+# not as a trial of something else. Sponsorship funds the maintenance of that;
+# it does not buy features, and no feature is withheld from anyone who does not
+# pay. Anything ever charged for would sit outside the package entirely, in the
+# places it physically cannot reach: hosted document conversion, enterprise
+# self-hosting and support, a managed API for CI.
+#
+# --------------------------------------------------------------------------
+# TO ACTIVATE: uncomment the `github:` line below, once — and only once — the
+# GitHub Sponsors listing actually exists.
+#
+# GitHub renders a "Sponsor" button from this file without checking that the
+# account underneath it accepts sponsorships. Enabling it before enrolment
+# gives every visitor a prominent button that leads to a page which cannot take
+# their money, which is worse than having no button at all.
+#
+# Enrol first at https://github.com/sponsors — it needs identity verification,
+# a bank account and a tax form, so it is not instant. Confirm the listing is
+# live by checking that this returns a real profile rather than GitHub's
+# marketing page:
+#
+#     curl -sL https://github.com/sponsors/shunyagatha | grep -c "Sponsor shunyagatha"
+#
+# then uncomment.
+# --------------------------------------------------------------------------
+
+# github: shunyagatha
+
+# Other platforms this file supports, each needing its own account first:
+#
+# open_collective: vecline      # fiscal host; good for company sponsors who need invoices
+# ko_fi: shunyagatha            # one-off tips, lowest friction, no recurring commitment
+# custom: ['https://vecline.xyz/sponsor']
