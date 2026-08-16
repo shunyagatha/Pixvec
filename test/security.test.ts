@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { crc32, deflateSync } from 'node:zlib';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { decodeRaster, DEFAULT_MAX_INPUT_PIXELS } from '../src/io/decode.js';
+import { rasterizeSvg } from '../src/io/rasterize.js';
 
 /**
  * Guards against hostile input.
@@ -81,5 +85,83 @@ describe('decompression bombs', () => {
 
   it('caps at libvips own default rather than an invented number', () => {
     expect(DEFAULT_MAX_INPUT_PIXELS).toBe(268_402_689);
+  });
+});
+
+/**
+ * `<image href>` inlining reads files named by a document we did not write.
+ *
+ * It exists for a good reason — resvg will not load a sibling `logo.png` on its
+ * own, so without inlining that layer renders as a hole. But the href was
+ * resolved with no containment, and absolute paths and `file:` URLs were taken
+ * verbatim, which made it an arbitrary-file-read primitive reachable from four
+ * MCP tools: "measure this SVG someone sent me" would load any readable file
+ * whose name ended in an image extension and hand it back as pixels.
+ */
+describe('SVG image inlining is confined to baseDir', () => {
+  let root = '';
+  let publicDir = '';
+  let secretDir = '';
+
+  /** A recognisable 2x2 red PNG, standing in for a file that is not ours. */
+  const png = (): Buffer => {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(2, 0);
+    ihdr.writeUInt32BE(2, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 2; // RGB
+    const rows = Buffer.concat([
+      Buffer.from([0, 255, 0, 0, 255, 0, 0]),
+      Buffer.from([0, 255, 0, 0, 255, 0, 0]),
+    ]);
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk('IHDR', ihdr),
+      pngChunk('IDAT', deflateSync(rows)),
+      pngChunk('IEND', Buffer.alloc(0)),
+    ]);
+  };
+
+  const doc = (href: string): string =>
+    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ' +
+    `width="8" height="8"><image href="${href}" x="0" y="0" width="8" height="8"/></svg>`;
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'vecline-inline-'));
+    publicDir = join(root, 'public');
+    secretDir = join(root, 'secret');
+    await mkdir(publicDir, { recursive: true });
+    await mkdir(secretDir, { recursive: true });
+    await writeFile(join(secretDir, 'private.png'), png());
+    await writeFile(join(publicDir, 'sibling.png'), png());
+  });
+
+  afterAll(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it('still inlines a sibling, which is the whole point of the feature', async () => {
+    const r = await rasterizeSvg(doc('sibling.png'), { baseDir: publicDir });
+    expect(r.inlined).toHaveLength(1);
+    expect(r.refusedInline).toHaveLength(0);
+  });
+
+  it.each([
+    ['relative traversal', () => '../secret/private.png'],
+    ['percent-encoded traversal', () => '..%2Fsecret%2Fprivate.png'],
+    ['an absolute path', () => join(secretDir, 'private.png').replace(/\\/g, '/')],
+    ['a file: URL', () => `file:///${join(secretDir, 'private.png').replace(/\\/g, '/')}`],
+  ])('refuses %s', async (_label, href) => {
+    const r = await rasterizeSvg(doc(href()), { baseDir: publicDir });
+    // Asserting "nothing was read" rather than the refusal count, because the
+    // routes differ by platform: on Windows a drive letter (`C:`) is caught
+    // earlier as a URL scheme, while on Linux `/etc/...` reaches the
+    // containment check. Both must refuse; only one records a refusal.
+    expect(r.inlined).toHaveLength(0);
+  });
+
+  it('reports refusals rather than leaving an unexplained hole', async () => {
+    const r = await rasterizeSvg(doc('../secret/private.png'), { baseDir: publicDir });
+    expect(r.refusedInline).toEqual(['../secret/private.png']);
   });
 });
