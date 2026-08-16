@@ -48,6 +48,39 @@ jobs:
       - name: Extensions track the released engine
         run: node scripts/sync-extension-versions.mjs --check
 
+  # The playground ships a *committed* bundle of the engine, so unlike every
+  # other surface it does not pick up a change by being rebuilt — someone has to
+  # remember. Nobody did: it sat sixteen minor versions behind at v1.32.0 while
+  # the package was at 1.48.0, so the public demo of "measured, never asserted"
+  # was measuring a tracer nobody had shipped in months, and was missing the
+  # whole v1.47.0 security pass. Nothing failed, because nothing looked.
+  #
+  # Rebuilding and diffing is the only honest check: it compares the file in the
+  # tree against what the current source actually produces, rather than trusting
+  # a version string the bundle has no obligation to update. One platform is
+  # enough — esbuild's output is deterministic and .gitattributes pins eol=lf, so
+  # a second OS would re-prove the same bytes.
+  playground:
+    name: Playground bundle is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Rebuild and compare
+        run: |
+          npm run playground
+          git diff --exit-code -- docs/vecline-core.js || {
+            echo "::error::docs/vecline-core.js is stale. Run 'npm run playground' and commit the result."
+            exit 1
+          }
+
   # The plugin's dist/ is gitignored, so the sandbox tests skip in the matrix
   # above rather than failing every contributor who has not built an extension
   # they are not touching. This job is what stops that skip becoming a place for
