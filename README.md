@@ -1,4 +1,4 @@
-<img src="https://vecline.xyz/icon.svg" width="72" alt="">
+<img src="https://raw.githubusercontent.com/shunyagatha/Vecline/main/extensions/figma/thumbnail.png" alt="Vecline">
 
 # Vecline
 
