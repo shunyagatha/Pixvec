@@ -867,7 +867,24 @@ async function runVectorExport(
     fail(`${ext} export needs a raster input; got an SVG. Rasterize it first.`);
   }
   const source = await loadRaster(bytes);
-  const geometry = traceGeometry(source.image, { colors: o.colors, tolerance: o.tolerance });
+
+  // Only DXF reads the primitive annotation — a CIRCLE entity beats a 12-gon
+  // for anything that will be cut. The EPS and PDF writers ignore it entirely
+  // and emit the flattened polygon either way, so computing it for them is work
+  // whose result is discarded.
+  //
+  // It is not cheap work. Detection scales with region count: 11 ms -> 29 ms on
+  // a 200x200 disc, and on a photograph it dominates the export, because every
+  // region gets a circle/ellipse/rect fit attempted against it.
+  //
+  // Written as the set of formats that consume it rather than as `ext !== …`,
+  // so that teaching EPS to emit `arc` is a one-word change here.
+  const PRIMITIVE_AWARE = new Set(['.dxf']);
+  const geometry = traceGeometry(source.image, {
+    colors: o.colors,
+    tolerance: o.tolerance,
+    primitives: PRIMITIVE_AWARE.has(ext),
+  });
   const opts = o as SharedCliOptions & { cmyk?: boolean; units?: DxfUnit; physicalWidth?: number };
   const cmyk = Boolean(opts.cmyk);
 
