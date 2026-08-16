@@ -6,6 +6,22 @@ import type { RasterImage, SourceMeta } from '../types.js';
 import { decodeFallback, decodeTgaFallback, type FallbackResult } from './formats/index.js';
 import { findDecoder, registeredFormats, type CustomDecoder } from '../codecs.js';
 
+/**
+ * The most pixels a decode will materialise, unless a caller says otherwise.
+ *
+ * 268 402 689 is libvips' own default (0x3FFF²) and roughly a 16 000 × 16 000
+ * photograph, so it is far above any real image this tool is pointed at and far
+ * below the sizes that turn a small file into gigabytes of RAM.
+ *
+ * This used to default to `false` — no limit at all — with `unlimited: true`
+ * alongside it, which also switched off libvips' internal guards, and no caller
+ * anywhere passed a number. A 380 KB greyscale PNG of all-zero pixels declaring
+ * 20000 × 20000 decoded to **1.60 GB** of RGBA without complaint, through the
+ * public API, the CLI and every MCP tool. The option existed and was documented
+ * as a bomb guard; it was simply never on.
+ */
+export const DEFAULT_MAX_INPUT_PIXELS = 268_402_689;
+
 export interface DecodeOptions {
   /**
    * Apply the EXIF orientation tag so the pixels match what a viewer shows.
@@ -13,7 +29,12 @@ export interface DecodeOptions {
    * width and height).
    */
   applyOrientation?: boolean;
-  /** Guard against decompression bombs. `false` removes the limit entirely. */
+  /**
+   * Guard against decompression bombs. Defaults to
+   * {@link DEFAULT_MAX_INPUT_PIXELS}. Pass a larger number for a genuinely huge
+   * image, or `false` to remove the limit — only for input you produced
+   * yourself, never for a file someone sent you.
+   */
   limitInputPixels?: number | false;
 }
 
@@ -67,7 +88,7 @@ export async function decodeRaster(
     );
   }
 
-  const { applyOrientation = true, limitInputPixels = false } = opts;
+  const { applyOrientation = true, limitInputPixels = DEFAULT_MAX_INPUT_PIXELS } = opts;
 
   // Formats libvips was not built with are handled in pure TypeScript. They are
   // identified by signature first, because libvips would otherwise reject them
@@ -81,7 +102,10 @@ export async function decodeRaster(
   const custom = findDecoder(bytes);
   if (custom) return finishCustomDecode(custom, bytes);
 
-  const base = () => sharp(asBuffer(bytes), { limitInputPixels, unlimited: true, animated: false });
+  // `unlimited` is deliberately left at its default (false): it switches off
+  // libvips' own safety limits, which is the opposite of what a decoder handed
+  // untrusted bytes should do.
+  const base = () => sharp(asBuffer(bytes), { limitInputPixels, animated: false });
 
   let raw: Metadata;
   try {
@@ -91,10 +115,25 @@ export async function decodeRaster(
     // codec has declined — guessing earlier risks misreading another format.
     const tga = decodeTgaFallback(bytes);
     if (tga) return finishFallback(tga, bytes, opts);
+
+    // A size refusal is not a format problem, and listing the supported formats
+    // in answer to one sends the reader looking in the wrong place entirely.
+    const message = (err as Error).message;
+    if (/exceeds pixel limit/i.test(message)) {
+      const cap = limitInputPixels === false ? 'the limit' : `${limitInputPixels.toLocaleString('en-US')} pixels`;
+      throw new Error(
+        `This image declares more pixels than ${cap}, so it was not decoded. ` +
+          'That guard exists because a small file can declare an enormous canvas — ' +
+          'a 380 KB PNG can ask for 1.6 GB of memory. ' +
+          'If the image is genuinely this large and you trust it, raise or remove the ' +
+          'cap with the `limitInputPixels` option.',
+      );
+    }
+
     const extra = registeredFormats().decode;
     const registeredNote = extra.length ? `, plus registered: ${extra.join(', ')}` : '';
     throw new Error(
-      `Could not read image metadata: ${(err as Error).message}. ` +
+      `Could not read image metadata: ${message}. ` +
         `Supported inputs: PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM/PPM, TGA${registeredNote}.`,
     );
   }

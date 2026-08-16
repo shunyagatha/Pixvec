@@ -85,6 +85,66 @@ function roundNumericList(value: string, scale: number): string {
   return out;
 }
 
+/**
+ * Remove every `open … close` span, in a single forward pass.
+ *
+ * This is a hand-rolled scan rather than a regex because every regex shape for
+ * the job is quadratic on adversarial input. A lazy `/<!--[\s\S]*?-->/g` rescans
+ * to end-of-string from each start position, and so does the "unrolled loop"
+ * form `/<!--[^-]*(?:-(?!->)[^-]*)*-->/g` — the cost is not backtracking inside
+ * one match, it is *failing* a match at every one of n start positions. On a
+ * document of repeated unterminated `<!--` that measured 94 ms at 32 KB rising
+ * to 3.8 s at 250 KB, clean 4x-per-doubling growth, reachable from
+ * `vecline optimize` and `sprite --minify` with a file the user did not write.
+ *
+ * `indexOf` only ever moves forward, so the whole scan is linear. An
+ * unterminated opener ends the scan and leaves the remainder untouched, which
+ * is what the regexes did too — a comment nobody closed is not a comment.
+ */
+function stripSpans(
+  text: string,
+  open: string,
+  close: string,
+  opts: { trailingSpace?: boolean; caseInsensitive?: boolean } = {},
+): string {
+  const first = text.indexOf(open[0]);
+  if (first === -1) return text;
+
+  const matchesOpen = (at: number): boolean =>
+    opts.caseInsensitive
+      ? text.slice(at, at + open.length).toLowerCase() === open.toLowerCase()
+      : text.startsWith(open, at);
+
+  let out = '';
+  let cursor = 0;
+  let from = 0;
+  let found = false;
+
+  for (;;) {
+    // Scan on the opener's first character, then confirm — this keeps the
+    // case-insensitive form linear without lowercasing the whole document,
+    // which is not length-preserving for every Unicode input.
+    let start = -1;
+    for (let i = text.indexOf(open[0], from); i !== -1; i = text.indexOf(open[0], i + 1)) {
+      if (matchesOpen(i)) { start = i; break; }
+    }
+    if (start === -1) break;
+
+    const end = text.indexOf(close, start + open.length);
+    if (end === -1) break;
+
+    out += text.slice(cursor, start);
+    cursor = end + close.length;
+    if (opts.trailingSpace) {
+      while (cursor < text.length && /\s/.test(text[cursor]!)) cursor++;
+    }
+    from = cursor;
+    found = true;
+  }
+
+  return found ? out + text.slice(cursor) : text;
+}
+
 /** Minify an SVG string, preserving what it renders. */
 export function optimizeSvg(svg: string, opts: OptimizeOptions = {}): string {
   const precision = opts.precision ?? 2;
@@ -93,10 +153,9 @@ export function optimizeSvg(svg: string, opts: OptimizeOptions = {}): string {
 
   let out = svg;
   if (stripProlog) {
-    out = out
-      .replace(/<\?xml[\s\S]*?\?>\s*/gi, '')
-      .replace(/<!DOCTYPE[^>]*>\s*/gi, '')
-      .replace(/<!--[\s\S]*?-->/g, '');
+    out = stripSpans(out, '<?xml', '?>', { trailingSpace: true, caseInsensitive: true });
+    out = stripSpans(out, '<!DOCTYPE', '>', { trailingSpace: true, caseInsensitive: true });
+    out = stripSpans(out, '<!--', '-->');
   }
 
   out = out

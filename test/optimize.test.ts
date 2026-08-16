@@ -63,6 +63,64 @@ describe('optimizeSvg', () => {
   });
 
   /**
+   * The minifier runs on files the user did not write.
+   *
+   * `vecline optimize`, `vecline minify` and `sprite --minify` all hand a
+   * third-party SVG straight to this function, so its cost has to be bounded by
+   * the input, not by what the input contains. Every regex shape for stripping
+   * `<!-- … -->` is quadratic on adversarial input: the cost is not backtracking
+   * inside one match, it is *failing* a match at each of n start positions. A
+   * document of repeated unterminated `<!--` measured 94 ms at 32 KB and 3.8 s
+   * at 250 KB — clean 4x-per-doubling growth — before this was a forward scan.
+   */
+  describe('adversarial input is bounded', () => {
+    const wrap = (body: string): string =>
+      `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">${body}</svg>`;
+    const repeat = (marker: string, kb: number): string =>
+      marker.repeat(Math.ceil((kb * 1024) / marker.length));
+
+    it.each([['<!-- ', 'comments'], ['<?xml ', 'prologs'], ['<!DOCTYPE ', 'doctypes']])(
+      'strips %s in linear time, not quadratic (%s)',
+      (marker) => {
+        // Quadratic would be ~4x per doubling. Linear stays flat, so a ratio
+        // well under 4 is the real assertion; the absolute budget only catches
+        // a total regression on a slow machine.
+        const time = (kb: number): number => {
+          const svg = wrap(repeat(marker, kb));
+          const t = performance.now();
+          optimizeSvg(svg);
+          return performance.now() - t;
+        };
+
+        time(32); // warm up, so JIT does not make the first sample the slow one
+        const small = Math.max(time(64), 1);
+        const large = time(256);
+
+        expect(large).toBeLessThan(2000);
+        // 4x the data. Quadratic predicts ~16x the time; linear predicts ~4x.
+        expect(large / small).toBeLessThan(10);
+      },
+    );
+
+    it('still strips exactly what it used to', () => {
+      // Pinned against the behaviour of the regexes this replaced.
+      const doc = (b: string): string =>
+        `${b}<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><path d="M0 0h4v4H0z"/></svg>`;
+      const clean = doc('');
+
+      expect(optimizeSvg(doc('<!-- hi -->'))).toBe(clean);
+      expect(optimizeSvg(doc('<?xml version="1.0"?>'))).toBe(clean);
+      expect(optimizeSvg(doc('<!DOCTYPE svg>'))).toBe(clean);
+      // XML forbids `--` inside a comment, but the old regex closed on the
+      // first `-->` regardless, so this must keep doing that.
+      expect(optimizeSvg(doc('<!-- a--b -->'))).toBe(clean);
+      // A comment nobody closed is not a comment: leave it alone rather than
+      // swallowing the rest of the document.
+      expect(optimizeSvg('<svg><!-- never closed')).toContain('<!-- never closed');
+    });
+  });
+
+  /**
    * Path data may omit the delimiter between two numbers whenever the second
    * cannot be read as part of the first, so `l12.004.513` is two numbers. The
    * minifier used to round every decimal with a context-free regex, which

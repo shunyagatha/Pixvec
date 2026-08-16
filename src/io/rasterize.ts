@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, resolve, sep } from 'node:path';
 import { Resvg, type ResvgRenderOptions } from '@resvg/resvg-js';
 import type { RasterImage, Rgba } from '../types.js';
 
@@ -34,6 +34,13 @@ export interface RasterizeResult {
   intrinsic: { width: number; height: number };
   /** Files pulled in to satisfy `<image href>` references. */
   inlined: string[];
+  /**
+   * `<image href>` targets refused because they resolve outside `baseDir`.
+   *
+   * Reported rather than swallowed: those references render as holes, and a
+   * hole with no explanation is indistinguishable from a broken file.
+   */
+  refusedInline: string[];
 }
 
 const SHAPE_RENDERING = { optimizeSpeed: 0, crispEdges: 1, geometricPrecision: 2 } as const;
@@ -54,9 +61,10 @@ export async function rasterizeSvg(
 ): Promise<RasterizeResult> {
   let source = typeof svg === 'string' ? svg : new TextDecoder().decode(svg);
   const inlined: string[] = [];
+  const refusedInline: string[] = [];
 
   if (opts.inlineImages !== false && opts.baseDir) {
-    source = await inlineExternalImages(source, opts.baseDir, inlined);
+    source = await inlineExternalImages(source, opts.baseDir, inlined, refusedInline);
   }
 
   const render: ResvgRenderOptions = {
@@ -120,6 +128,7 @@ export async function rasterizeSvg(
     image: { width: rendered.width, height: rendered.height, data },
     intrinsic,
     inlined,
+    refusedInline,
   };
 }
 
@@ -147,16 +156,44 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 /**
+ * True when `target` is `baseDir` itself or something beneath it.
+ *
+ * Compared after `resolve`, so `..` segments are already collapsed and cannot
+ * be smuggled through. The case-insensitive branch is for Windows and macOS,
+ * where `C:\Users\x` and `c:\users\X` name the same file and a case-sensitive
+ * prefix test would wave the second one through.
+ */
+function isInside(baseDir: string, target: string): boolean {
+  const base = resolve(baseDir);
+  const abs = resolve(target);
+  const [a, b] = process.platform === 'linux' ? [base, abs] : [base.toLowerCase(), abs.toLowerCase()];
+  return a === b || b.startsWith(a.endsWith(sep) ? a : a + sep);
+}
+
+/**
  * Replace external `<image href="...">` targets with data URIs.
  *
  * resvg will not read sibling files on its own, so an SVG that references
  * `logo.png` renders as a hole. Inlining first is the difference between a
  * faithful render and a silently missing layer.
+ *
+ * **Every href here comes from a document we did not write.** The reference is
+ * therefore confined to `baseDir`: an absolute path, a `file:` URL, or enough
+ * `../` to climb out is refused rather than read. Without that check this
+ * function was an arbitrary-file-read primitive — `href="../../../.ssh/id_rsa.png"`
+ * or a plain absolute path would be loaded, base64'd into the document, and
+ * rendered back to the caller as pixels. It is reachable from four MCP tools,
+ * so "measure this SVG someone sent me" was enough to exfiltrate any readable
+ * file whose name ended in an image extension.
+ *
+ * Refusals are collected rather than swallowed: a hole in the render with no
+ * explanation is the failure mode this codebase exists to avoid.
  */
 async function inlineExternalImages(
   svg: string,
   baseDir: string,
   inlined: string[],
+  refused: string[],
 ): Promise<string> {
   const tags = svg.match(IMAGE_TAG);
   if (!tags) return svg;
@@ -176,6 +213,12 @@ async function inlineExternalImages(
     const abs = isAbsolute(decoded) ? decoded : resolve(baseDir, decoded);
     const mime = MIME_BY_EXT[extname(abs).toLowerCase()];
     if (!mime) continue;
+
+    // The containment check, before the read rather than after it.
+    if (!isInside(baseDir, abs)) {
+      refused.push(href);
+      continue;
+    }
 
     try {
       const bytes = await readFile(abs);
