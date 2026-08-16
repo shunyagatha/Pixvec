@@ -164,3 +164,67 @@ describe('G-code export', () => {
     expect(g).toMatch(/X1 /); // 10px × 0.1 = 1
   });
 });
+
+/**
+ * PDF circles.
+ *
+ * `traceGeometry` recognises a circle and annotates the subpath. DXF has read
+ * that annotation since it landed; PDF ignored it and emitted the fitted
+ * polygon, which for a large disc is hundreds of `l` operators standing in for
+ * a shape the code already knew was round.
+ *
+ * PDF has no arc operator, so a recognised circle becomes the four-cubic kappa
+ * construction — but only when that is actually shorter. Below roughly ten
+ * pixels of radius the polygon wins, and an unguarded change would make
+ * ordinary files bigger while claiming to make them smaller.
+ */
+describe('PDF circles', () => {
+  const disc = (size: number, radius: number): RasterImage => {
+    const img = createImage(size, size);
+    const c = size / 2;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const inside = Math.hypot(x - c, y - c) < radius;
+        setPixel(img, x, y, inside ? 20 : 255, inside ? 20 : 255, inside ? 20 : 255);
+      }
+    }
+    return img;
+  };
+
+  const pdfText = (img: RasterImage, primitives: boolean): string =>
+    new TextDecoder('latin1').decode(toPdf(traceGeometry(img, { primitives })));
+
+  it('draws a large circle as four cubics instead of a polygon', () => {
+    const text = pdfText(disc(200, 90), true);
+    const curves = (text.match(/ c\n/g) ?? []).length;
+    const lines = (text.match(/ l\n/g) ?? []).length;
+    // Four per circle. The fixture has the disc plus the background's own
+    // subpath, so this is "a handful", not "hundreds".
+    expect(curves).toBeGreaterThanOrEqual(4);
+    expect(lines).toBeLessThan(curves * 2);
+  });
+
+  it('is dramatically smaller for a shape that is genuinely round', () => {
+    const withArcs = toPdf(traceGeometry(disc(200, 90), { primitives: true })).length;
+    const polygon = toPdf(traceGeometry(disc(200, 90), { primitives: false })).length;
+    expect(withArcs).toBeLessThan(polygon / 2);
+  });
+
+  it('keeps the polygon when the circle is too small for arcs to pay', () => {
+    // The guard is the whole reason this change is safe to ship. Without it the
+    // four-cubic form is emitted at every size and small primitives — which are
+    // the common case in real artwork — get bigger.
+    const withArcs = toPdf(traceGeometry(disc(16, 4), { primitives: true })).length;
+    const polygon = toPdf(traceGeometry(disc(16, 4), { primitives: false })).length;
+    expect(withArcs).toBe(polygon);
+  });
+
+  it('never emits the larger of the two forms, at any radius', () => {
+    for (const r of [4, 8, 16, 40, 90]) {
+      const size = r * 2 + 8;
+      const withArcs = toPdf(traceGeometry(disc(size, r), { primitives: true })).length;
+      const polygon = toPdf(traceGeometry(disc(size, r), { primitives: false })).length;
+      expect(withArcs, `radius ${r} regressed`).toBeLessThanOrEqual(polygon);
+    }
+  });
+});
