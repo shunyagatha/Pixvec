@@ -168,3 +168,82 @@ describe('detectGradients', () => {
     expect(g.paints.size).toBe(0);
   });
 });
+
+/**
+ * The impossibility bound.
+ *
+ * A rendered gradient's colour at a pixel is a function of its position along
+ * the ramp and nothing else, so two pixels at the same offset are painted the
+ * same colour whatever stops are chosen. The error of *any* stop list is
+ * therefore bounded below by how much the source colours themselves disagree at
+ * equal offset — the conditional mean is the best a function of the offset can
+ * do, and its error is the within-bin variance.
+ *
+ * When that bound already exceeds `gradientMaxError`, no stop list can bring
+ * the region under the ceiling, so the module stops before rendering and
+ * scoring every pixel twice. These tests pin both directions, because a bound
+ * that is merely fast is worthless: it has to reject exactly what the gate
+ * would have rejected and nothing else.
+ */
+describe('gradient impossibility bound', () => {
+  const ramp = (w: number, h: number, noise = 0): RasterImage => {
+    const img = createImage(w, h);
+    let s = 1;
+    const rnd = (): number => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const t = y / h;
+        const n = noise ? (rnd() - 0.5) * noise : 0;
+        setPixel(img, x, y,
+          Math.max(0, Math.min(255, Math.round(30 + 150 * t + n))),
+          Math.max(0, Math.min(255, Math.round(90 + 120 * t + n))),
+          Math.max(0, Math.min(255, Math.round(200 - 30 * t + n))));
+      }
+    }
+    return img;
+  };
+
+  /** Colour noise with no ramp structure at all — the photograph analogue. */
+  const noiseField = (w: number, h: number): RasterImage => {
+    const img = createImage(w, h);
+    let s = 7;
+    const rnd = (): number => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        setPixel(img, x, y, Math.floor(rnd() * 256), Math.floor(rnd() * 256), Math.floor(rnd() * 256));
+      }
+    }
+    return img;
+  };
+
+  const gradientsIn = (svg: string): number => (svg.match(/<(linear|radial)Gradient/g) ?? []).length;
+
+  it('still finds a ramp that a gradient genuinely fits', () => {
+    // The bound must not cost the feature its purpose. This is the case the
+    // module exists for.
+    const out = trace(ramp(160, 120), { colors: 32, gradients: true });
+    expect(gradientsIn(out.svg)).toBeGreaterThan(0);
+  });
+
+  it('still finds a ramp carrying noise', () => {
+    // Near the ceiling rather than far from it — the case where a bound that
+    // was slightly too eager would silently start rejecting real gradients.
+    const out = trace(ramp(160, 120, 10), { colors: 32, gradients: true });
+    expect(gradientsIn(out.svg)).toBeGreaterThan(0);
+  });
+
+  it('emits nothing for a region no ramp can model', () => {
+    const out = trace(noiseField(120, 90), { colors: 32, gradients: true });
+    expect(gradientsIn(out.svg)).toBe(0);
+  });
+
+  it('is byte-identical to the flat tracer when nothing is accepted', () => {
+    // The property the module has always promised, and the one the bound must
+    // not quietly break: refusing earlier must produce the same file as
+    // refusing later.
+    const img = noiseField(120, 90);
+    const withGradients = trace(img, { colors: 32, gradients: true });
+    const flat = trace(img, { colors: 32, gradients: false });
+    expect(withGradients.svg).toBe(flat.svg);
+  });
+});
