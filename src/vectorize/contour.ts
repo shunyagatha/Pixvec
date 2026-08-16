@@ -195,6 +195,17 @@ function walkLoop(
 }
 
 /**
+ * Scratch for {@link pickNext}, reused across calls.
+ *
+ * Module-level rather than per-call because that function is the hottest loop
+ * in the tracer — once per boundary edge, ~3 million of them on a 1 MP
+ * photograph. Safe to share: the walk is strictly sequential, and the values
+ * are consumed before the next call. `DIRS` holds four (dx, dy) pairs flat.
+ */
+const DIRS = new Int32Array(8);
+const EDGES = new Int32Array(4);
+
+/**
  * Choose the next edge leaving `vertex`.
  *
  * A lattice vertex can carry two outgoing edges of the same component when the
@@ -232,18 +243,27 @@ function pickNext(
   const vx = vertex % VW;
   const vy = (vertex - vx) / VW;
 
-  // Directions relative to travel, in the fixed preference order.
-  const dirs = [
-    [-dy, dx],   // 0 clockwise  (cut: arms stay separate)
-    [dx, dy],    // 1 straight
-    [dy, -dx],   // 2 counter-clockwise (hug: arms join)
-    [-dx, -dy],  // 3 reverse
-  ];
+  // Directions relative to travel, in the fixed preference order:
+  //   0 clockwise (cut: arms stay separate) · 1 straight
+  //   2 counter-clockwise (hug: arms join)  · 3 reverse
+  //
+  // Held in module-level scratch rather than allocated here. This function runs
+  // once per boundary edge walked — measured at roughly 3 million edges on a
+  // 1 MP photograph — and the six arrays it used to build per call came to
+  // about 18 million short-lived allocations for one image, in the stage that
+  // is 25-30% of trace time. The values are consumed before the next call, so a
+  // shared buffer is safe: the walk is strictly sequential and single-threaded,
+  // which the determinism guarantee already depends on.
+  DIRS[0] = -dy; DIRS[1] = dx;
+  DIRS[2] = dx;  DIRS[3] = dy;
+  DIRS[4] = dy;  DIRS[5] = -dx;
+  DIRS[6] = -dx; DIRS[7] = -dy;
 
-  const edges = [-1, -1, -1, -1];
+  const edges = EDGES;
+  edges[0] = -1; edges[1] = -1; edges[2] = -1; edges[3] = -1;
   for (let d = 0; d < 4; d++) {
-    const nx = vx + dirs[d][0];
-    const ny = vy + dirs[d][1];
+    const nx = vx + DIRS[d * 2];
+    const ny = vy + DIRS[d * 2 + 1];
     if (nx < 0 || nx > width || ny < 0 || ny > height) continue;
     const target = ny * VW + nx;
     for (let g = head[vertex]; g !== -1; g = edgeNext[g]) {
