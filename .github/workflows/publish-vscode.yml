@@ -85,6 +85,14 @@ jobs:
           echo "::error::vecline@$tag never appeared on npm"
           exit 1
 
+      # The committed lock necessarily lags a release: the version is bumped,
+      # then published, then tagged, and until the publish lands `vecline@X.Y.Z`
+      # does not resolve. Now that the wait above has confirmed npm serves it,
+      # the refresh can succeed — and it must, because `npm ci` below refuses to
+      # install when the lock and the manifest disagree.
+      - name: Refresh the extension lockfile against the published engine
+        run: node scripts/sync-extension-versions.mjs
+
       # `npm ci` honours --os/--cpu/--libc against the committed lockfile, which
       # already contains every platform variant, so this selects a different
       # subset of the same resolved tree rather than re-resolving it.

@@ -90,12 +90,44 @@ const lockPath = join(ROOT, 'extensions/vscode/package-lock.json');
 if (existsSync(lockPath)) {
   const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
   const locked = lock.packages?.['node_modules/vecline']?.version;
+
+  /*
+   * The lock cannot move until the engine is on npm — that is the ordering, not
+   * a bug to route around.
+   *
+   * At release time the sequence is: bump the version here, publish to npm,
+   * then tag. Between the bump and the publish, `vecline@^X.Y.Z` does not
+   * resolve, so refreshing the lock fails with ETARGET and a stale lock is the
+   * *correct* state of the tree. Treating that as an error made it impossible
+   * to cut a release at all.
+   *
+   * So: a lock behind an engine version that npm already serves is real drift
+   * and fails. A lock behind a version nobody has published yet is just a
+   * release in progress, and is reported rather than enforced. The packaging
+   * workflow runs this script in write mode after it has waited for npm, which
+   * is the point where the refresh can actually succeed.
+   */
+  const publishedAlready = (() => {
+    try {
+      execSync(`npm view vecline@${engineVersion} version`, { stdio: 'pipe' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
   if (locked !== engineVersion) {
-    if (check) {
+    if (!publishedAlready) {
+      console.log(
+        `note: extensions/vscode/package-lock.json still resolves vecline ${locked}. ` +
+        `vecline@${engineVersion} is not on npm yet, so the lock cannot be refreshed until after ` +
+        '`npm publish`. Re-run this script then, or let the packaging workflow do it.',
+      );
+    } else if (check) {
       problems.push(
-        `extensions/vscode/package-lock.json resolves vecline ${locked}, but this repo is ${engineVersion}. ` +
-        '`npm ci` refuses to install when the lock and the manifest disagree, so every packaging job would fail. ' +
-        'Run: node scripts/sync-extension-versions.mjs',
+        `extensions/vscode/package-lock.json resolves vecline ${locked}, but this repo is ${engineVersion} ` +
+        'and npm already serves it. `npm ci` refuses to install when the lock and the manifest disagree, ' +
+        'so every packaging job would fail. Run: node scripts/sync-extension-versions.mjs',
       );
     } else {
       // --package-lock-only rewrites the lock without materialising node_modules,
