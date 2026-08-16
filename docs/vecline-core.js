@@ -290,9 +290,9 @@ function detectBackgroundColor(img) {
   }
   let best = 0;
   let bestKey = 0;
-  for (const [key, count] of votes) {
-    if (count > best) {
-      best = count;
+  for (const [key, count2] of votes) {
+    if (count2 > best) {
+      best = count2;
       bestKey = key;
     }
   }
@@ -372,6 +372,98 @@ function removeBackground(img, opts = {}) {
     if (y < height - 1) consider(index + width);
   }
   return { image: out, color, removed, detected };
+}
+
+// src/metrics/severity.ts
+function severity(deltaE, width, height, opts = {}) {
+  const threshold = opts.threshold ?? 2;
+  const minNeighbours = opts.minNeighbours ?? 4;
+  const n2 = width * height;
+  const empty = {
+    differing: 0,
+    coherent: 0,
+    clusters: 0,
+    largestCluster: 0,
+    mass: 0,
+    score: 1
+  };
+  if (n2 === 0) return empty;
+  const bad = new Uint8Array(n2);
+  let differing = 0;
+  for (let i = 0; i < n2; i++) {
+    if (deltaE[i] > threshold) {
+      bad[i] = 1;
+      differing++;
+    }
+  }
+  if (differing === 0) return empty;
+  const kept = new Uint8Array(n2);
+  let coherent = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (!bad[i]) continue;
+      let c = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= height) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const xx = x + dx;
+          if (xx < 0 || xx >= width) continue;
+          if (bad[yy * width + xx]) c++;
+        }
+      }
+      if (c >= minNeighbours) {
+        kept[i] = 1;
+        coherent++;
+      }
+    }
+  }
+  if (coherent === 0) {
+    return { differing, coherent: 0, clusters: 0, largestCluster: 0, mass: 0, score: 1 };
+  }
+  const seen = new Uint8Array(n2);
+  const stack = new Int32Array(coherent);
+  let clusters = 0, largest = 0, sumSq = 0;
+  for (let s = 0; s < n2; s++) {
+    if (!kept[s] || seen[s]) continue;
+    clusters++;
+    let top2 = 0, area = 0;
+    stack[top2++] = s;
+    seen[s] = 1;
+    while (top2 > 0) {
+      const i = stack[--top2];
+      area++;
+      const x = i % width, y = (i - x) / width;
+      if (x > 0 && kept[i - 1] && !seen[i - 1]) {
+        seen[i - 1] = 1;
+        stack[top2++] = i - 1;
+      }
+      if (x + 1 < width && kept[i + 1] && !seen[i + 1]) {
+        seen[i + 1] = 1;
+        stack[top2++] = i + 1;
+      }
+      if (y > 0 && kept[i - width] && !seen[i - width]) {
+        seen[i - width] = 1;
+        stack[top2++] = i - width;
+      }
+      if (y + 1 < height && kept[i + width] && !seen[i + width]) {
+        seen[i + width] = 1;
+        stack[top2++] = i + width;
+      }
+    }
+    if (area > largest) largest = area;
+    sumSq += area * area;
+  }
+  const mass = Math.min(1, Math.sqrt(sumSq) / n2);
+  return { differing, coherent, clusters, largestCluster: largest, mass, score: 1 - mass };
+}
+function compositeScore(psnr, ssim, severityScore) {
+  const p = Number.isFinite(psnr) ? Math.max(0, Math.min(1, psnr / 40)) : 1;
+  const s = Math.max(0, Math.min(1, ssim));
+  const v = Math.max(0, Math.min(1, severityScore));
+  return Math.pow(p * s * s * v, 1 / 4);
 }
 
 // src/metrics/ssim.ts
@@ -455,7 +547,7 @@ function ssimPlane(x, y, width, height) {
   blur(yy, width, height, kernel, radius, tmp, sYY);
   blur(xy, width, height, kernel, radius, tmp, sXY);
   let total = 0;
-  let count = 0;
+  let count2 = 0;
   for (let py = radius; py < height - radius; py++) {
     for (let px = radius; px < width - radius; px++) {
       const i = py * width + px;
@@ -467,10 +559,10 @@ function ssimPlane(x, y, width, height) {
       const num2 = (2 * mxy + C1) * (2 * vxy + C2);
       const den = (mx2 + my2 + C1) * (vx + vy + C2);
       total += num2 / den;
-      count++;
+      count2++;
     }
   }
-  return count > 0 ? total / count : 1;
+  return count2 > 0 ? total / count2 : 1;
 }
 
 // src/metrics/index.ts
@@ -522,8 +614,15 @@ function compareImages(reference, candidate, opts = {}) {
     ssimLuma = ssimPlane(planesA.luma, planesB.luma, width, height);
   }
   let deltaE = { mean: 0, p95: 0, max: 0 };
+  const field = opts.severity && !lossless ? new Float64Array(pixels) : void 0;
   if (!lossless && !opts.skipDeltaE) {
-    deltaE = deltaEStats(reference, candidate, bg);
+    deltaE = deltaEStats(reference, candidate, bg, field);
+  }
+  let sev;
+  let composite;
+  if (opts.severity) {
+    sev = lossless ? { differing: 0, coherent: 0, clusters: 0, largestCluster: 0, mass: 0, score: 1 } : severity(field ?? new Float64Array(pixels), width, height);
+    composite = lossless ? 1 : compositeScore(psnr, ssim, sev.score);
   }
   return {
     width,
@@ -540,7 +639,9 @@ function compareImages(reference, candidate, opts = {}) {
     deltaE,
     deltaEBackground: bg,
     alphaMode,
-    lossless
+    lossless,
+    severity: sev,
+    composite
   };
 }
 function extractPlanes(rgba, pixels) {
@@ -557,7 +658,7 @@ function extractPlanes(rgba, pixels) {
   }
   return { rgb: [r, g, b], luma };
 }
-function deltaEStats(reference, candidate, bg) {
+function deltaEStats(reference, candidate, bg, field) {
   const flatA = compositeOver(reference, bg);
   const flatB = compositeOver(candidate, bg);
   const pixels = reference.width * reference.height;
@@ -578,6 +679,7 @@ function deltaEStats(reference, candidate, bg) {
     srgbToLab(ra, ga, ba, labA);
     srgbToLab(rb, gb, bb, labB);
     const de = deltaE2000(labA[0], labA[1], labA[2], labB[0], labB[1], labB[2]);
+    if (field) field[i] = de;
     sum += de;
     if (de > max) max = de;
     const bin = Math.min(BINS - 1, Math.round(de * 100));
@@ -849,11 +951,21 @@ var SvgDoc = class {
     return this.children.length;
   }
 };
+function opacityValue(a) {
+  if (a >= 255) return null;
+  const o = (a / 255).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return o.startsWith("0.") ? o.slice(1) : o;
+}
 function fillAttrs(c) {
   const fill = ` fill="${shortHex(c.r, c.g, c.b)}"`;
-  if (c.a >= 255) return fill;
-  const o = (c.a / 255).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-  return `${fill} fill-opacity="${o.startsWith("0.") ? o.slice(1) : o}"`;
+  const o = opacityValue(c.a);
+  return o === null ? fill : `${fill} fill-opacity="${o}"`;
+}
+function strokeAttrs(c, width) {
+  if (!(width > 0)) return "";
+  const base = ` stroke="${shortHex(c.r, c.g, c.b)}" stroke-width="${width}"`;
+  const o = opacityValue(c.a);
+  return o === null ? base : `${base} stroke-opacity="${o}"`;
 }
 function escapeText(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -866,19 +978,136 @@ function escapeComment(s) {
 }
 
 // src/svg/optimize.ts
+var NUMERIC_LISTS = /\s(d|points|transform|viewBox)="([^"]*)"/g;
+var TOKEN = /[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+function round(text, scale) {
+  const n2 = Math.round(parseFloat(text) * scale) / scale;
+  return Number.isFinite(n2) ? String(n2) : text;
+}
+function roundStandalone(chunk, scale) {
+  return chunk.replace(/-?\d*\.\d+(?:e-?\d+)?/gi, (m) => round(m, scale));
+}
+function roundNumericList(value, scale) {
+  let out = "";
+  let prevWasNumber = false;
+  let prevHadDot = false;
+  for (const m of value.matchAll(TOKEN)) {
+    const tok = m[0];
+    if (/[A-Za-z]/.test(tok)) {
+      out += tok;
+      prevWasNumber = false;
+      prevHadDot = false;
+      continue;
+    }
+    const text = round(tok, scale);
+    if (prevWasNumber) {
+      const first = text[0];
+      const selfDelimiting = first === "-" || first === "." && prevHadDot;
+      if (!selfDelimiting) out += " ";
+    }
+    out += text;
+    prevWasNumber = true;
+    prevHadDot = text.includes(".");
+  }
+  return out;
+}
+function stripSpans(text, open, close, opts = {}) {
+  const first = text.indexOf(open[0]);
+  if (first === -1) return text;
+  const matchesOpen = (at) => opts.caseInsensitive ? text.slice(at, at + open.length).toLowerCase() === open.toLowerCase() : text.startsWith(open, at);
+  let out = "";
+  let cursor = 0;
+  let from = 0;
+  let found = false;
+  for (; ; ) {
+    let start = -1;
+    for (let i = text.indexOf(open[0], from); i !== -1; i = text.indexOf(open[0], i + 1)) {
+      if (matchesOpen(i)) {
+        start = i;
+        break;
+      }
+    }
+    if (start === -1) break;
+    const end = text.indexOf(close, start + open.length);
+    if (end === -1) break;
+    out += text.slice(cursor, start);
+    cursor = end + close.length;
+    if (opts.trailingSpace) {
+      while (cursor < text.length && /\s/.test(text[cursor])) cursor++;
+    }
+    from = cursor;
+    found = true;
+  }
+  return found ? out + text.slice(cursor) : text;
+}
 function optimizeSvg(svg, opts = {}) {
   const precision = opts.precision ?? 2;
   const scale = 10 ** precision;
   const stripProlog = opts.stripProlog !== false;
   let out = svg;
   if (stripProlog) {
-    out = out.replace(/<\?xml[\s\S]*?\?>\s*/gi, "").replace(/<!DOCTYPE[^>]*>\s*/gi, "").replace(/<!--[\s\S]*?-->/g, "");
+    out = stripSpans(out, "<?xml", "?>", { trailingSpace: true, caseInsensitive: true });
+    out = stripSpans(out, "<!DOCTYPE", ">", { trailingSpace: true, caseInsensitive: true });
+    out = stripSpans(out, "<!--", "-->");
   }
-  out = out.replace(/>\s+</g, "><").replace(/\s{2,}/g, " ").replace(/-?\d*\.\d+(?:e-?\d+)?/gi, (m) => {
-    const n2 = Math.round(parseFloat(m) * scale) / scale;
-    return Number.isFinite(n2) ? String(n2) : m;
-  }).replace(/\s(?:fill|stroke)-opacity="1"/g, "").replace(/\sfill-rule="nonzero"/g, "").trim();
-  return out;
+  out = out.replace(/>\s+</g, "><").replace(/\s{2,}/g, " ");
+  let rounded = "";
+  let last = 0;
+  NUMERIC_LISTS.lastIndex = 0;
+  for (let m = NUMERIC_LISTS.exec(out); m !== null; m = NUMERIC_LISTS.exec(out)) {
+    rounded += roundStandalone(out.slice(last, m.index), scale);
+    rounded += ` ${m[1]}="${roundNumericList(m[2], scale)}"`;
+    last = m.index + m[0].length;
+  }
+  rounded += roundStandalone(out.slice(last), scale);
+  return rounded.replace(/\s(?:fill|stroke)-opacity="1"/g, "").replace(/\sfill-rule="nonzero"/g, "").trim();
+}
+
+// src/svg/budget.ts
+var PARAMS = {
+  m: 2,
+  l: 2,
+  t: 2,
+  // moveto / lineto / smooth-quadratic
+  h: 1,
+  v: 1,
+  // horizontal / vertical lineto
+  c: 6,
+  // cubic
+  s: 4,
+  q: 4,
+  // smooth-cubic / quadratic
+  a: 7,
+  // elliptical arc
+  z: 0
+  // closepath adds no anchor
+};
+function countPathNodes(d) {
+  let nodes = 0;
+  const re = /([MmLlHhVvCcSsQqTtAaZz])([^MmLlHhVvCcSsQqTtAaZz]*)/g;
+  let m;
+  while ((m = re.exec(d)) !== null) {
+    const arity = PARAMS[m[1].toLowerCase()];
+    if (!arity) continue;
+    const count2 = (m[2].match(/-?\.?\d[\d.eE+-]*/g) ?? []).length;
+    nodes += Math.max(1, Math.floor(count2 / arity));
+  }
+  return nodes;
+}
+function measureSvgComplexity(svg) {
+  const bytes = new TextEncoder().encode(svg).length;
+  let nodes = 0;
+  for (const m of svg.matchAll(/\sd="([^"]*)"/g)) nodes += countPathNodes(m[1]);
+  for (const m of svg.matchAll(/<(?:polygon|polyline)\b[^>]*\spoints="([^"]*)"/g)) {
+    nodes += Math.floor((m[1].match(/-?\.?\d[\d.eE+-]*/g) ?? []).length / 2);
+  }
+  nodes += 4 * count(svg, /<(?:circle|ellipse|rect)\b/g);
+  nodes += 2 * count(svg, /<line\b/g);
+  const shapes = count(svg, /<(?:path|circle|ellipse|rect|line|polygon|polyline|image)\b/g);
+  return { bytes, nodes, shapes };
+}
+function count(s, re) {
+  return (s.match(re) ?? []).length;
 }
 
 // src/vectorize/pixel.ts
@@ -942,9 +1171,9 @@ function vectorizePixels(img, opts = {}) {
   let backgroundKey = 0;
   if (opts.background !== false && opaque && counts.size > 1) {
     let best = 0;
-    for (const [key, count] of counts) {
-      if (count > best) {
-        best = count;
+    for (const [key, count2] of counts) {
+      if (count2 > best) {
+        best = count2;
         backgroundKey = key;
       }
     }
@@ -996,13 +1225,42 @@ function dominantColor(img) {
   }
   let best = 0;
   let bestKey = packRgba(255, 255, 255, 255);
-  for (const [key, count] of counts) {
-    if (count > best) {
-      best = count;
+  for (const [key, count2] of counts) {
+    if (count2 > best) {
+      best = count2;
       bestKey = key;
     }
   }
   return unpackRgba(bestKey);
+}
+
+// src/types.ts
+function assertRasterImage(value, fn) {
+  const img = value;
+  const describe = () => {
+    if (value === null) return "null";
+    if (value === void 0) return "undefined";
+    if (ArrayBuffer.isView(value)) return `a ${value.constructor.name} of ${value.byteLength} bytes`;
+    if (typeof value !== "object") return `a ${typeof value}`;
+    return `an object with keys [${Object.keys(value).slice(0, 6).join(", ")}]`;
+  };
+  const bad = (why) => {
+    throw new TypeError(
+      `${fn}() expects a decoded RasterImage ({ width, height, data }), but got ${describe()}. ${why} Encoded file bytes must be decoded first \u2014 use the \`vecline\` CLI, or decode to RGBA8 yourself.`
+    );
+  };
+  if (img == null || typeof img !== "object") bad("It is not an object.");
+  if (!Number.isInteger(img.width) || !Number.isInteger(img.height)) {
+    bad(`\`width\`/\`height\` must be integers, saw ${String(img.width)}x${String(img.height)}.`);
+  }
+  if (img.width < 1 || img.height < 1) {
+    bad(`\`width\`/\`height\` must be positive, saw ${img.width}x${img.height}.`);
+  }
+  if (!ArrayBuffer.isView(img.data)) bad("`data` is not a typed array.");
+  const need = img.width * img.height * 4;
+  if (img.data.byteLength !== need) {
+    bad(`\`data\` must be exactly width*height*4 = ${need} bytes, saw ${img.data.byteLength}.`);
+  }
 }
 
 // src/vectorize/components.ts
@@ -1070,24 +1328,24 @@ function connectedComponents(classes, width, height, voidClass = -1) {
   }
   const remap = new Int32Array(uf.length).fill(-1);
   const labels = new Int32Array(n2).fill(-1);
-  let count = 0;
+  let count2 = 0;
   for (let i = 0; i < n2; i++) {
     const p = provisional[i];
     if (p === -1) continue;
     const root = uf.find(p);
     let dense = remap[root];
     if (dense === -1) {
-      dense = count++;
+      dense = count2++;
       remap[root] = dense;
     }
     labels[i] = dense;
   }
-  const areas = new Int32Array(count);
-  const componentClasses = new Int32Array(count).fill(-1);
-  const bounds = new Int32Array(count * 4);
-  for (let c = 0; c < count; c++) {
-    bounds[c * 4] = Number.MAX_SAFE_INTEGER;
-    bounds[c * 4 + 1] = Number.MAX_SAFE_INTEGER;
+  const areas = new Int32Array(count2);
+  const componentClasses = new Int32Array(count2).fill(-1);
+  const bounds = new Int32Array(count2 * 4);
+  for (let c = 0; c < count2; c++) {
+    bounds[c * 4] = width;
+    bounds[c * 4 + 1] = height;
     bounds[c * 4 + 2] = -1;
     bounds[c * 4 + 3] = -1;
   }
@@ -1105,15 +1363,57 @@ function connectedComponents(classes, width, height, voidClass = -1) {
       if (y > bounds[b + 3]) bounds[b + 3] = y;
     }
   }
-  return { labels, count, areas, classes: componentClasses, bounds };
+  return { labels, count: count2, areas, classes: componentClasses, bounds };
 }
-function despeckle(classes, comps, width, height, minArea, voidClass = -1) {
+function adaptiveMinArea(comps, totalPixels, budget = 0.015) {
+  if (comps.count === 0 || totalPixels <= 0) return 0;
+  const sizes = Array.from(comps.areas.subarray(0, comps.count)).sort((a, b) => a - b);
+  const allowed = totalPixels * budget;
+  let spent = 0;
+  let threshold = 0;
+  for (const size of sizes) {
+    if (spent + size > allowed) break;
+    spent += size;
+    threshold = size + 1;
+  }
+  const ceiling = Math.max(4, Math.round(totalPixels * 4e-3));
+  return Math.min(threshold, ceiling);
+}
+function despeckle(classes, comps, width, height, minArea, voidClass = -1, scope = "all") {
   if (minArea <= 1) return 0;
   const small = [];
   for (let c = 0; c < comps.count; c++) {
     if (comps.areas[c] < minArea) small.push(c);
   }
   if (small.length === 0) return 0;
+  if (scope === "isolated") {
+    const borders = /* @__PURE__ */ new Map();
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const c = comps.labels[i];
+        if (comps.areas[c] >= minArea) continue;
+        const me = classes[i];
+        for (const j of [
+          x > 0 ? i - 1 : -1,
+          x + 1 < width ? i + 1 : -1,
+          y > 0 ? i - width : -1,
+          y + 1 < height ? i + width : -1
+        ]) {
+          if (j < 0) continue;
+          const other = classes[j];
+          if (other === me) continue;
+          const prev = borders.get(c);
+          if (prev === void 0) borders.set(c, other);
+          else if (prev !== other && prev !== -1) borders.set(c, -1);
+        }
+      }
+    }
+    for (let k = small.length - 1; k >= 0; k--) {
+      if (borders.get(small[k]) === -1) small.splice(k, 1);
+    }
+    if (small.length === 0) return 0;
+  }
   small.sort((a, b) => comps.areas[a] - comps.areas[b]);
   const isSmall = new Uint8Array(comps.count);
   for (const c of small) isSmall[c] = 1;
@@ -1291,23 +1591,27 @@ function walkLoop(startEdge, comp, edgeFrom, edgeTo, edgeComp, edgeNext, head, u
   }
   return { pts, signedArea: area2 / 2 };
 }
+var DIRS = new Int32Array(8);
+var EDGES = new Int32Array(4);
 function pickNext(vertex, dx, dy, comp, edgeTo, edgeComp, edgeNext, head, used, VW, width, height, labels, turnPolicy) {
   const vx = vertex % VW;
   const vy = (vertex - vx) / VW;
-  const dirs = [
-    [-dy, dx],
-    // 0 clockwise  (cut: arms stay separate)
-    [dx, dy],
-    // 1 straight
-    [dy, -dx],
-    // 2 counter-clockwise (hug: arms join)
-    [-dx, -dy]
-    // 3 reverse
-  ];
-  const edges = [-1, -1, -1, -1];
+  DIRS[0] = -dy;
+  DIRS[1] = dx;
+  DIRS[2] = dx;
+  DIRS[3] = dy;
+  DIRS[4] = dy;
+  DIRS[5] = -dx;
+  DIRS[6] = -dx;
+  DIRS[7] = -dy;
+  const edges = EDGES;
+  edges[0] = -1;
+  edges[1] = -1;
+  edges[2] = -1;
+  edges[3] = -1;
   for (let d = 0; d < 4; d++) {
-    const nx = vx + dirs[d][0];
-    const ny = vy + dirs[d][1];
+    const nx = vx + DIRS[d * 2];
+    const ny = vy + DIRS[d * 2 + 1];
     if (nx < 0 || nx > width || ny < 0 || ny > height) continue;
     const target = ny * VW + nx;
     for (let g = head[vertex]; g !== -1; g = edgeNext[g]) {
@@ -1358,6 +1662,7 @@ function componentIsLocalMajority(vx, vy, comp, labels, width, height) {
 // src/vectorize/exact.ts
 var DEFAULT_MAX_REGIONS = 2e5;
 function vectorizeExact(img, opts = {}) {
+  assertRasterImage(img, "vectorizeExact");
   const rects = vectorizePixels(img, opts);
   const contours = tryContours(img, opts);
   if (!contours || contours.svg.length >= rects.svg.length) {
@@ -1385,6 +1690,7 @@ function tryContours(img, opts) {
   }
 }
 function vectorizeExactContours(img, opts = {}) {
+  assertRasterImage(img, "vectorizeExactContours");
   const { width, height, data } = img;
   const n2 = width * height;
   const maxRegions = opts.maxRegions ?? DEFAULT_MAX_REGIONS;
@@ -1577,7 +1883,8 @@ function fitLoop(pts, opts) {
   }
   if (anchors.length < 3) return null;
   const forcedCorners = opts.rightAngleEnhance ? enhanceRightAngles(px, py, anchors, opts.rightAngleThreshold ?? 12) : void 0;
-  if (opts.polygonOnly) {
+  const fitterIsDead = anchors.length === n2 && !opts.rightAngleEnhance;
+  if (opts.polygonOnly || fitterIsDead) {
     const segments2 = [];
     for (let i = 1; i < anchors.length; i++) {
       segments2.push({ kind: "line", x: px[anchors[i]], y: py[anchors[i]] });
@@ -1641,20 +1948,20 @@ function douglasPeucker(px, py, first, last, tolerance, out, map) {
     const bx = px[map(l)], by = py[map(l)];
     const dx = bx - ax, dy = by - ay;
     const lenSq = dx * dx + dy * dy;
-    let worst = -1;
+    let worst2 = -1;
     let worstDist = tolerance;
     for (let i = f + 1; i < l; i++) {
       const cx = px[map(i)], cy = py[map(i)];
       const dist = lenSq === 0 ? Math.hypot(cx - ax, cy - ay) : Math.abs(dy * cx - dx * cy + bx * ay - by * ax) / Math.sqrt(lenSq);
       if (dist > worstDist) {
         worstDist = dist;
-        worst = i;
+        worst2 = i;
       }
     }
-    if (worst === -1) continue;
-    keep.push(worst);
-    stack.push([f, worst]);
-    stack.push([worst, l]);
+    if (worst2 === -1) continue;
+    keep.push(worst2);
+    stack.push([f, worst2]);
+    stack.push([worst2, l]);
   }
   keep.sort((a, b) => a - b);
   for (const i of keep) out.push(map(i));
@@ -1729,10 +2036,10 @@ function findBreakpoints(px, py, n2, anchors, cornerAngleDeg, forced) {
   ];
 }
 function extractChain(px, py, n2, start, end) {
-  const count = start <= end ? end - start + 1 : n2 - start + end + 1;
-  const x = new Float64Array(count);
-  const y = new Float64Array(count);
-  for (let i = 0; i < count; i++) {
+  const count2 = start <= end ? end - start + 1 : n2 - start + end + 1;
+  const x = new Float64Array(count2);
+  const y = new Float64Array(count2);
+  for (let i = 0; i < count2; i++) {
     const idx = (start + i) % n2;
     x[i] = px[idx];
     y[i] = py[idx];
@@ -2227,14 +2534,14 @@ function quantize(img, maxColors, opts = {}) {
       i--;
     }
     next = 0;
-    let worst = residual[0];
+    let worst2 = residual[0];
     for (let j = 1; j <= i; j++) {
-      if (residual[j] > worst) {
-        worst = residual[j];
+      if (residual[j] > worst2) {
+        worst2 = residual[j];
         next = j;
       }
     }
-    if (worst <= 0) {
+    if (worst2 <= 0) {
       used = i + 1;
       break;
     }
@@ -2569,7 +2876,51 @@ function otsuThreshold(img) {
   }
   return threshold;
 }
+function bradleyMask(img, window = 0, t = 15) {
+  const { width: w, height: h, data } = img;
+  const n2 = w * h;
+  const mask = new Uint8Array(n2);
+  if (n2 === 0) return mask;
+  const sum = new Float64Array((w + 1) * (h + 1));
+  const cnt = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let rowSum = 0, rowCnt = 0;
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      const opaque = data[o + 3] >= 128;
+      if (opaque) {
+        rowSum += luma709(data[o], data[o + 1], data[o + 2]);
+        rowCnt++;
+      }
+      const i = (y + 1) * (w + 1) + (x + 1);
+      sum[i] = rowSum + sum[i - (w + 1)];
+      cnt[i] = rowCnt + cnt[i - (w + 1)];
+    }
+  }
+  const side = window > 0 ? window : Math.max(3, Math.round(Math.min(w, h) / 8));
+  const half = Math.max(1, side >> 1);
+  const keep = (100 - t) / 100;
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - half), y1 = Math.min(h - 1, y + half);
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      if (data[o + 3] < 128) continue;
+      const x0 = Math.max(0, x - half), x1 = Math.min(w - 1, x + half);
+      const a = y0 * (w + 1) + x0;
+      const b = y0 * (w + 1) + (x1 + 1);
+      const c = (y1 + 1) * (w + 1) + x0;
+      const d = (y1 + 1) * (w + 1) + (x1 + 1);
+      const count2 = cnt[d] - cnt[b] - cnt[c] + cnt[a];
+      if (count2 <= 0) continue;
+      const mean = (sum[d] - sum[b] - sum[c] + sum[a]) / count2;
+      if (luma709(data[o], data[o + 1], data[o + 2]) <= mean * keep) mask[y * w + x] = 1;
+    }
+  }
+  return mask;
+}
 function applyThreshold(img, opts = {}) {
+  const adaptive = opts.adaptive === true;
+  const mask = adaptive ? bradleyMask(img, opts.adaptiveWindow ?? 0, opts.adaptiveT ?? 15) : null;
   const cutoff = opts.threshold === void 0 || opts.threshold === "auto" ? otsuThreshold(img) : opts.threshold;
   const blackOnWhite = opts.blackOnWhite ?? true;
   const fg = opts.foreground ?? [0, 0, 0];
@@ -2585,7 +2936,8 @@ function applyThreshold(img, opts = {}) {
       continue;
     }
     const lum = luma709(data[o], data[o + 1], data[o + 2]);
-    const isForeground = blackOnWhite ? lum <= cutoff : lum > cutoff;
+    const dark = mask ? mask[i] === 1 : Math.round(lum) <= cutoff;
+    const isForeground = blackOnWhite ? dark : !dark;
     const c = isForeground ? fg : bg;
     out[o] = c[0];
     out[o + 1] = c[1];
@@ -2602,7 +2954,7 @@ var GRADIENT_DEFAULTS = {
   gradientMinArea: 0,
   gradientStepMax: 0.08,
   gradientMargin: 0.1,
-  gradientMaxError: 0.1,
+  gradientMaxError: 0.015,
   gradientStops: 16
 };
 function detectGradients(img, classes, palette, alphaLevels, levelCount, width, height, opts) {
@@ -2676,12 +3028,23 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
   const RA = new Float64Array(K * 3);
   const RB = new Float64Array(K * 3);
   const lab = new Float64Array(3);
+  const paletteColors = Math.max(1, Math.floor(palette.rgb.length / 3));
+  const bandSeen = new Uint8Array(K * paletteColors);
+  const bandCount = new Int32Array(K);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
       if (classes[i] < 0) continue;
       const k = kOf(i);
       if (k < 0) continue;
+      const ci = colorIdx(classes[i]);
+      if (ci < paletteColors) {
+        const seenAt = k * paletteColors + ci;
+        if (!bandSeen[seenAt]) {
+          bandSeen[seenAt] = 1;
+          bandCount[k]++;
+        }
+      }
       const o = i * 4;
       srgbToOklab(img.data[o], img.data[o + 1], img.data[o + 2], lab);
       const m = k * 6;
@@ -2717,20 +3080,20 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
     const c = jxy * jxy + jay * jay + jby * jby;
     const axis = topEigenvector2(a, b, c);
     if (!axis) continue;
-    const count = M[m];
+    const count2 = M[m];
     models[k] = {
       dx: axis[0],
       dy: axis[1],
-      meanX: M[m + 1] / count,
-      meanY: M[m + 2] / count
+      meanX: M[m + 1] / count2,
+      meanY: M[m + 2] / count2
     };
   }
   const cxArr = new Float64Array(K);
   const cyArr = new Float64Array(K);
   for (let k = 0; k < K; k++) {
-    const count = M[k * 6] || 1;
-    cxArr[k] = M[k * 6 + 1] / count;
-    cyArr[k] = M[k * 6 + 2] / count;
+    const count2 = M[k * 6] || 1;
+    cxArr[k] = M[k * 6 + 1] / count2;
+    cyArr[k] = M[k * 6 + 2] / count2;
   }
   const tMin = new Float64Array(K).fill(Infinity);
   const tMax = new Float64Array(K).fill(-Infinity);
@@ -2796,9 +3159,9 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
   const stopList = new Array(K).fill(null);
   const stopListRad = new Array(K).fill(null);
   for (let k = 0; k < K; k++) {
-    const count = M[k * 6];
-    if (count <= 0) continue;
-    const target = flatSum[k] / count * (1 - opts.gradientMargin);
+    const count2 = M[k * 6];
+    if (count2 <= 0) continue;
+    const target = flatSum[k] / count2 * (1 - opts.gradientMargin);
     if (models[k] && tMax[k] > tMin[k]) {
       const lin = buildCurve(fineL, fineA, fineB, fineN, k, FINE);
       stopList[k] = selectStops(lin.curve, lin.w, FINE, maxStops, target);
@@ -2842,10 +3205,11 @@ function detectGradients(img, classes, palette, alphaLevels, levelCount, width, 
   const floorSq = opts.gradientMaxError * opts.gradientMaxError;
   for (let k = 0; k < K; k++) {
     if (!stopList[k] && !stopListRad[k]) continue;
-    const count = M[k * 6];
-    const target = flatSum[k] / count * (1 - opts.gradientMargin);
-    const linErr = models[k] && stopList[k] ? gradSum[k] / count : Infinity;
-    const radErr = stopListRad[k] && radRMax[k] > 0 ? gradSumRad[k] / count : Infinity;
+    const count2 = M[k * 6];
+    const bands = Math.max(1, bandCount[k]);
+    const target = flatSum[k] / count2 * bands * (1 - opts.gradientMargin);
+    const linErr = models[k] && stopList[k] ? gradSum[k] / count2 : Infinity;
+    const radErr = stopListRad[k] && radRMax[k] > 0 ? gradSumRad[k] / count2 : Infinity;
     const radialWins = radErr < linErr;
     const bestErr = radialWins ? radErr : linErr;
     if (bestErr < target && bestErr < floorSq) {
@@ -2869,13 +3233,13 @@ function buildPaint(root, classes, alphaLevels, levelCount, mdl, tMin, tMax, sto
   const y2 = mdl.meanY + mdl.dy * (tMax - meanT);
   const body = emitStops(stops);
   const id = `pv-g${k}`;
-  const def = `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${round(x1, 2)}" y1="${round(y1, 2)}" x2="${round(x2, 2)}" y2="${round(y2, 2)}">${body}</linearGradient>`;
+  const def = `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${round2(x1, 2)}" y1="${round2(y1, 2)}" x2="${round2(x2, 2)}" y2="${round2(y2, 2)}">${body}</linearGradient>`;
   const alpha = alphaLevels[classes[root] % levelCount] / 255;
   return { def, ref: `url(#${id})`, alpha };
 }
 function buildRadialPaint(root, classes, alphaLevels, levelCount, cx, cy, rMax, stops, k) {
   const id = `pv-g${k}`;
-  const def = `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${round(cx, 2)}" cy="${round(cy, 2)}" r="${round(rMax, 2)}">${emitStops(stops)}</radialGradient>`;
+  const def = `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${round2(cx, 2)}" cy="${round2(cy, 2)}" r="${round2(rMax, 2)}">${emitStops(stops)}</radialGradient>`;
   const alpha = alphaLevels[classes[root] % levelCount] / 255;
   return { def, ref: `url(#${id})`, alpha };
 }
@@ -2886,7 +3250,7 @@ function emitStops(stops) {
     const hex3 = shortHex(clamp2552(stops[s][1]), clamp2552(stops[s][2]), clamp2552(stops[s][3]));
     if (hex3 === prev && s !== stops.length - 1) continue;
     prev = hex3;
-    body += `<stop offset="${round(stops[s][0], 3)}" stop-color="${hex3}"/>`;
+    body += `<stop offset="${round2(stops[s][0], 3)}" stop-color="${hex3}"/>`;
   }
   return body;
 }
@@ -2926,7 +3290,7 @@ function selectStops(curve, weight, fine, maxStops, targetSq) {
       const [r, g, b] = oklabToSrgb(curve[j * 3], curve[j * 3 + 1], curve[j * 3 + 2]);
       return [j / (fine - 1), r, g, b];
     });
-    let worst = -1, worstErr = -1, totE = 0, totW = 0;
+    let worst2 = -1, worstErr = -1, totE = 0, totW = 0;
     for (let j = 0; j < fine; j++) {
       if (weight[j] <= 0) continue;
       renderStops(stops, j / (fine - 1), rgb);
@@ -2936,13 +3300,13 @@ function selectStops(curve, weight, fine, maxStops, targetSq) {
       totW += weight[j];
       if (e * weight[j] > worstErr && chosen.indexOf(j) < 0) {
         worstErr = e * weight[j];
-        worst = j;
+        worst2 = j;
       }
     }
-    if (chosen.length >= maxStops || worst < 0 || totW > 0 && totE / totW <= targetSq) {
+    if (chosen.length >= maxStops || worst2 < 0 || totW > 0 && totE / totW <= targetSq) {
       return stops;
     }
-    chosen.push(worst);
+    chosen.push(worst2);
     chosen.sort((a, b) => a - b);
   }
 }
@@ -3009,7 +3373,7 @@ function clamp012(v) {
 function clamp2552(v) {
   return Math.min(255, Math.max(0, Math.round(v)));
 }
-function round(v, places) {
+function round2(v, places) {
   const p = 10 ** places;
   return Math.round(v * p) / p;
 }
@@ -3045,15 +3409,22 @@ function detectPrimitive(pts, opts = {}) {
       bestErr = ell.err;
     }
   }
-  const round3 = fitRoundRect(pts, n2, b, w, h);
-  if (round3 && round3.err <= maxError && round3.err < bestErr) {
-    best = round3.prim;
-    bestErr = round3.err;
+  const round4 = fitRoundRect(pts, n2, b, w, h);
+  if (round4 && round4.err <= maxError && round4.err < bestErr) {
+    best = round4.prim;
+    bestErr = round4.err;
+  }
+  if (best === null) {
+    const sec = fitSector(pts, n2, b, w, h, area, maxError);
+    if (sec && sec.err <= maxError) {
+      best = sec.prim;
+      bestErr = sec.err;
+    }
   }
   return best;
 }
 function primitiveSvg(prim, attrs, precision = 2) {
-  const r = (v) => round2(v, precision);
+  const r = (v) => round3(v, precision);
   switch (prim.kind) {
     case "circle":
       return `<circle cx="${r(prim.cx)}" cy="${r(prim.cy)}" r="${r(prim.r)}"${attrs}/>`;
@@ -3063,7 +3434,20 @@ function primitiveSvg(prim, attrs, precision = 2) {
       return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}"${attrs}/>`;
     case "roundrect":
       return `<rect x="${r(prim.x)}" y="${r(prim.y)}" width="${r(prim.w)}" height="${r(prim.h)}" rx="${r(prim.r)}" ry="${r(prim.r)}"${attrs}/>`;
+    case "sector":
+      return `<path d="${sectorPath(prim, precision)}"${attrs}/>`;
   }
+}
+function sectorPath(prim, precision) {
+  const r = (v) => round3(v, precision);
+  const { cx, cy, r0, r1, a0, a1 } = prim;
+  const sweep = a1 - a0;
+  const large = sweep > Math.PI ? 1 : 0;
+  const px = (rad, a) => `${r(cx + rad * Math.cos(a))} ${r(cy + rad * Math.sin(a))}`;
+  if (r0 <= 0) {
+    return `M${r(cx)} ${r(cy)}L${px(r1, a0)}A${r(r1)} ${r(r1)} 0 ${large} 1 ${px(r1, a1)}Z`;
+  }
+  return `M${px(r0, a0)}L${px(r1, a0)}A${r(r1)} ${r(r1)} 0 ${large} 1 ${px(r1, a1)}L${px(r0, a1)}A${r(r0)} ${r(r0)} 0 ${large} 0 ${px(r0, a0)}Z`;
 }
 function fitRect(pts, n2, b, w, h, area) {
   if (area < 0.95 * w * h) return null;
@@ -3085,17 +3469,17 @@ function fitRoundRect(pts, n2, b, w, h) {
   for (let s = 0; s <= STEPS; s++) {
     const r = MIN_R + (maxR - MIN_R) * s / STEPS;
     const ix0 = b.minX + r, ix1 = b.maxX - r, iy0 = b.minY + r, iy1 = b.maxY - r;
-    let worst = 0;
+    let worst2 = 0;
     for (let i = 0; i < n2; i++) {
       const x = pts[i << 1], y = pts[(i << 1) + 1];
       const qx = Math.max(ix0 - x, x - ix1, 0);
       const qy = Math.max(iy0 - y, y - iy1, 0);
       const res = Math.abs(Math.hypot(qx, qy) - r);
-      if (res > worst) worst = res;
-      if (worst >= bestErr) break;
+      if (res > worst2) worst2 = res;
+      if (worst2 >= bestErr) break;
     }
-    if (worst < bestErr) {
-      bestErr = worst;
+    if (worst2 < bestErr) {
+      bestErr = worst2;
       bestR = r;
     }
   }
@@ -3166,6 +3550,292 @@ function fitEllipse(pts, n2, b, w, h, area) {
   }
   return { prim: { kind: "ellipse", cx, cy, rx, ry }, err: maxRes };
 }
+var TAU = Math.PI * 2;
+function fitSector(pts, n2, b, w, h, area, maxError) {
+  if (n2 < 20 || w < 8 || h < 8) return null;
+  const diag = Math.hypot(w, h);
+  const fine = densify(pts, n2, 1800);
+  const coarse = stride(fine, 192);
+  const probe = stride(fine, 56);
+  const pad = 0.6 * diag;
+  const step0 = Math.max(1, diag / 12);
+  const reachable = (q, s) => q - 2.9 * s <= maxError;
+  const keep = maxError + 2.9 * step0;
+  let beam = [];
+  for (let cx = b.minX - pad; cx <= b.maxX + pad; cx += step0) {
+    for (let cy = b.minY - pad; cy <= b.maxY + pad; cy += step0) {
+      const q = score(probe, cx, cy, keep, false);
+      if (q < keep) beam.push({ x: cx, y: cy, q });
+    }
+  }
+  if (beam.length === 0) return null;
+  beam = prune(beam, BEAM, step0);
+  for (const c of beam) c.q = score(coarse, c.x, c.y, keep, false);
+  beam = prune(beam, BEAM, 0);
+  if (!reachable(beam[0].q, step0)) return null;
+  for (let s = step0; s > 0.04; s /= 2) {
+    const close = s <= 1;
+    const D = close ? fine : coarse;
+    const cut2 = maxError + 2.9 * s;
+    const cand = [];
+    for (const c of beam) {
+      cand.push({ x: c.x, y: c.y, q: score(D, c.x, c.y, cut2, close) });
+      for (let d = 0; d < 8; d++) {
+        const x = c.x + DIR_X[d] * s, y = c.y + DIR_Y[d] * s;
+        cand.push({ x, y, q: score(D, x, y, cut2, close) });
+      }
+    }
+    cand.sort((p, q) => p.q - q.q);
+    if (!reachable(cand[0].q, s)) return null;
+    beam = prune(cand, close ? 3 : BEAM, s / 2);
+  }
+  const m = derive(fine, beam[0].x, beam[0].y, true);
+  if (!m) return null;
+  const err = worst(fine, m, Infinity);
+  if (err > maxError) return null;
+  const sagitta = m.r1 * (1 - Math.cos(m.sweep / 2));
+  if (sagitta < Math.max(2, 3 * maxError)) return null;
+  if (m.arcOut < 8) return null;
+  const sArea = 0.5 * m.sweep * (m.r1 * m.r1 - m.r0 * m.r0);
+  if (Math.abs(sArea - area) > 0.06 * Math.max(area, 1)) return null;
+  return {
+    prim: { kind: "sector", cx: m.cx, cy: m.cy, r0: m.r0, r1: m.r1, a0: m.a0, a1: m.a0 + m.sweep },
+    err
+  };
+}
+var DIR_X = [1, -1, 0, 0, 1, 1, -1, -1];
+var DIR_Y = [0, 0, 1, -1, 1, -1, 1, -1];
+var BEAM = 5;
+function score(D, cx, cy, bail, refine) {
+  const m = derive(D, cx, cy, refine);
+  if (!m) return Infinity;
+  return worst(D, m, bail);
+}
+function prune(cand, k, apart) {
+  cand.sort((p, q) => p.q - q.q);
+  const out = [];
+  for (const c of cand) {
+    if (out.length >= k) break;
+    let clear = true;
+    for (const p of out) {
+      if (Math.hypot(p.x - c.x, p.y - c.y) <= apart) {
+        clear = false;
+        break;
+      }
+    }
+    if (clear) out.push(c);
+  }
+  return out.length > 0 ? out : cand.slice(0, 1);
+}
+function densify(pts, n2, cap) {
+  let perim = 0;
+  for (let i = 0, j = n2 - 1; i < n2; j = i++) {
+    perim += Math.hypot(pts[i << 1] - pts[j << 1], pts[(i << 1) + 1] - pts[(j << 1) + 1]);
+  }
+  const step = Math.max(1, perim / cap);
+  const out = [];
+  for (let i = 0; i < n2; i++) {
+    const j = (i + 1) % n2;
+    const x0 = pts[i << 1], y0 = pts[(i << 1) + 1];
+    const dx = pts[j << 1] - x0, dy = pts[(j << 1) + 1] - y0;
+    const k = Math.max(1, Math.ceil(Math.hypot(dx, dy) / step));
+    for (let t = 0; t < k; t++) out.push(x0 + dx * t / k, y0 + dy * t / k);
+  }
+  return Float64Array.from(out);
+}
+function stride(D, cap) {
+  const m = D.length >> 1;
+  const k = Math.max(1, Math.ceil(m / cap));
+  if (k === 1) return D;
+  const out = new Float64Array(((m + k - 1) / k | 0) * 2);
+  for (let i = 0, j = 0; i < m; i += k, j++) {
+    out[j << 1] = D[i << 1];
+    out[(j << 1) + 1] = D[(i << 1) + 1];
+  }
+  return out;
+}
+function derive(D, cx, cy, refine) {
+  const m = D.length >> 1;
+  if (m < 12) return null;
+  const rad = new Float64Array(m);
+  const ang = new Float64Array(m);
+  let rMax = 0, rMin = Infinity;
+  for (let i = 0; i < m; i++) {
+    const dx = D[i << 1] - cx, dy = D[(i << 1) + 1] - cy;
+    const r = Math.sqrt(dx * dx + dy * dy);
+    rad[i] = r;
+    ang[i] = Math.atan2(dy, dx);
+    if (r > rMax) rMax = r;
+    if (r < rMin) rMin = r;
+  }
+  if (rMax < 5) return null;
+  let r1 = rMax;
+  let r0 = rMin > 0.12 * rMax ? rMin : 0;
+  const gate = Math.max(r0 + 1, 0.25 * r1);
+  const angs = [];
+  for (let i = 0; i < m; i++) if (rad[i] >= gate) angs.push(ang[i]);
+  if (angs.length < 8) return null;
+  angs.sort((p, q) => p - q);
+  let gap = -1, gi = 0;
+  for (let i = 0; i < angs.length; i++) {
+    const next = i === angs.length - 1 ? angs[0] + TAU : angs[i + 1];
+    if (next - angs[i] > gap) {
+      gap = next - angs[i];
+      gi = i;
+    }
+  }
+  let a0 = angs[(gi + 1) % angs.length];
+  let a1 = angs[gi];
+  let sweep = a1 - a0;
+  if (sweep <= 0) sweep += TAU;
+  if (sweep < 0.25 || sweep > TAU - 0.15) return null;
+  a1 = a0 + sweep;
+  let arcOut = 0;
+  const passes = refine ? 3 : 1;
+  for (let pass = 0; pass < passes; pass++) {
+    const band = Math.max(2, Math.min(5, 0.05 * r1));
+    const marg = Math.min(0.35 * sweep, 4 / r1);
+    let oHi = -Infinity, oLo = Infinity, oN = 0;
+    let iHi = -Infinity, iLo = Infinity, iN = 0;
+    const mid = r0 > 0 ? (r0 + r1) / 2 : r1 / 2;
+    for (let i = 0; i < m; i++) {
+      let a = ang[i] - a0;
+      a -= TAU * Math.floor(a / TAU);
+      if (a < marg || a > sweep - marg) continue;
+      const r = rad[i];
+      if (r > r1 - band && r > mid) {
+        if (r > oHi) oHi = r;
+        if (r < oLo) oLo = r;
+        oN++;
+      } else if (r0 > 0 && r < r0 + band) {
+        if (r > iHi) iHi = r;
+        if (r < iLo) iLo = r;
+        iN++;
+      }
+    }
+    if (oN < 6) return null;
+    arcOut = oN;
+    r1 = (oHi + oLo) / 2;
+    if (r0 > 0) {
+      if (iN < 4) return null;
+      r0 = (iHi + iLo) / 2;
+    }
+    if (r1 - r0 < 3) return null;
+    if (!refine) break;
+    const pad = Math.max(1.5, 0.04 * (r1 - r0));
+    const loR = r0 + pad, hiR = r1 - pad;
+    const near = Math.max(2.5, Math.min(6, 0.06 * r1));
+    const g0r = [], g0a = [], g1r = [], g1a = [];
+    for (let i = 0; i < m; i++) {
+      const r = rad[i];
+      if (r < loR || r > hiR) continue;
+      const d0 = wrapPi(ang[i] - a0), d1 = wrapPi(ang[i] - a1);
+      const p0 = Math.abs(r * Math.sin(d0)), p1 = Math.abs(r * Math.sin(d1));
+      if (p0 <= p1) {
+        if (p0 < near && Math.abs(d0) < 0.5) {
+          g0r.push(r);
+          g0a.push(d0);
+        }
+      } else if (p1 < near && Math.abs(d1) < 0.5) {
+        g1r.push(r);
+        g1a.push(d1);
+      }
+    }
+    if (g0r.length >= 3) a0 = seatRay(g0r, g0a, a0);
+    if (g1r.length >= 3) a1 = seatRay(g1r, g1a, a1);
+    sweep = a1 - a0;
+    if (sweep <= 0) sweep += TAU;
+    if (sweep < 0.25 || sweep > TAU - 0.15) return null;
+    a1 = a0 + sweep;
+  }
+  return {
+    cx,
+    cy,
+    r0,
+    r1,
+    a0,
+    sweep,
+    arcOut,
+    c0: Math.cos(a0),
+    s0: Math.sin(a0),
+    c1: Math.cos(a1),
+    s1: Math.sin(a1)
+  };
+}
+function seatRay(rs, as, base) {
+  const skip = Math.max(1, Math.ceil(rs.length / 48));
+  const f = (dt) => {
+    let mx = 0;
+    for (let i = 0; i < rs.length; i += skip) {
+      const e = Math.abs(rs[i] * Math.sin(as[i] - dt));
+      if (e > mx) mx = e;
+    }
+    return mx;
+  };
+  let lo = -0.3, hi = 0.3;
+  for (let k = 0; k < 22; k++) {
+    const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+    if (f(m1) <= f(m2)) hi = m2;
+    else lo = m1;
+  }
+  return base + (lo + hi) / 2;
+}
+function sectorResidual(px, py, m) {
+  const dx = px - m.cx, dy = py - m.cy;
+  const r = Math.sqrt(dx * dx + dy * dy);
+  const past0 = m.c0 * dy - m.s0 * dx >= 0;
+  const before1 = dx * m.s1 - dy * m.c1 >= 0;
+  const inside = m.sweep <= Math.PI ? past0 && before1 : past0 || before1;
+  let best = Infinity;
+  if (inside) {
+    best = Math.abs(r - m.r1);
+    if (m.r0 > 0) {
+      const inner = Math.abs(r - m.r0);
+      if (inner < best) best = inner;
+    }
+  }
+  const d0 = segDist(
+    px,
+    py,
+    m.cx + m.r0 * m.c0,
+    m.cy + m.r0 * m.s0,
+    m.cx + m.r1 * m.c0,
+    m.cy + m.r1 * m.s0
+  );
+  if (d0 < best) best = d0;
+  const d1 = segDist(
+    px,
+    py,
+    m.cx + m.r0 * m.c1,
+    m.cy + m.r0 * m.s1,
+    m.cx + m.r1 * m.c1,
+    m.cy + m.r1 * m.s1
+  );
+  if (d1 < best) best = d1;
+  return best;
+}
+function worst(D, m, bail) {
+  let mx = 0;
+  for (let i = 0; i < D.length; i += 2) {
+    const e = sectorResidual(D[i], D[i + 1], m);
+    if (e > mx) {
+      mx = e;
+      if (mx >= bail) return mx;
+    }
+  }
+  return mx;
+}
+function segDist(px, py, x0, y0, x1, y1) {
+  const vx = x1 - x0, vy = y1 - y0;
+  const len2 = vx * vx + vy * vy;
+  let t = len2 > 0 ? ((px - x0) * vx + (py - y0) * vy) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const ex = px - (x0 + vx * t), ey = py - (y0 + vy * t);
+  return Math.sqrt(ex * ex + ey * ey);
+}
+function wrapPi(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
 function bbox(pts, n2) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let i = 0; i < n2; i++) {
@@ -3194,7 +3864,7 @@ function solve32(a, b, c, d, e, f, g, h, i, u, v, w) {
   const dz = a * (e * w - v * h) - b * (d * w - v * g) + u * (d * h - e * g);
   return [dx / det, dy / det, dz / det];
 }
-function round2(value, precision) {
+function round3(value, precision) {
   const f = 10 ** precision;
   return Math.round(value * f) / f;
 }
@@ -3204,6 +3874,7 @@ var TRACE_DEFAULTS = {
   colors: 16,
   alphaLevels: 8,
   minArea: 0,
+  speckleScope: "all",
   // 0.4, not 1.0. A measured diagnosis (scripts/diagnose-photo.mjs) found the
   // curve fitter, not quantisation, is the dominant loss on photographs — 0.11
   // to 0.24 SSIM — and that a 1px tolerance is *strictly worse* than 0.4 on
@@ -3223,34 +3894,48 @@ var TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  extendUnder: false,
   groupByColor: false,
   turnPolicy: "left",
   gradients: false,
   gradientMinArea: 0,
   gradientStepMax: 0.08,
   gradientMargin: 0.1,
-  gradientMaxError: 0.1,
+  gradientMaxError: 0.015,
   gradientStops: 16
 };
 function autoMinArea(pixels) {
   return Math.min(16, Math.round(pixels / 5e4));
 }
 function trace(source, opts = {}) {
+  assertRasterImage(source, "trace");
   const clean = stripUndefined(opts);
   const o = {
     ...TRACE_DEFAULTS,
     minArea: autoMinArea(source.width * source.height),
     ...clean
   };
+  const report = (stage, pct) => {
+    if (o.signal?.aborted) throw new Error("Trace aborted.");
+    o.onProgress?.(stage, pct);
+  };
+  report("Preparing", 2);
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
   }
   if (opts.threshold !== void 0) {
-    img = applyThreshold(img, { threshold: o.threshold, blackOnWhite: o.blackOnWhite }).image;
+    img = applyThreshold(img, {
+      threshold: o.threshold,
+      blackOnWhite: o.blackOnWhite,
+      adaptive: o.adaptive,
+      adaptiveWindow: o.adaptiveWindow,
+      adaptiveT: o.adaptiveT
+    }).image;
   }
   const { width, height } = img;
   const n2 = width * height;
+  report("Quantising colour", 10);
   const alphaLevels = quantizeAlpha(img, Math.max(1, o.alphaLevels));
   const palette = quantize(img, o.colors, {
     refineIterations: o.refineIterations,
@@ -3285,17 +3970,32 @@ function trace(source, opts = {}) {
     classes = g.classes;
     gradientPaints = g.paints.size > 0 ? g.paints : null;
   }
+  report("Finding regions", 40);
   let comps = connectedComponents(classes, width, height, -1);
   let despeckled = 0;
+  if (opts.minArea === void 0) {
+    o.minArea = Math.max(o.minArea, adaptiveMinArea(comps, width * height));
+  }
   if (o.minArea > 1) {
     for (let pass = 0; pass < 2; pass++) {
-      const merged = despeckle(classes, comps, width, height, o.minArea, -1);
+      const merged = despeckle(classes, comps, width, height, o.minArea, -1, o.speckleScope);
       if (merged === 0) break;
       despeckled += merged;
       comps = connectedComponents(classes, width, height, -1);
     }
   }
+  report("Tracing contours", 55);
   const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
+  const extendedLoops = (rank, rankOfClass2) => {
+    const mask = new Int32Array(width * height).fill(-1);
+    for (let p = 0; p < mask.length; p++) {
+      const comp = comps.labels[p];
+      if (comp < 0) continue;
+      const cls = comps.classes[comp];
+      if (cls >= 0 && rankOfClass2[cls] >= rank) mask[p] = 0;
+    }
+    return traceComponents(mask, width, height, 1, o.turnPolicy)[0] ?? [];
+  };
   const classArea = /* @__PURE__ */ new Map();
   const classComponents = /* @__PURE__ */ new Map();
   for (let c = 0; c < comps.count; c++) {
@@ -3341,28 +4041,40 @@ function trace(source, opts = {}) {
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold
   };
-  const strokeFor = (svgColor) => o.strokeWidth > 0 ? ` stroke="${svgColor}" stroke-width="${o.strokeWidth}"` : "";
+  const strokeFor = (c) => strokeAttrs(c, o.strokeWidth);
   let regions = 0;
-  for (const cls of orderedClasses) {
+  let rankOfClass = null;
+  if (o.extendUnder) {
+    let maxClass = 0;
+    for (const c of orderedClasses) if (c > maxClass) maxClass = c;
+    rankOfClass = new Int32Array(maxClass + 1).fill(orderedClasses.length);
+    orderedClasses.forEach((c, i) => {
+      rankOfClass[c] = i;
+    });
+  }
+  for (const [rank, cls] of orderedClasses.entries()) {
     const components = classComponents.get(cls);
     regions += components.length;
     if (cls === backgroundClass) continue;
-    const path = new PathBuilder(o.precision);
     const classLoops = [];
-    for (const c of components) {
-      for (const loop of loopsByComponent[c]) {
-        classLoops.push(loop);
-        const fitted = fitLoop(loop.pts, fitOpts);
-        if (!fitted) continue;
-        path.moveTo(fitted.start.x, fitted.start.y);
-        for (const seg of fitted.segments) {
-          if (seg.kind === "line") path.lineTo(seg.x, seg.y);
-          else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
-        }
-        path.close();
+    const ownLoops = rankOfClass && cls < GRAD_BASE ? [extendedLoops(rank, rankOfClass)] : components.map((c) => loopsByComponent[c]);
+    for (const group of ownLoops) for (const loop of group) classLoops.push(loop);
+    const eligible = o.primitives && classLoops.length > 0 && classLoops.every((l) => l.signedArea > 0);
+    const prims = classLoops.map((l) => eligible ? detectPrimitive(l.pts, { maxError: o.primitiveError }) : null);
+    const path = new PathBuilder(o.precision);
+    for (const [i, loop] of classLoops.entries()) {
+      if (prims[i]) continue;
+      const fitted = fitLoop(loop.pts, fitOpts);
+      if (!fitted) continue;
+      path.moveTo(fitted.start.x, fitted.start.y);
+      for (const seg of fitted.segments) {
+        if (seg.kind === "line") path.lineTo(seg.x, seg.y);
+        else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
       }
+      path.close();
     }
-    if (path.isEmpty()) continue;
+    const primCount = prims.reduce((k, p) => k + (p ? 1 : 0), 0);
+    if (path.isEmpty() && primCount === 0) continue;
     let markup;
     let label;
     const paint = gradientPaints?.get(cls);
@@ -3373,9 +4085,10 @@ function trace(source, opts = {}) {
       label = paint.ref.replace(/^url\(#/, "").replace(/\)$/, "");
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
-      const stroke = strokeFor(shortHex(color.r, color.g, color.b));
-      const prim = o.primitives && classLoops.length === 1 ? detectPrimitive(classLoops[0].pts, { maxError: o.primitiveError }) : null;
-      markup = prim ? primitiveSvg(prim, `${fillAttrs(color)}${stroke}`, o.precision) : `<path fill-rule="evenodd" d="${path.toString()}"${fillAttrs(color)}${stroke}/>`;
+      const stroke = strokeFor(color);
+      const attrs = `${fillAttrs(color)}${stroke}`;
+      const shapes = prims.filter((p) => p !== null).map((p) => primitiveSvg(p, attrs, o.precision)).join("");
+      markup = path.isEmpty() ? shapes : `${shapes}<path fill-rule="evenodd" d="${path.toString()}"${attrs}/>`;
       label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);
     }
     if (o.groupByColor) {
@@ -3447,40 +4160,69 @@ var NBRS = [
   [1, 1]
 ];
 function centerlinePolylines(image, opts = {}) {
+  assertRasterImage(image, "centerlinePolylines");
+  return centerlineSkeleton(image, opts).polylines;
+}
+function centerlineSkeleton(image, opts) {
   const { width, height } = image;
-  const cutoff = opts.threshold === void 0 || opts.threshold === "auto" ? otsuThreshold(image) : opts.threshold;
+  const auto = opts.threshold === void 0 || opts.threshold === "auto";
+  const cutoff = auto ? otsuThreshold(image) : opts.threshold;
   const blackOnWhite = opts.blackOnWhite ?? true;
+  const local = opts.adaptive ? bradleyMask(image, opts.adaptiveWindow ?? 0, opts.adaptiveT ?? 15) : null;
+  const opaqueIsInk = auto && !local && alphaCarriesShape(image);
   const P = width + 2, Q = height + 2;
   const mask = new Uint8Array(P * Q);
+  let inkPixels = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const o = (y * width + x) * 4;
       if (image.data[o + 3] < 8) continue;
-      const lum = luma709(image.data[o], image.data[o + 1], image.data[o + 2]);
-      const fg = blackOnWhite ? lum <= cutoff : lum > cutoff;
-      if (fg) mask[(y + 1) * P + (x + 1)] = 1;
+      let fg;
+      if (opaqueIsInk) {
+        fg = true;
+      } else {
+        const lum = luma709(image.data[o], image.data[o + 1], image.data[o + 2]);
+        const dark = local ? local[y * width + x] === 1 : Math.round(lum) <= cutoff;
+        fg = blackOnWhite ? dark : !dark;
+      }
+      if (fg) {
+        mask[(y + 1) * P + (x + 1)] = 1;
+        inkPixels++;
+      }
     }
   }
-  zhangSuenThin(mask, P, Q);
+  guoHallThin(mask, P, Q);
   const raw = walkSkeleton(mask, P, Q);
   const minLength = opts.minLength ?? 3;
   const eps = opts.simplify ?? 1;
-  const out = [];
+  const polylines = [];
   for (const poly of raw) {
     const shifted = poly.map((p) => ({ x: p.x - 1, y: p.y - 1 }));
     const simplified = eps > 0 ? simplify(shifted, eps) : shifted;
     if (simplified.length < 2 || polylineLength(simplified) < minLength) continue;
-    out.push(simplified);
+    polylines.push(simplified);
   }
-  return out;
+  return { polylines, inkPixels };
+}
+function alphaCarriesShape(image) {
+  const { data, width, height } = image;
+  const n2 = width * height;
+  let transparent = 0;
+  for (let i = 0; i < n2; i++) {
+    if (data[i * 4 + 3] < 8) transparent++;
+  }
+  return transparent / n2 > 0.01;
 }
 function centerlineTrace(image, opts = {}) {
+  assertRasterImage(image, "centerlineTrace");
   const { width, height } = image;
-  const polylines = centerlinePolylines(image, opts);
+  const { polylines, inkPixels } = centerlineSkeleton(image, opts);
   const doc = new SvgDoc({ width, height, generator: opts.generator, title: opts.title });
   const stroke = opts.stroke ?? "#000";
   const strokeWidth = opts.strokeWidth ?? 1;
+  let length = 0;
   for (const poly of polylines) {
+    length += polylineLength(poly);
     const path = new PathBuilder(opts.precision ?? 2);
     path.moveTo(poly[0].x, poly[0].y);
     for (let i = 1; i < poly.length; i++) path.lineTo(poly[i].x, poly[i].y);
@@ -3488,9 +4230,9 @@ function centerlineTrace(image, opts = {}) {
       `<path fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" d="${path.toString()}"/>`
     );
   }
-  return { svg: doc.toString(), paths: polylines.length };
+  return { svg: doc.toString(), paths: polylines.length, length, inkPixels };
 }
-function zhangSuenThin(m, P, Q) {
+function guoHallThin(m, P, Q) {
   let changed = true;
   const del = [];
   while (changed) {
@@ -3503,17 +4245,14 @@ function zhangSuenThin(m, P, Q) {
           if (!m[i]) continue;
           const p2 = m[i - P], p3 = m[i - P + 1], p4 = m[i + 1], p5 = m[i + P + 1];
           const p6 = m[i + P], p7 = m[i + P - 1], p8 = m[i - 1], p9 = m[i - P - 1];
-          const b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
-          if (b < 2 || b > 6) continue;
-          const seq = [p2, p3, p4, p5, p6, p7, p8, p9, p2];
-          let a = 0;
-          for (let k = 0; k < 8; k++) if (seq[k] === 0 && seq[k + 1] === 1) a++;
-          if (a !== 1) continue;
-          if (step === 0) {
-            if (p2 * p4 * p6 !== 0 || p4 * p6 * p8 !== 0) continue;
-          } else {
-            if (p2 * p4 * p8 !== 0 || p2 * p6 * p8 !== 0) continue;
-          }
+          const c = (p2 === 0 && (p3 === 1 || p4 === 1) ? 1 : 0) + (p4 === 0 && (p5 === 1 || p6 === 1) ? 1 : 0) + (p6 === 0 && (p7 === 1 || p8 === 1) ? 1 : 0) + (p8 === 0 && (p9 === 1 || p2 === 1) ? 1 : 0);
+          if (c !== 1) continue;
+          const n1 = (p9 | p2) + (p3 | p4) + (p5 | p6) + (p7 | p8);
+          const n2 = (p2 | p3) + (p4 | p5) + (p6 | p7) + (p8 | p9);
+          const n3 = n1 < n2 ? n1 : n2;
+          if (n3 < 2 || n3 > 3) continue;
+          const cond = step === 0 ? (p6 | p7 | p9 ^ 1) & p8 : (p2 | p3 | p5 ^ 1) & p4;
+          if (cond !== 0) continue;
           del.push(i);
         }
       }
@@ -3549,7 +4288,9 @@ function walkSkeleton(m, P, Q) {
   const edgeKey = (ax, ay, bx, by) => {
     const a = ay * P + ax, b = by * P + bx;
     const lo = Math.min(a, b), hi = Math.max(a, b);
-    return lo * P * Q + hi;
+    const delta = hi - lo;
+    const dir = delta === 1 ? 0 : delta === P - 1 ? 1 : delta === P ? 2 : 3;
+    return lo * 4 + dir;
   };
   const allowed = (ax, ay, bx, by) => {
     if (Math.abs(ax - bx) === 1 && Math.abs(ay - by) === 1) {
@@ -3615,7 +4356,7 @@ function simplify(pts, eps) {
   const stack = [[0, pts.length - 1]];
   while (stack.length > 0) {
     const [first, last] = stack.pop();
-    let worst = -1, worstDist = eps;
+    let worst2 = -1, worstDist = eps;
     const ax = pts[first].x, ay = pts[first].y;
     const bx = pts[last].x, by = pts[last].y;
     const dx = bx - ax, dy = by - ay;
@@ -3624,12 +4365,12 @@ function simplify(pts, eps) {
       const dist = len === 0 ? Math.hypot(pts[i].x - ax, pts[i].y - ay) : Math.abs(dy * pts[i].x - dx * pts[i].y + bx * ay - by * ax) / len;
       if (dist > worstDist) {
         worstDist = dist;
-        worst = i;
+        worst2 = i;
       }
     }
-    if (worst !== -1) {
-      keep[worst] = 1;
-      stack.push([first, worst], [worst, last]);
+    if (worst2 !== -1) {
+      keep[worst2] = 1;
+      stack.push([first, worst2], [worst2, last]);
     }
   }
   const out = [];
@@ -3814,9 +4555,9 @@ function decodeBmp(bytes, embedded = false) {
   else if (bitCount === 32 && compression === BI_RGB) assumeOpaqueIfNoAlpha(image);
   return { image, bitDepth: bitCount };
 }
-function readPalette(bytes, offset, count, entrySize) {
-  const palette = new Uint8Array(count * 4);
-  for (let i = 0; i < count; i++) {
+function readPalette(bytes, offset, count2, entrySize) {
+  const palette = new Uint8Array(count2 * 4);
+  for (let i = 0; i < count2; i++) {
     const o = offset + i * entrySize;
     if (o + 2 >= bytes.length) break;
     palette[i * 4] = bytes[o + 2];
@@ -3920,10 +4661,10 @@ function decodeRle(bytes, dataOffset, image, palette, is4Bit, topDown) {
     x++;
   };
   while (p + 1 < bytes.length && y < height) {
-    const count = bytes[p++];
+    const count2 = bytes[p++];
     const value = bytes[p++];
-    if (count > 0) {
-      for (let i = 0; i < count; i++) {
+    if (count2 > 0) {
+      for (let i = 0; i < count2; i++) {
         put(is4Bit ? i % 2 === 0 ? value >> 4 : value & 15 : value);
       }
       continue;
@@ -4008,13 +4749,13 @@ function isIco(bytes) {
   if (u16le(bytes, 0) !== 0) return false;
   const type = u16le(bytes, 2);
   if (type !== 1 && type !== 2) return false;
-  const count = u16le(bytes, 4);
-  return count > 0 && bytes.length >= 6 + count * 16;
+  const count2 = u16le(bytes, 4);
+  return count2 > 0 && bytes.length >= 6 + count2 * 16;
 }
 function listIcoEntries(bytes) {
-  const count = u16le(bytes, 4);
+  const count2 = u16le(bytes, 4);
   const entries = [];
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < count2; i++) {
     const o = 6 + i * 16;
     if (o + 16 > bytes.length) break;
     const width = bytes[o] === 0 ? 256 : bytes[o];
@@ -4258,12 +4999,12 @@ function decodeTga(bytes) {
     let written = 0;
     while (written < total && p < bytes.length) {
       const packet = bytes[p++];
-      const count = (packet & 127) + 1;
+      const count2 = (packet & 127) + 1;
       if (packet & 128) {
-        for (let i = 0; i < count && written < total; i++) emit2(written++, p);
+        for (let i = 0; i < count2 && written < total; i++) emit2(written++, p);
         p += bytesPerPixel;
       } else {
-        for (let i = 0; i < count && written < total; i++) {
+        for (let i = 0; i < count2 && written < total; i++) {
           emit2(written++, p);
           p += bytesPerPixel;
         }
@@ -4583,6 +5324,14 @@ function decodeTgaFallback(bytes) {
   }
 }
 
+// src/io/route.ts
+function chooseConvertRoute(outputExt, inputIsSvg) {
+  const ext = outputExt.toLowerCase();
+  if (ext === ".svg") return "vectorize";
+  if (ext === ".dxf" || ext === ".eps" || ext === ".pdf") return "vector-export";
+  return inputIsSvg ? "rasterize" : "raster-convert";
+}
+
 // src/codecs.ts
 var decoders = [];
 var encoders = /* @__PURE__ */ new Map();
@@ -4625,12 +5374,28 @@ function registeredFormats() {
 function toComponent(svg, opts) {
   const name = opts.name ?? "Icon";
   const jsx = opts.framework === "react" || opts.framework === "solid";
-  let body = svg.replace(/^<!--[\s\S]*?-->\n?/, "").replace(/\s(?:xmlns:(?:inkscape|sodipodi)|(?:inkscape|sodipodi):[\w-]+)="[^"]*"/gi, "").trim();
+  let body = svg.replace(/\s(?:xmlns:(?:inkscape|sodipodi)|(?:inkscape|sodipodi):[\w-]+)="[^"]*"/gi, "").trim();
+  const rootStart = body.search(/<svg\b/i);
+  if (rootStart > 0) body = body.slice(rootStart);
+  const rootEnd = body.lastIndexOf("</svg>");
+  if (rootEnd !== -1) body = body.slice(0, rootEnd + "</svg>".length);
   if (opts.currentColor) {
     body = body.replace(/(\s(?:fill|stroke)=)"#[0-9a-fA-F]{3,8}"/g, '$1"currentColor"');
   }
   if (jsx) {
-    body = body.replace(/\s(xlink:[a-z]+|xmlns:xlink)=/gi, (_m, a) => ` ${a.replace(/[:-]([a-z])/g, (_x, c) => c.toUpperCase())}=`).replace(/\s(?!data-|aria-)([a-z]+(?:-[a-z]+)+)=/g, (_m, attr) => ` ${attr.replace(/-([a-z])/g, (_x, c) => c.toUpperCase())}=`);
+    body = body.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_m, attrs, css) => `<style${attrs}>{\`${css.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${")}\`}</style>`).replace(
+      /<(br|hr|img|input|meta|link|area|base|col|embed|source|track|wbr)\b([^>]*?)\/?>/gi,
+      (_m, tag, attrs) => `<${tag}${attrs.replace(/\/\s*$/, "")} />`
+    ).replace(/\sclass=/g, " className=").replace(/\sstyle="([^"]*)"/g, (_m, css) => {
+      const props = css.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+        const i = d.indexOf(":");
+        if (i === -1) return "";
+        const key = d.slice(0, i).trim().replace(/-([a-z])/g, (_x, c) => c.toUpperCase());
+        const value = d.slice(i + 1).trim().replace(/'/g, "\\'");
+        return `${key}: '${value}'`;
+      }).filter(Boolean).join(", ");
+      return props ? ` style={{ ${props} }}` : "";
+    }).replace(/<!--([\s\S]*?)-->/g, (_m, text) => `{/*${text.replace(/\*\//g, "*\\/")}*/}`).replace(/\s(xlink:[a-z]+|xmlns:xlink)=/gi, (_m, a) => ` ${a.replace(/[:-]([a-z])/g, (_x, c) => c.toUpperCase())}=`).replace(/\s(?!data-|aria-)([a-z]+(?:-[a-z]+)+)=/g, (_m, attr) => ` ${attr.replace(/-([a-z])/g, (_x, c) => c.toUpperCase())}=`);
   }
   switch (opts.framework) {
     case "react":
@@ -4755,9 +5520,9 @@ function smartCrop(image, opts = {}) {
         const winCx = x + winW / 2;
         const winCy = y + winH / 2;
         const centerDist = Math.hypot(winCx - cx, winCy - cy) / maxCenterDist;
-        const score = captured - sizeWeight * area - centerWeight * centerDist * 0.1;
-        if (score > best.score) {
-          best = { x, y, width: winW, height: winH, score };
+        const score2 = captured - sizeWeight * area - centerWeight * centerDist * 0.1;
+        if (score2 > best.score) {
+          best = { x, y, width: winW, height: winH, score: score2 };
         }
       }
     }
@@ -5062,11 +5827,42 @@ function n(v, places = 3) {
 }
 
 // src/io/export/dxf.ts
+var DXF_UNITS = { none: 0, in: 1, mm: 4, cm: 5, m: 6 };
 function toDxf(geometry, opts = {}) {
   const steps = opts.curveSteps ?? 12;
   const H = geometry.height;
-  const fy = (y) => H - y;
-  const lines = ["0", "SECTION", "2", "ENTITIES"];
+  const units = opts.units ?? "none";
+  if (opts.pixelsPerUnit !== void 0 && units === "none") {
+    throw new Error(
+      "toDxf: `pixelsPerUnit` scales the drawing but `units` says what the numbers mean, so passing one without the other emits a file whose size the importer has to guess \u2014 and it usually guesses wrong. Pass `units: 'mm'` (or 'in', 'cm') alongside it, or drop `pixelsPerUnit` to emit unscaled pixel coordinates."
+    );
+  }
+  const per = opts.pixelsPerUnit && opts.pixelsPerUnit > 0 ? opts.pixelsPerUnit : 1;
+  const s = (v) => v / per;
+  const fy = (y) => s(H - y);
+  const sx = (x) => s(x);
+  const lines = [];
+  if (units !== "none") {
+    lines.push(
+      "0",
+      "SECTION",
+      "2",
+      "HEADER",
+      "9",
+      "$INSUNITS",
+      "70",
+      String(DXF_UNITS[units]),
+      // $MEASUREMENT picks the drawing's unit *system* (0 imperial, 1 metric),
+      // which some importers consult instead of $INSUNITS.
+      "9",
+      "$MEASUREMENT",
+      "70",
+      units === "in" ? "0" : "1",
+      "0",
+      "ENDSEC"
+    );
+  }
+  lines.push("0", "SECTION", "2", "ENTITIES");
   for (const path of geometry.paths) {
     const layer = `c_${hex2(path.color.r, path.color.g, path.color.b)}`;
     const trueColor = path.color.r << 16 | path.color.g << 8 | path.color.b;
@@ -5084,11 +5880,11 @@ function toDxf(geometry, opts = {}) {
           "420",
           String(trueColor),
           "10",
-          n(prim.cx),
+          n(sx(prim.cx)),
           "20",
           n(fy(prim.cy)),
           "40",
-          n(prim.r)
+          n(s(prim.r))
         );
         return;
       }
@@ -5106,15 +5902,15 @@ function toDxf(geometry, opts = {}) {
           "420",
           String(trueColor),
           "10",
-          n(prim.cx),
+          n(sx(prim.cx)),
           "20",
           n(fy(prim.cy)),
           "30",
           "0",
           "11",
-          n(majorX),
+          n(s(majorX)),
           "21",
-          n(-majorY),
+          n(s(-majorY)),
           "31",
           "0",
           // End parameter at full precision: n()'s 3-place rounding of 2π would
@@ -5148,7 +5944,7 @@ function toDxf(geometry, opts = {}) {
         "70",
         "1"
       );
-      for (const v of verts) lines.push("10", n(v.x), "20", n(fy(v.y)));
+      for (const v of verts) lines.push("10", n(sx(v.x)), "20", n(fy(v.y)));
     });
   }
   lines.push("0", "ENDSEC", "0", "EOF");
@@ -5257,13 +6053,24 @@ ${xrefPos}
 }
 
 // src/io/export/gcode.ts
-function toGcode(polylines, opts = {}) {
+function toGcode(polylines, opts) {
   const mode = opts.mode ?? "laser";
   const feed = opts.feed ?? 1e3;
   const travelFeed = opts.travelFeed ?? 3e3;
   const power = opts.power ?? 1e3;
   const s = opts.scale ?? 1;
-  const H = opts.height ?? 0;
+  if (opts.height === void 0) {
+    throw new Error(
+      "toGcode: `height` is required \u2014 it is the source image height, used to flip Y into bed space. Without it every Y coordinate comes out negative and the whole job sits below the origin. Pass the height of the image the polylines came from."
+    );
+  }
+  const H = opts.height;
+  const cutting = polylines.filter((p) => p.length >= 2);
+  if (cutting.length === 0) {
+    throw new Error(
+      "toGcode: there are no polylines to cut, so this would emit a valid program that does nothing. Centreline usually returns nothing because the image is blank, because the threshold caught the whole frame, or because the ink is light on dark and needs `blackOnWhite: false`."
+    );
+  }
   const coord = (p) => `X${n(p.x * s)} Y${n((H - p.y) * s)}`;
   const toolOff = mode === "laser" ? "M5" : `G0 Z${n(opts.penUp ?? 5)}`;
   const toolOn = mode === "laser" ? `M3 S${power}` : `G1 Z${n(opts.penDown ?? 0)} F${feed}`;
@@ -5288,7 +6095,7 @@ function toGcode(polylines, opts = {}) {
 }
 
 // src/core.ts
-var VERSION = "1.32.0";
+var VERSION = "1.48.0";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,
@@ -5297,17 +6104,21 @@ export {
   SvgDoc,
   TRACE_DEFAULTS,
   VERSION,
+  adaptiveMinArea,
   applyThreshold,
   autoMinArea,
   blurHash,
+  bradleyMask,
   bytesEqual,
   centerlinePolylines,
   centerlineTrace,
+  chooseConvertRoute,
   colorHistogram,
   compareImages,
   compositeOver,
   connectedComponents,
   countDistinctColors,
+  countPathNodes,
   createImage,
   cropImage,
   decodeBmp,
@@ -5348,6 +6159,7 @@ export {
   listIcoEntries,
   lqipSvg,
   luma709,
+  measureSvgComplexity,
   num,
   oklabToSrgb,
   optimizeSvg,
