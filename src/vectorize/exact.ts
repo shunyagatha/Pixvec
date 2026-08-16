@@ -1,7 +1,7 @@
 import { packRgba, unpackRgba } from '../image.js';
 import { SvgDoc, fillAttrs } from '../svg/build.js';
 import { PathBuilder } from '../svg/path.js';
-import type { RasterImage, Rgba } from '../types.js';
+import { assertRasterImage, type RasterImage, type Rgba } from '../types.js';
 import { connectedComponents } from './components.js';
 import { traceComponents } from './contour.js';
 import { vectorizePixels, type PixelVectorizeOptions } from './pixel.js';
@@ -53,6 +53,7 @@ const DEFAULT_MAX_REGIONS = 200_000;
 
 /** Build both exact encodings and return whichever is smaller. */
 export function vectorizeExact(img: RasterImage, opts: ExactOptions = {}): ExactOutput {
+  assertRasterImage(img, 'vectorizeExact');
   const rects = vectorizePixels(img, opts);
   const contours = tryContours(img, opts);
 
@@ -101,6 +102,7 @@ export interface ContourOutput {
  * contour walker itself.
  */
 export function vectorizeExactContours(img: RasterImage, opts: ExactOptions = {}): ContourOutput {
+  assertRasterImage(img, 'vectorizeExactContours');
   const { width, height, data } = img;
   const n = width * height;
   const maxRegions = opts.maxRegions ?? DEFAULT_MAX_REGIONS;

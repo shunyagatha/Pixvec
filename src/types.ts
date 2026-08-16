@@ -14,6 +14,58 @@ export interface RasterImage {
   data: Uint8ClampedArray;
 }
 
+/**
+ * Reject anything that is not a decoded image, at the boundary.
+ *
+ * The tracers index `source.width`/`source.height` arithmetically and never
+ * re-read them, so a value that is merely *absent* does not throw — it
+ * propagates as `NaN`/`undefined` all the way to the serialiser and comes back
+ * out as `<svg width="undefined" viewBox="0 0 undefined undefined">`: a
+ * structurally invalid document that renders as nothing, from a call that
+ * reported success. Handing a `Buffer` straight to `trace()` — the natural
+ * mistake, since the CLI takes file bytes — does exactly that.
+ *
+ * A library whose claim is that its output is measured cannot also emit
+ * unmeasurable garbage without complaint, so the check is here rather than in
+ * each caller.
+ */
+export function assertRasterImage(value: unknown, fn: string): asserts value is RasterImage {
+  const img = value as Partial<RasterImage> | null | undefined;
+  const describe = (): string => {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    if (ArrayBuffer.isView(value)) return `a ${value.constructor.name} of ${value.byteLength} bytes`;
+    if (typeof value !== 'object') return `a ${typeof value}`;
+    return `an object with keys [${Object.keys(value as object).slice(0, 6).join(', ')}]`;
+  };
+  // The annotation belongs on the *variable*, not just the arrow: TypeScript
+  // only treats a call as never-returning for control-flow narrowing when the
+  // callee is a const with an explicit type. Without it, every `img.width`
+  // below is reported as possibly-undefined.
+  const bad: (why: string) => never = (why) => {
+    throw new TypeError(
+      `${fn}() expects a decoded RasterImage ({ width, height, data }), but got ${describe()}. ${why} ` +
+        'Encoded file bytes must be decoded first — use the `vecline` CLI, or decode to RGBA8 yourself.',
+    );
+  };
+
+  if (img == null || typeof img !== 'object') bad('It is not an object.');
+  if (!Number.isInteger(img.width) || !Number.isInteger(img.height)) {
+    bad(`\`width\`/\`height\` must be integers, saw ${String(img.width)}x${String(img.height)}.`);
+  }
+  if ((img.width as number) < 1 || (img.height as number) < 1) {
+    bad(`\`width\`/\`height\` must be positive, saw ${img.width}x${img.height}.`);
+  }
+  if (!ArrayBuffer.isView(img.data)) bad('`data` is not a typed array.');
+
+  // Length is the one invariant every downstream loop assumes; a short buffer
+  // reads past the end as zeroes and silently traces a partly-black image.
+  const need = (img.width as number) * (img.height as number) * 4;
+  if ((img.data as ArrayBufferView).byteLength !== need) {
+    bad(`\`data\` must be exactly width*height*4 = ${need} bytes, saw ${(img.data as ArrayBufferView).byteLength}.`);
+  }
+}
+
 /** What we could learn about the file before decoding it. */
 export interface SourceMeta {
   /** Container format as reported by libvips (`png`, `jpeg`, `webp`, ...). */
