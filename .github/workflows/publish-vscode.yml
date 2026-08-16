@@ -2,28 +2,50 @@ name: Publish VS Code extension
 
 # Runs on the same `v*` tag that releases the engine, so the extension is
 # republished with the version it was tested against rather than drifting behind
-# npm. The extension bundles `node_modules/vecline` into its .vsix, so a user's
-# copy only picks up a new engine when the extension itself is republished —
-# there is no dependency refresh on the Marketplace side.
+# npm. The extension bundles the engine into its .vsix, so a user's copy only
+# picks up a new engine when the extension itself is republished — there is no
+# dependency refresh on the Marketplace side.
+#
+# The extension is published as EIGHT platform-specific packages rather than one
+# universal package. That is not an optimisation, it is a correctness fix: the
+# engine depends on `sharp` and `@resvg/resvg-js`, which ship per-platform
+# native binaries. A single .vsix built on the Ubuntu runner contained only
+# `sharp-linux-x64`, installed cleanly everywhere, and then failed on first use
+# on Windows and macOS with "Could not load the sharp module using the win32-x64
+# runtime". It weighed 11 MB and looked perfectly healthy; nothing short of
+# reading its contents caught it.
+#
+# Every target is cross-installed from the SAME lockfile with npm's --os/--cpu/
+# --libc selectors, so the tree stays reproducible while the binaries change.
 #
 # Needs a VSCE_PAT secret: an Azure DevOps personal access token with
 # Marketplace → Manage, scoped to "All accessible organizations". Without it the
-# job reports what it would have done and stops, so a release is never blocked
-# by a missing token.
+# job packages and verifies everything, then stops, so a release is never
+# blocked by a missing token.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
 jobs:
-  publish:
-    name: Package and publish to the Marketplace
+  package:
+    name: Package ${{ matrix.target }}
     runs-on: ubuntu-latest
-    # Lifted to job level deliberately: the `secrets` context is NOT available in
-    # a step's `if:`, only `env` is, so testing the secret directly there would
-    # silently evaluate to empty and skip publishing on every run.
-    env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # npm_libc is only meaningful for linux; leaving it empty on win32 and
+          # darwin keeps npm from filtering out prebuilds that carry no libc tag.
+          - { target: win32-x64,    npm_os: win32,  npm_cpu: x64,   npm_libc: '' }
+          - { target: win32-arm64,  npm_os: win32,  npm_cpu: arm64, npm_libc: '' }
+          - { target: linux-x64,    npm_os: linux,  npm_cpu: x64,   npm_libc: glibc }
+          - { target: linux-arm64,  npm_os: linux,  npm_cpu: arm64, npm_libc: glibc }
+          - { target: alpine-x64,   npm_os: linux,  npm_cpu: x64,   npm_libc: musl }
+          - { target: alpine-arm64, npm_os: linux,  npm_cpu: arm64, npm_libc: musl }
+          - { target: darwin-x64,   npm_os: darwin, npm_cpu: x64,   npm_libc: '' }
+          - { target: darwin-arm64, npm_os: darwin, npm_cpu: arm64, npm_libc: '' }
+
     steps:
       - uses: actions/checkout@v5
 
@@ -42,9 +64,16 @@ jobs:
       - name: Extensions track the released engine
         run: node scripts/sync-extension-versions.mjs --check
 
-      - name: Install extension dependencies
+      # `npm ci` honours --os/--cpu/--libc against the committed lockfile, which
+      # already contains every platform variant, so this selects a different
+      # subset of the same resolved tree rather than re-resolving it.
+      - name: Install extension dependencies for ${{ matrix.target }}
         working-directory: extensions/vscode
-        run: npm install --no-audit --no-fund
+        run: |
+          args="--os=${{ matrix.npm_os }} --cpu=${{ matrix.npm_cpu }}"
+          if [ -n "${{ matrix.npm_libc }}" ]; then args="$args --libc=${{ matrix.npm_libc }}"; fi
+          echo "npm ci $args"
+          npm ci $args --no-audit --no-fund
 
       - name: Compile
         working-directory: extensions/vscode
@@ -52,23 +81,56 @@ jobs:
 
       - name: Package
         working-directory: extensions/vscode
-        run: npx --yes @vscode/vsce package --out vecline-vscode.vsix
+        run: npx --yes @vscode/vsce package --target ${{ matrix.target }} --out vecline-${{ matrix.target }}.vsix
 
-      # Uploaded either way, so a tag always produces an installable artefact
-      # even when publishing is skipped.
+      # The gate. Reads the archive and asserts the engine is present and the
+      # native prebuilds are exactly this target's — the check whose absence let
+      # a Linux-only package reach the publish step.
+      - name: Verify the package contents
+        run: node scripts/verify-vsix.mjs extensions/vscode/vecline-${{ matrix.target }}.vsix ${{ matrix.target }} --engine "$(node -p "require('./package.json').version")"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: vecline-vscode-vsix
-          path: extensions/vscode/vecline-vscode.vsix
+          name: vsix-${{ matrix.target }}
+          path: extensions/vscode/vecline-${{ matrix.target }}.vsix
+          if-no-files-found: error
 
-      - name: Publish
+  publish:
+    name: Publish to the Marketplace
+    needs: package
+    runs-on: ubuntu-latest
+    # Lifted to job level deliberately: the `secrets` context is NOT available in
+    # a step's `if:`, only `env` is, so testing the secret directly there would
+    # silently evaluate to empty and skip publishing on every run.
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      # Publishing only after every target has packaged AND verified is the
+      # point of splitting this job: a half-published version, where some
+      # platforms carry the new build and others still serve the old one, is
+      # much worse to unpick than a release that simply did not happen.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          path: vsix
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lh vsix/
+
+      - name: Publish all targets
         if: ${{ env.VSCE_PAT != '' }}
-        working-directory: extensions/vscode
-        run: npx --yes @vscode/vsce publish --packagePath vecline-vscode.vsix
+        run: npx --yes @vscode/vsce publish --packagePath $(ls vsix/*.vsix | tr '\n' ' ')
 
       - name: Explain the skip
         if: ${{ env.VSCE_PAT == '' }}
         run: |
           echo "VSCE_PAT is not set, so nothing was published."
-          echo "The packaged .vsix is attached to this run and can be uploaded by hand"
-          echo "at https://marketplace.visualstudio.com/manage/publishers/shunyagatha"
+          echo "The verified .vsix for every platform is attached to this run and can be"
+          echo "uploaded by hand at https://marketplace.visualstudio.com/manage/publishers/shunyagatha"

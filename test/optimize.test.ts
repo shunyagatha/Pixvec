@@ -61,4 +61,59 @@ describe('optimizeSvg', () => {
     const after = await rasterizeSvg(out, { width: 60 });
     expect(compareImages(before.image, after.image).ssim).toBeGreaterThan(0.999);
   });
+
+  /**
+   * Path data may omit the delimiter between two numbers whenever the second
+   * cannot be read as part of the first, so `l12.004.513` is two numbers. The
+   * minifier used to round every decimal with a context-free regex, which
+   * turned `12.004` into `12` and destroyed the `.` that was doing the
+   * separating — leaving `12` and `0.51` fused into `120.51`. The result was
+   * still well-formed XML describing a completely different path, which is why
+   * nothing downstream ever objected.
+   */
+  describe('implicit separators in path data', () => {
+    it('keeps two abutting numbers apart when rounding removes the separator', () => {
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">' +
+        '<path d="M1 1l12.004.513z"/></svg>';
+      const d = optimizeSvg(svg).match(/d="([^"]*)"/)![1];
+
+      // The old output was "M1 1l120.51z" — one number where there were two.
+      expect(d).not.toContain('120.51');
+      const nums = d.match(/-?(?:\d+\.?\d*|\.\d+)/g)!.map(Number);
+      expect(nums).toEqual([1, 1, 12, 0.51]);
+    });
+
+    it('does not waste a separator before a negative number', () => {
+      // A leading '-' delimits by itself, so compactness must not regress.
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">' +
+        '<path d="M0 0l-1.005-2.5.75z"/></svg>';
+      const d = optimizeSvg(svg).match(/d="([^"]*)"/)![1];
+      expect(d).toContain('-1-2.5');
+      expect(d.match(/-?(?:\d+\.?\d*|\.\d+)/g)!.map(Number)).toEqual([0, 0, -1, -2.5, 0.75]);
+    });
+
+    it('renders identically to the source, which is the whole promise', async () => {
+      // Chained compact pairs, at a size where a fused coordinate would throw
+      // the geometry far enough off to show up in the comparison.
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">' +
+        '<path d="M2 2l30.004.513-8.75 30.125-20.5-4.004z" fill="#2b7"/></svg>';
+      const out = optimizeSvg(svg);
+      const before = await rasterizeSvg(svg, { width: 40 });
+      const after = await rasterizeSvg(out, { width: 40 });
+      expect(compareImages(before.image, after.image).ssim).toBeGreaterThan(0.999);
+    });
+
+    it('rounds numbers inside transform and viewBox without fusing them', () => {
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12.004 8.006" width="20" height="20">' +
+        '<g transform="translate(3.004.517)"><path d="M0 0h1z"/></g></svg>';
+      const out = optimizeSvg(svg);
+      expect(out).toMatch(/viewBox="0 0 12 8\.01"/);
+      const t = out.match(/transform="([^"]*)"/)![1];
+      expect(t.match(/-?(?:\d+\.?\d*|\.\d+)/g)!.map(Number)).toEqual([3, 0.52]);
+    });
+  });
 });

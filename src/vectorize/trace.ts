@@ -2,7 +2,7 @@ import { SvgDoc, fillAttrs } from '../svg/build.js';
 import { shortHex } from '../color.js';
 import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
-import type { RasterImage, Rgba } from '../types.js';
+import { assertRasterImage, type RasterImage, type Rgba } from '../types.js';
 import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, type SpeckleScope } from './components.js';
 import { traceComponents, type TurnPolicy, type Loop } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
@@ -257,6 +257,7 @@ export function autoMinArea(pixels: number): number {
 }
 
 export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput {
+  assertRasterImage(source, 'trace');
   const clean = stripUndefined(opts);
   const o = {
     ...TRACE_DEFAULTS,

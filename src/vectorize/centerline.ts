@@ -16,7 +16,7 @@ import { otsuThreshold, bradleyMask } from './threshold.js';
 import { luma709 } from '../color.js';
 import { SvgDoc } from '../svg/build.js';
 import { PathBuilder } from '../svg/path.js';
-import type { Point, RasterImage } from '../types.js';
+import { assertRasterImage, type Point, type RasterImage } from '../types.js';
 
 export interface CenterlineOptions {
   /** Binarisation cutoff, 0–255, or `'auto'` (Otsu). Default `'auto'`. */
@@ -69,6 +69,7 @@ const NBRS: ReadonlyArray<readonly [number, number]> = [
  * toolpaths are both built from.
  */
 export function centerlinePolylines(image: RasterImage, opts: CenterlineOptions = {}): Point[][] {
+  assertRasterImage(image, 'centerlinePolylines');
   return centerlineSkeleton(image, opts).polylines;
 }
 
@@ -175,6 +176,7 @@ function alphaCarriesShape(image: RasterImage, cutoff: number): boolean {
 
 /** Trace an image to single-stroke centreline geometry (SVG). */
 export function centerlineTrace(image: RasterImage, opts: CenterlineOptions = {}): CenterlineOutput {
+  assertRasterImage(image, 'centerlineTrace');
   const { width, height } = image;
   const { polylines, inkPixels } = centerlineSkeleton(image, opts);
 
