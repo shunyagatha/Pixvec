@@ -6095,7 +6095,7 @@ function toGcode(polylines, opts) {
 }
 
 // src/core.ts
-var VERSION = "1.48.0";
+var VERSION = "2.0.0";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,
