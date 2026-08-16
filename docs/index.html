@@ -5,40 +5,88 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vecline playground — raster → SVG, measured</title>
 <style>
+  /*
+     The same names the Studio uses, so the two surfaces can be reasoned about
+     together. They previously shared exactly one token name (--accent) and
+     nothing else — this page invented --bg/--panel/--text/--muted while the
+     Studio had --paper/--surface/--ink/--ink-2 for the same jobs, which meant a
+     colour decision made in one place could not be carried to the other.
+
+     It also gains a light theme. Dark-only is a choice this page made by never
+     making one: it hard-coded a dark palette, so a visitor whose system asks for
+     light got dark anyway. Light is the ground state here, as in the Studio, and
+     dark is the override — that ordering is what keeps the two files' palettes
+     comparable line by line.
+  */
   :root {
-    --bg: #0e1116; --panel: #161b22; --border: #2b333d; --text: #e6edf3;
-    --muted: #8b949e; --accent: #4a9eff; --good: #3fb950; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --paper: #EFE9EF;
+    --surface: #FDFBFD;
+    --surface-2: #F7F2F7;
+    --line: #E1D8E2;
+    --ink: #1B1220;
+    --ink-2: #665A6E;
+    --ink-3: #8D8194;
+    --accent: #D1006F;
+    --accent-text: #A3005A;
+    --accent-on: #FFFFFF;
+    --ok: #0B7A55;
+    --check-a: #FFFFFF;
+    --check-b: #E7DFE8;
+    --font-mono: "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, Menlo, ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #120E18;
+      --surface: #1C1624;
+      --surface-2: #241D2E;
+      --line: #302839;
+      --ink: #F3EDF4;
+      --ink-2: #AA9DB2;
+      --ink-3: #82758B;
+      --accent: #FF4D9E;
+      --accent-text: #FF83BB;
+      --accent-on: #210415;
+      --ok: #4BD3A0;
+      --check-a: #241D2E;
+      --check-b: #191324;
+    }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  header { padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
   header h1 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
-  header .tag { color: var(--muted); font-size: 13px; }
-  header a { color: var(--accent); text-decoration: none; margin-left: auto; font-size: 13px; }
+  header .tag { color: var(--ink-2); font-size: 13px; }
+  /* --accent-text, not --accent: the accent is tuned to be a fill, and as 13px
+     text on --paper it measures 4.46:1, which is under AA. That is the whole
+     reason the Studio carries a separate text-weight accent, and this is the
+     one place here that needed it. */
+  header a { color: var(--accent-text); text-decoration: none; margin-left: auto; font-size: 13px; }
   main { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 62px); }
-  .controls { border-right: 1px solid var(--border); padding: 20px; overflow-y: auto; }
+  .controls { border-right: 1px solid var(--line); padding: 20px; overflow-y: auto; }
   .stage { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-  .drop { border: 2px dashed var(--border); border-radius: 10px; padding: 26px; text-align: center; color: var(--muted); cursor: pointer; transition: border-color .15s, background .15s; }
-  .drop.hot { border-color: var(--accent); background: #4a9eff11; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 26px; text-align: center; color: var(--ink-2); cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop.hot { border-color: var(--accent); background: var(--surface-2); }
   .field { margin-bottom: 16px; }
-  .field label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 6px; }
-  .field .val { color: var(--accent); font-family: var(--mono); }
+  .field label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); margin-bottom: 6px; }
+  .field .val { color: var(--accent); font-family: var(--font-mono); }
   select, input[type=range] { width: 100%; }
-  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px; }
+  select { background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px; }
   .row { display: flex; align-items: center; gap: 8px; }
   .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .pane { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .pane h2 { margin: 0; padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
-  .view { padding: 14px; display: flex; align-items: center; justify-content: center; min-height: 260px; background: repeating-conic-gradient(#1b222b 0% 25%, #12171d 0% 50%) 50% / 22px 22px; }
+  .pane { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .pane h2 { margin: 0; padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-2); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+  /* The checkerboard behind transparent artwork has to follow the theme too —
+     hard-coded dark squares under a light page read as a rendering fault. */
+  .view { padding: 14px; display: flex; align-items: center; justify-content: center; min-height: 260px; background: repeating-conic-gradient(var(--check-a) 0% 25%, var(--check-b) 0% 50%) 50% / 22px 22px; }
   .view img, .view svg { max-width: 100%; max-height: 60vh; height: auto; }
   .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-  .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
-  .metric .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-  .metric .v { font-size: 20px; font-family: var(--mono); margin-top: 3px; }
-  .metric .v.good { color: var(--good); }
-  button.dl { background: var(--accent); color: #04121f; border: 0; border-radius: 7px; padding: 9px 14px; font-weight: 600; cursor: pointer; }
+  .metric { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .metric .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
+  .metric .v { font-size: 20px; font-family: var(--font-mono); margin-top: 3px; }
+  .metric .v.good { color: var(--ok); }
+  button.dl { background: var(--accent); color: var(--accent-on); border: 0; border-radius: 7px; padding: 9px 14px; font-weight: 600; cursor: pointer; }
   button.dl:disabled { opacity: .4; cursor: default; }
-  .hint { color: var(--muted); font-size: 12px; }
+  .hint { color: var(--ink-2); font-size: 12px; }
   input[type=checkbox] { accent-color: var(--accent); }
 
   /* Staged progress. Visible only while a conversion is running, and it names
@@ -46,10 +94,10 @@
      through the stage list we are, not how far through the work. */
   .progress { display: none; align-items: center; gap: 10px; }
   body[data-busy="1"] .progress { display: flex; }
-  .progress .stage { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 152px; }
-  .progress .track { position: relative; flex: 1 1 auto; height: 4px; border-radius: 99px; background: var(--border); overflow: hidden; }
+  .progress .stage { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); white-space: nowrap; min-width: 152px; }
+  .progress .track { position: relative; flex: 1 1 auto; height: 4px; border-radius: 99px; background: var(--line); overflow: hidden; }
   .progress .fill { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); border-radius: 99px; transition: width .2s ease; }
-  .progress .pct { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
+  .progress .pct { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
   @media (prefers-reduced-motion: reduce) { .progress .fill { transition: none; } }
 </style>
 </head>
