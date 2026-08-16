@@ -56,7 +56,6 @@ If a change trades memory for speed, say so in the comment and give the number. 
 
 - **More input formats.** JPEG XL and HEIC would be welcome if they can be done without a heavyweight dependency.
 - **Better tracing quality.** The current pipeline is Douglas–Peucker plus Schneider fitting. potrace's optimal-polygon stage would likely beat it on smooth curves; a comparison with measured numbers would be a great contribution even if the answer is "no".
-- **Gradient detection.** Large smooth regions currently become many flat bands. Emitting a `<linearGradient>` where one genuinely fits would cut both file size and error.
 - **Speed.** Contour tracing and quantisation are single-threaded. Worker threads would help on large inputs.
 - **Real-world benchmark corpus.** A licence-clean set of images with published numbers would make quality regressions visible.
 

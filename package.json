@@ -81,51 +81,91 @@
   "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/esm/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js",
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      },
       "default": "./dist/esm/index.js"
     },
     "./core": {
-      "types": "./dist/esm/core.d.ts",
-      "import": "./dist/esm/core.js",
-      "require": "./dist/cjs/core.js",
+      "import": {
+        "types": "./dist/esm/core.d.ts",
+        "default": "./dist/esm/core.js"
+      },
+      "require": {
+        "types": "./dist/cjs/core.d.ts",
+        "default": "./dist/cjs/core.js"
+      },
       "default": "./dist/esm/core.js"
     },
     "./vectorize": {
-      "types": "./dist/esm/vectorize/index.d.ts",
-      "import": "./dist/esm/vectorize/index.js",
-      "require": "./dist/cjs/vectorize/index.js",
+      "import": {
+        "types": "./dist/esm/vectorize/index.d.ts",
+        "default": "./dist/esm/vectorize/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/vectorize/index.d.ts",
+        "default": "./dist/cjs/vectorize/index.js"
+      },
       "default": "./dist/esm/vectorize/index.js"
     },
     "./metrics": {
-      "types": "./dist/esm/metrics/index.d.ts",
-      "import": "./dist/esm/metrics/index.js",
-      "require": "./dist/cjs/metrics/index.js",
+      "import": {
+        "types": "./dist/esm/metrics/index.d.ts",
+        "default": "./dist/esm/metrics/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/metrics/index.d.ts",
+        "default": "./dist/cjs/metrics/index.js"
+      },
       "default": "./dist/esm/metrics/index.js"
     },
     "./formats": {
-      "types": "./dist/esm/io/formats/index.d.ts",
-      "import": "./dist/esm/io/formats/index.js",
-      "require": "./dist/cjs/io/formats/index.js",
+      "import": {
+        "types": "./dist/esm/io/formats/index.d.ts",
+        "default": "./dist/esm/io/formats/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/io/formats/index.d.ts",
+        "default": "./dist/cjs/io/formats/index.js"
+      },
       "default": "./dist/esm/io/formats/index.js"
     },
     "./ops": {
-      "types": "./dist/esm/ops.d.ts",
-      "import": "./dist/esm/ops.js",
-      "require": "./dist/cjs/ops.js",
+      "import": {
+        "types": "./dist/esm/ops.d.ts",
+        "default": "./dist/esm/ops.js"
+      },
+      "require": {
+        "types": "./dist/cjs/ops.d.ts",
+        "default": "./dist/cjs/ops.js"
+      },
       "default": "./dist/esm/ops.js"
     },
     "./vite": {
-      "types": "./dist/esm/plugin/vite.d.ts",
-      "import": "./dist/esm/plugin/vite.js",
-      "require": "./dist/cjs/plugin/vite.js",
+      "import": {
+        "types": "./dist/esm/plugin/vite.d.ts",
+        "default": "./dist/esm/plugin/vite.js"
+      },
+      "require": {
+        "types": "./dist/cjs/plugin/vite.d.ts",
+        "default": "./dist/cjs/plugin/vite.js"
+      },
       "default": "./dist/esm/plugin/vite.js"
     },
     "./codecs": {
-      "types": "./dist/esm/codecs.d.ts",
-      "import": "./dist/esm/codecs.js",
-      "require": "./dist/cjs/codecs.js",
+      "import": {
+        "types": "./dist/esm/codecs.d.ts",
+        "default": "./dist/esm/codecs.js"
+      },
+      "require": {
+        "types": "./dist/cjs/codecs.d.ts",
+        "default": "./dist/cjs/codecs.js"
+      },
       "default": "./dist/esm/codecs.js"
     },
     "./package.json": "./package.json"
@@ -180,6 +220,6 @@
   "sideEffects": false,
   "optionalDependencies": {
     "@resvg/resvg-js": "^2.6.2",
-    "sharp": "^0.34.2"
+    "sharp": "^0.35.3"
   }
 }

@@ -48,6 +48,67 @@ if (vscode.dependencies?.vecline !== want) {
   }
 }
 
+/*
+ * The extension's OWN version, which nothing was bumping.
+ *
+ * publish-vscode.yml republishes on every `v*` tag, but this field had read
+ * 0.1.0 since the extension was created, so every release after the first would
+ * have been rejected by the Marketplace as a duplicate version. Tying it to the
+ * engine also makes the listing state plainly which tracer a user is getting,
+ * which is the thing that actually changes between releases.
+ */
+if (vscode.version !== engineVersion) {
+  if (check) {
+    problems.push(
+      `extensions/vscode is version ${vscode.version}, but this repo is ${engineVersion}. ` +
+      `A tag-triggered publish would try to republish ${vscode.version} and be rejected as a duplicate. ` +
+      `Run: node scripts/sync-extension-versions.mjs`,
+    );
+  } else {
+    vscode.version = engineVersion;
+    writeFileSync(vscodePath, JSON.stringify(vscode, null, 2) + '\n');
+    changes.push(`extensions/vscode → version ${engineVersion}`);
+  }
+}
+
+/*
+ * The MCPB bundle carries the version in three places, none of which were
+ * guarded — they all still read 1.40.1 while the repo shipped 1.45.0. It is the
+ * same drift this script exists to stop, in the one embedded copy it did not
+ * cover.
+ */
+const mcpbSites = [
+  { file: 'mcpb/manifest.json', json: true },
+  { file: 'mcpb/package.json', json: true },
+  { file: 'mcpb/server/index.js', json: false, re: /^(const VERSION = ')([^']+)(';)$/m },
+];
+
+for (const site of mcpbSites) {
+  const path = join(ROOT, site.file);
+  if (!existsSync(path)) continue;
+  const text = readFileSync(path, 'utf8');
+  const current = site.json ? JSON.parse(text).version : (text.match(site.re) ?? [])[2];
+  if (current === engineVersion) continue;
+
+  if (check) {
+    problems.push(
+      `${site.file} declares ${current}, but this repo is ${engineVersion}. ` +
+      `The bundle would launch an engine it was not tested against. ` +
+      `Run: node scripts/sync-extension-versions.mjs`,
+    );
+    continue;
+  }
+
+  if (site.json) {
+    const obj = JSON.parse(text);
+    obj.version = engineVersion;
+    writeFileSync(path, JSON.stringify(obj, null, 2) + '\n');
+  } else {
+    writeFileSync(path, text.replace(site.re, `$1${engineVersion}$3`));
+  }
+  changes.push(`${site.file} → ${engineVersion}`);
+}
+
 /* -- Figma: assert the build really does alias to the local dist ------------ */
 const figmaBuild = readFileSync(join(ROOT, 'extensions/figma/build.mjs'), 'utf8');
 if (!figmaBuild.includes("../../dist/esm/core.js")) {

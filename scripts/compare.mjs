@@ -139,7 +139,24 @@ const toPng = (img) =>
  * that flat-fill tracing struggles with and gradients are meant to fix.
  */
 async function loadReal(name, maxWidth = 480) {
-  const { data, info } = await sharp(await readFile(join('corpus', 'src', name)))
+  // `corpus/` is gitignored — the fixtures are third-party photographs that are
+  // not ours to redistribute — so on a fresh clone this path does not exist and
+  // the script used to die on a bare ENOENT with no hint of what was wrong,
+  // while the README promised "every number is reproducible with one command".
+  // Say what is missing and how to get it instead.
+  const path = join('corpus', 'src', name);
+  if (!existsSync(path)) {
+    throw new Error(
+      `${path} is missing.\n\n` +
+      `The comparison runs against real photographs that are not redistributable, so\n` +
+      `corpus/ is gitignored and absent from a fresh clone. Populate it with:\n\n` +
+      `    node scripts/fetch-corpus.mjs\n\n` +
+      `or drop your own images at corpus/src/ under the same names. The synthetic\n` +
+      `fixtures need nothing — only the real-photograph rows depend on this.`,
+    );
+  }
+
+  const { data, info } = await sharp(await readFile(path))
     .resize({ width: maxWidth, withoutEnlargement: true })
     .ensureAlpha()
     .raw()

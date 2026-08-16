@@ -93,14 +93,33 @@ async function reveal(path: string): Promise<void> {
   await vscode.window.showTextDocument(doc, { preview: false });
 }
 
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp)$/i;
+
 /**
  * Resolve the image to act on: the file that was right-clicked, or the active
- * editor when the command is run from the palette.
+ * tab when the command is run from the palette.
+ *
+ * The palette path used to read `window.activeTextEditor`, which can only ever
+ * be a *text* editor. VS Code opens png/jpg/webp/gif/bmp in its built-in Image
+ * Preview, a custom (webview) editor, so `activeTextEditor` was always
+ * undefined for exactly the files these commands accept — the documented
+ * palette path could never find an image, and every command was effectively
+ * explorer-only.
+ *
+ * `tabGroups` sees every editor kind, so it finds the image the user is
+ * actually looking at. The text-editor lookup stays as a fallback for the case
+ * where an image is genuinely open as text.
  */
 function targetUri(arg: vscode.Uri | undefined): vscode.Uri | undefined {
   if (arg instanceof vscode.Uri) return arg;
+
+  const input = vscode.window.tabGroups.activeTabGroup?.activeTab?.input as
+    | { uri?: vscode.Uri }
+    | undefined;
+  if (input?.uri instanceof vscode.Uri && IMAGE_EXT.test(input.uri.fsPath)) return input.uri;
+
   const active = vscode.window.activeTextEditor?.document.uri;
-  return active && /\.(png|jpe?g|webp|gif|bmp)$/i.test(active.fsPath) ? active : undefined;
+  return active && IMAGE_EXT.test(active.fsPath) ? active : undefined;
 }
 
 async function run(
