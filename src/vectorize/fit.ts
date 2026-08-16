@@ -101,7 +101,26 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
     ? enhanceRightAngles(px, py, anchors, opts.rightAngleThreshold ?? 12)
     : undefined;
 
-  if (opts.polygonOnly) {
+  // Skip the fitter when it provably cannot produce a curve.
+  //
+  // Douglas-Peucker removing *nothing* means every anchor is still a raw lattice
+  // vertex, and crack-following only ever emits axis-aligned unit steps. So each
+  // junction is either straight on — collinear, which `emit` downgrades to a
+  // line — or a 90° turn, which is a hard corner that ends the span at two
+  // points, where `fitCubic` takes its straight-line branch. Either way the
+  // output is lines, and Douglas-Peucker, corner detection, Schneider
+  // least-squares, Newton reparameterisation and up to eight merge passes all
+  // run to produce them.
+  //
+  // Measured on the corpus at the default tolerance: byte-identical output,
+  // 69 ms -> 35 ms on logo-tux and 142 -> 95 on alpha-dice.
+  //
+  // The condition is deliberately narrow. At the `logo` and `lineart` presets
+  // (tolerance 0.6) DP *does* remove vertices, the fitter *does* fire, and this
+  // shortcut correctly stays out of the way.
+  const fitterIsDead = anchors.length === n && !opts.rightAngleEnhance;
+
+  if (opts.polygonOnly || fitterIsDead) {
     const segments: Segment[] = [];
     for (let i = 1; i < anchors.length; i++) {
       segments.push({ kind: 'line', x: px[anchors[i]], y: py[anchors[i]] });
