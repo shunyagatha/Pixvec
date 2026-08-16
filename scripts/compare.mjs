@@ -321,6 +321,35 @@ if (asJson) {
 } else {
   const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
   let current = '';
+
+  // Say when the strongest rival is missing, rather than printing a table that
+  // quietly lacks it.
+  //
+  // vtracer is an optional entrant, so a machine without it produced a table
+  // with no vtracer row and nothing to explain the absence — which reads as
+  // "vtracer was compared and lost" to anyone who does not already know it is
+  // optional. The README's table has vtracer rows in it, so running the very
+  // command the README says reproduces those numbers gave a visibly different
+  // and more flattering result.
+  if (vtracerBin) {
+    console.log(`> vtracer: measured via the released binary at ${vtracerBin}.\n`);
+  } else if (vtracer) {
+    console.log(
+      '> vtracer: measured via the `@neplex/vectorizer` napi binding, NOT vtracer\'s own\n' +
+      '> binary. The binding produces substantially larger files at the same quality\n' +
+      '> (1661 KB where the binary produced 987 KB), so these rows are not comparable\n' +
+      '> with the README\'s. Set VECLINE_VTRACER=/path/to/vtracer to score the real tool.\n',
+    );
+  } else {
+    console.log(
+      '> vtracer is NOT in this run. It is the strongest open-source colour tracer and\n' +
+      '> it beats Vecline on some fixtures, so a table without it flatters Vecline.\n' +
+      '> To include it, either point VECLINE_VTRACER at vtracer\'s released binary\n' +
+      '> (https://github.com/visioncortex/vtracer/releases — authoritative), or run\n' +
+      '> `npm install --no-save @neplex/vectorizer` (a binding, and less comparable).\n',
+    );
+  }
+
   console.log('| Fixture | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ | Time |');
   console.log('|---|---|--:|--:|--:|--:|--:|');
   for (const r of results) {
