@@ -1918,7 +1918,6 @@ function fitLoop(pts, opts) {
     for (let i = 1; i < anchors.length; i++) {
       segments2.push({ kind: "line", x: px[anchors[i]], y: py[anchors[i]] });
     }
-    segments2.push({ kind: "line", x: px[anchors[0]], y: py[anchors[0]] });
     return { start: { x: px[anchors[0]], y: py[anchors[0]] }, segments: segments2 };
   }
   const breaks = findBreakpoints(px, py, n2, anchors, opts.cornerAngle, forcedCorners);
