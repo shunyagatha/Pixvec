@@ -481,6 +481,8 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
 
   report('Tracing contours', 55);
   const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
+  /** Shared empty stand-in, so releasing a consumed entry allocates nothing. */
+  const EMPTY_LOOPS: Loop[] = [];
 
   /**
    * Trace a class as if it extended *under* everything painted after it.
@@ -595,6 +597,16 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       ? [extendedLoops(rank, rankOfClass)]
       : components.map((c) => loopsByComponent[c]!);
     for (const group of ownLoops) for (const loop of group) classLoops.push(loop);
+
+    // Release each component's loops as soon as they have been copied out.
+    //
+    // `traceComponents` builds every loop for every component before this loop
+    // starts, and a component belongs to exactly one class, so each entry here
+    // is read exactly once and nothing later in this function touches
+    // `loopsByComponent` again. Holding all of them for the whole run is pure
+    // retention: on a 24 MP photograph it is gigabytes still reachable while
+    // the fitter allocates on top of it.
+    for (const c of components) loopsByComponent[c] = EMPTY_LOOPS;
 
     // A region that *is* a circle/ellipse/rectangle/sector emits the true
     // primitive instead of a Bézier outline — smaller, editable as a shape, and
