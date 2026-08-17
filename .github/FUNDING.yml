@@ -1,8 +1,9 @@
 # Funding for Vecline.
 #
-# Vecline is MIT and stays that way. The library, the CLI, the MCP server and
-# the in-browser Studio are free, unlimited and signup-free — permanently, and
-# not as a trial of something else. Sponsorship funds the maintenance of that;
+# The library, the CLI and the MCP server are MIT and stay that way. The
+# in-browser Studio is source-available rather than MIT, and all four are free,
+# unlimited and signup-free — permanently, and not as a trial of something
+# else. Sponsorship funds the maintenance of that;
 # it does not buy features, and no feature is withheld from anyone who does not
 # pay. Anything ever charged for would sit outside the package entirely, in the
 # places it physically cannot reach: hosted document conversion, enterprise
