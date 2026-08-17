@@ -270,3 +270,65 @@ describe('autoMinArea', () => {
     expect(trace(img, { minArea: 0 }).despeckled).toBe(0);
   });
 });
+
+describe('an explicit preset outranks the auto heuristics', () => {
+  /**
+   * Naming a tracing preset used to do nothing to routing.
+   *
+   * `resolveMode` consulted `opts.preset` for exactly two values — `'pixelart'`
+   * and `'exact'` — and every other preset was read only inside `runTrace`, which
+   * is never reached when the image statistics choose pixel. So `logo`, `lineart`,
+   * `poster`, `photo` and `detailed` all returned output *byte-identical to
+   * `auto`*: measured on a rasterised vector original, all five gave the same
+   * sha256, the same 40,630 bytes and the same 57 shapes. On this project's own
+   * `logo-tux.png`, `--preset logo` returned a 16 KB base64 raster.
+   *
+   * Two changes were needed, and the second is easy to miss: exempting an explicit
+   * preset from the dominating-exact swap. Without it the trace is built and then
+   * handed straight back for a base64 copy, because that check fires on exactly
+   * the images a logo preset is for — its own docstring names "a logo with 194
+   * colours and soft edges".
+   */
+  it('sends a flat image to trace when a tracing preset is named', async () => {
+    const source = await asInput(flatArtwork());
+    // The control: without a preset this is the pixel-mode case asserted above.
+    expect((await vectorize(source)).mode).toBe('pixel');
+
+    for (const preset of ['logo', 'lineart', 'poster', 'detailed'] as const) {
+      const result = await vectorize(source, { preset });
+      expect(result.mode, `preset '${preset}' should select trace`).toBe('trace');
+      // And it must actually be geometry, not a wrapped bitmap.
+      expect(result.svg).not.toMatch(/<image\b/);
+    }
+  });
+
+  it('still honours the more specific --mode flag', async () => {
+    // `--mode pixel --preset logo` is not a contradiction to resolve by preset:
+    // mode is the more specific instruction and wins.
+    const source = await asInput(flatArtwork());
+    expect((await vectorize(source, { mode: 'pixel', preset: 'logo' })).mode).toBe('pixel');
+    expect((await vectorize(source, { mode: 'embed', preset: 'logo' })).mode).toBe('embed');
+  });
+
+  it('leaves pixelart, exact and lossless exactly as they were', async () => {
+    const source = await asInput(flatArtwork());
+    // `pixelart` means "this IS pixel art", so it must keep choosing pixel.
+    expect((await vectorize(source, { preset: 'pixelart' })).mode).toBe('pixel');
+    // The bit-exactness promise is not routed by preset at all: `exact` and
+    // `lossless` measure candidates instead of guessing, and must stay exact.
+    for (const opts of [{ preset: 'exact' as const }, { mode: 'lossless' as const }]) {
+      const result = await vectorize(source, { ...opts, verify: true });
+      expect(result.lossless, `${JSON.stringify(opts)} must stay bit-exact`).toBe(true);
+      expect(result.quality?.psnr).toBe(Infinity);
+    }
+  });
+
+  it('plain auto is untouched, including the exact-copy swap', async () => {
+    // The swap must still fire without a preset — that is the behaviour #48 added
+    // and this change must not disable it generally, only exempt explicit presets.
+    const source = await asInput(flatArtwork());
+    const auto = await vectorize(source, { verify: true });
+    expect(auto.mode).toBe('pixel');
+    expect(auto.lossless).toBe(true);
+  });
+});
