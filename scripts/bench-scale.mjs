@@ -62,17 +62,38 @@ const flag = (name, fallback) => {
 // which silently swallowed the positional corpus directory and fell back to the
 // synthetic set — reporting a full run against a corpus it never opened.
 const FLAG_VALUES = new Set(
-  ['base', 'scale', 'out']
+  ['base', 'scale', 'scales', 'out']
     .map((n) => argv.indexOf(`--${n}`))
     .filter((i) => i !== -1)
     .map((i) => argv[i + 1]),
 );
 const corpusDir = argv.find((a) => !a.startsWith('--') && !FLAG_VALUES.has(a));
 const BASE = Number(flag('base', 256));   // size the vectorizer sees
-const SCALE = Number(flag('scale', 4));   // magnification the score is taken at
 const OUT = flag('out', 'bench-scale.json');
-const BIG = BASE * SCALE;
 const WORK = '.bench-scale';
+
+/**
+ * Score at two magnifications, one of them NOT a whole number.
+ *
+ * An integer scale is the one case where this harness is blind. Traced output at
+ * the shipped tolerance sits entirely on the pixel lattice — 100% of its
+ * coordinates are integers — so rendering it at exactly 4x lands every edge on a
+ * pixel boundary and produces no antialiased pixels at all. Every seam, every
+ * sub-pixel placement error and every compositing artefact vanishes from the
+ * score.
+ *
+ * That is not hypothetical. At 4.000x this harness reported `trace-default` and
+ * `trace + extendUnder` as *byte-identical in rendered output* — 0 differing
+ * subpixel channels out of 4,194,304. At 3.902x the same two differ by 0.96 dB.
+ * A benchmark that cannot separate two configurations a whole decibel apart is
+ * not measuring the thing it claims to.
+ *
+ * 3.902 rather than 3.9 because a scale with a short decimal expansion still
+ * lands suspiciously many edges on pixel boundaries; this one is deliberately
+ * awkward. Both scales are reported, because 4x is the reproducible headline and
+ * the non-integer one is where the truth about edges lives.
+ */
+const SCALES = (flag('scales', '4,3.902')).split(',').map(Number).filter((n) => n > 0);
 const WHITE = { r: 255, g: 255, b: 255, a: 255 };
 
 // Candidate configurations. The harness is indifferent to what produced an SVG,
@@ -96,7 +117,9 @@ async function render(svg, size) {
   // resvg fits one axis and keeps the aspect ratio. Every fixture here is square
   // and a candidate inherits the input's dimensions, so truth and candidate come
   // out the same size — which the comparison asserts rather than assumes.
-  const { image } = await rasterizeSvg(svg, { width: size, background: WHITE });
+  // Rounded, because a non-integer scale gives a fractional target: 256 * 3.902
+  // is 998.912, and resvg wants whole pixels.
+  const { image } = await rasterizeSvg(svg, { width: Math.round(size), background: WHITE });
   return image;
 }
 
@@ -198,34 +221,33 @@ function countAnchors(svg) {
  * of the image the vectorizer actually decided anything about.
  */
 /**
- * Force `img` to exactly `w` x `h`, tolerating only a rounding-scale difference.
+ * Bring `img` to exactly `w` x `h`, tolerating only a rounding-scale difference.
  *
  * A non-square original cannot round-trip its aspect ratio exactly: a 1024x655
  * truth is rasterised to 256x164 for the vectorizer (655/4 = 163.75, rounded up),
  * and the candidate inherits those dimensions, so 4x gives 656 rows against the
- * truth's 655. That is one row of rounding, not a misalignment — but the two must
- * still be the same size to compare at all, so the extra row is dropped and any
- * discrepancy larger than the rounding could produce is an error rather than a
- * silent crop of real content.
+ * truth's 655.
+ *
+ * This used to *crop* the extra row while the ceiling reference was *resampled*
+ * onto the truth's exact dimensions — so on non-square input the two were not
+ * being treated alike, and a candidate was compared against a truth it had been
+ * shifted relative to. Both are resampled now, with the project's own resampler,
+ * which is the only way the comparison is like-for-like.
+ *
+ * A discrepancy larger than aspect rounding could produce is still an error
+ * rather than a silent squash of real content.
  */
-function conform(img, w, h) {
+async function conform(img, w, h, scale) {
   if (img.width === w && img.height === h) return img;
-  if (Math.abs(img.width - w) > SCALE || Math.abs(img.height - h) > SCALE) {
+  const slack = Math.ceil(scale);
+  if (Math.abs(img.width - w) > slack || Math.abs(img.height - h) > slack) {
     throw new Error(
       `size mismatch beyond rounding: got ${img.width}x${img.height}, expected ` +
         `${w}x${h}. A difference this large means the aspect ratios genuinely ` +
         `differ, and comparing them would score misaligned pixels.`,
     );
   }
-  const out = { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
-  const cw = Math.min(w, img.width);
-  const ch = Math.min(h, img.height);
-  for (let y = 0; y < ch; y++) {
-    const src = y * img.width * 4;
-    const dst = y * w * 4;
-    out.data.set(img.data.subarray(src, src + cw * 4), dst);
-  }
-  return out;
+  return upscale(img, w, h);
 }
 
 function compare(truth, cand, mask) {
@@ -334,96 +356,123 @@ async function main() {
   const corpus = await loadCorpus();
   const names = Object.keys(corpus);
   console.log(
-    `corpus: ${names.length} shape(s) | input ${BASE}px | scored at ${BIG}px (${SCALE}x)` +
+    `corpus: ${names.length} shape(s) | input ${BASE}px | scored at ` +
+    SCALES.map((k) => `${Math.round(BASE * k)}px (${k}x)`).join(' and ') +
     `\nrivals: ${EXTERNALS.length ? EXTERNALS.map((e) => e.id).join(', ') : 'none available'}\n`,
   );
 
-  const totals = new Map();
+  // One accumulator per scale. Averaging across magnifications would hide exactly
+  // the difference this is here to expose.
+  const totals = new Map(SCALES.map((k) => [k, new Map()]));
   const report = [];
 
-  function record(shape, id, m, bytes, mode) {
-    report.push({ shape, id, mode, bytes, ...m });
-    const t = totals.get(id) ?? { edge: 0, full: 0, anchors: 0, elements: 0, primitives: 0, curveOps: 0, bytes: 0, n: 0 };
+  function record(scale, shape, id, m, bytes, mode) {
+    report.push({ scale, shape, id, mode, bytes, ...m });
+    const per = totals.get(scale);
+    const t = per.get(id) ?? { edge: 0, full: 0, anchors: 0, elements: 0, primitives: 0, curveOps: 0, bytes: 0, n: 0 };
     t.edge += m.edgePsnr; t.full += m.fullPsnr;
     t.anchors += m.anchors ?? 0; t.elements += m.elements ?? 0;
     t.primitives += m.primitives ?? 0; t.curveOps += m.curveOps ?? 0;
     t.bytes += bytes; t.n++;
-    totals.set(id, t);
+    per.set(id, t);
   }
 
   for (const name of names) {
     const source = corpus[name];
-    const truth = await render(source, BIG);
-    const mask = edgeMask(truth);
 
+    // Vectorise once. What the tracer sees does not depend on the magnification
+    // its result is scored at, and producing it per scale would only invite the
+    // two runs to disagree about what was measured.
     const smallPng = await renderToPng(source, BASE);
     const inputPath = path.join(WORK, `${name}.${BASE}.png`);
     await writeFile(inputPath, smallPng);
-
-    // The ceiling reference, from the project's own resampler.
     const small = await render(source, BASE);
-    record(name, 'ceiling:smooth-upscale',
-      compare(truth, await upscale(small, truth.width, truth.height), mask), smallPng.length);
-
     const loaded = await loadRaster(inputPath);
+
+    const produced = [];
     for (const cand of CANDIDATES) {
-      let out;
-      try { out = await vectorize(loaded, cand.opts); }
-      catch (e) { console.log(`  ${name}/${cand.id}: ERROR ${e.message}`); continue; }
-      const rendered = conform(await render(out.svg, BIG), truth.width, truth.height);
-      record(name, cand.id, { ...compare(truth, rendered, mask), ...countAnchors(out.svg) },
-        Buffer.byteLength(out.svg), out.mode);
-      await writeFile(path.join(WORK, `${name}.${cand.id}.svg`), out.svg);
+      try {
+        const out = await vectorize(loaded, cand.opts);
+        produced.push({ id: cand.id, svg: out.svg, mode: out.mode });
+        await writeFile(path.join(WORK, `${name}.${cand.id}.svg`), out.svg);
+      } catch (e) { console.log(`  ${name}/${cand.id}: ERROR ${e.message}`); }
     }
-
     for (const ext of EXTERNALS) {
-      let svg;
-      try { svg = await ext.run(inputPath, smallPng); }
-      catch (e) { console.log(`  ${name}/${ext.id}: ERROR ${e.message}`); continue; }
-      const rendered = conform(await render(svg, BIG), truth.width, truth.height);
-      record(name, ext.id, { ...compare(truth, rendered, mask), ...countAnchors(svg) },
-        Buffer.byteLength(svg));
-      await writeFile(path.join(WORK, `${name}.${ext.id.replace(/[^\w.-]+/g, '_')}.svg`), svg);
+      try {
+        const svg = await ext.run(inputPath, smallPng);
+        produced.push({ id: ext.id, svg });
+        await writeFile(path.join(WORK, `${name}.${ext.id.replace(/[^\w.-]+/g, '_')}.svg`), svg);
+      } catch (e) { console.log(`  ${name}/${ext.id}: ERROR ${e.message}`); }
+    }
+
+    for (const scale of SCALES) {
+      const big = Math.round(BASE * scale);
+      const truth = await render(source, big);
+      const mask = edgeMask(truth);
+
+      record(scale, name, 'ceiling:smooth-upscale',
+        compare(truth, await upscale(small, truth.width, truth.height), mask), smallPng.length);
+
+      for (const item of produced) {
+        const rendered = await conform(await render(item.svg, big), truth.width, truth.height, scale);
+        record(scale, name, item.id, { ...compare(truth, rendered, mask), ...countAnchors(item.svg) },
+          Buffer.byteLength(item.svg), item.mode);
+      }
     }
   }
 
-  const rows = [...totals.entries()]
-    .map(([id, t]) => ({
-      id,
-      edge: t.edge / t.n,
-      full: t.full / t.n,
-      anchors: Math.round(t.anchors / t.n),
-      elements: Math.round(t.elements / t.n),
-      primitives: Math.round(t.primitives / t.n),
-      curveOps: Math.round(t.curveOps / t.n),
-      bytes: Math.round(t.bytes / t.n),
-    }))
-    // Frontier rank: accuracy earned per anchor spent. The ceiling has no
-    // anchors, so it sorts last here by construction — that is intended.
-    .sort((a, b) => (b.edge / Math.max(b.anchors, 1)) - (a.edge / Math.max(a.anchors, 1)));
+  const h = (str, w) => String(str).padStart(w);
+  const allRows = {};
+  for (const scale of SCALES) {
+    const rows = [...totals.get(scale).entries()]
+      .map(([id, t]) => ({
+        id,
+        edge: t.edge / t.n,
+        full: t.full / t.n,
+        anchors: Math.round(t.anchors / t.n),
+        elements: Math.round(t.elements / t.n),
+        primitives: Math.round(t.primitives / t.n),
+        curveOps: Math.round(t.curveOps / t.n),
+        bytes: Math.round(t.bytes / t.n),
+      }))
+      // Frontier rank: accuracy earned per anchor spent. The ceiling has no
+      // anchors, so it sorts last here by construction — that is intended.
+      .sort((a, b) => (b.edge / Math.max(b.anchors, 1)) - (a.edge / Math.max(a.anchors, 1)));
+    allRows[scale] = rows;
 
-  const h = (s, w) => String(s).padStart(w);
-  console.log(
-    'candidate'.padEnd(24) + h('edgePSNR', 10) + h('fullPSNR', 10) +
-    h('anchors', 9) + h('curves', 8) + h('elems', 7) + h('prims', 7) + h('bytes', 9),
-  );
-  for (const r of rows) {
+    const note = Number.isInteger(scale)
+      ? '  <- integer: blind to edges, see the note below'
+      : '  <- non-integer: this is where edges are actually tested';
+    console.log(`\n=== scored at ${Math.round(BASE * scale)}px (${scale}x)${note} ===`);
     console.log(
-      r.id.padEnd(24) + h(r.edge.toFixed(2), 10) + h(r.full.toFixed(2), 10) +
-      h(r.anchors || '-', 9) + h(r.curveOps || '-', 8) +
-      h(r.elements || '-', 7) + h(r.primitives || '-', 7) + h(r.bytes, 9),
+      'candidate'.padEnd(24) + h('edgePSNR', 10) + h('fullPSNR', 10) +
+      h('anchors', 9) + h('curves', 8) + h('elems', 7) + h('prims', 7) + h('bytes', 9),
     );
+    for (const r of rows) {
+      console.log(
+        r.id.padEnd(24) + h(r.edge.toFixed(2), 10) + h(r.full.toFixed(2), 10) +
+        h(r.anchors || '-', 9) + h(r.curveOps || '-', 8) +
+        h(r.elements || '-', 7) + h(r.primitives || '-', 7) + h(r.bytes, 9),
+      );
+    }
   }
+
   console.log(
     `\nRead this as a frontier, not a ranking. ceiling:smooth-upscale is the accuracy` +
     `\nceiling and spends no anchors — it is not a competitor, it is the number to` +
     `\napproach. A vectorizer wins by getting close to it on edgePSNR while spending` +
     `\nanchors in the order of magnitude the shape actually needs.` +
     `\n\nfullPSNR is printed only to show how little it separates anything: that is the` +
-    `\nnumber a 1x whole-frame metric reports, and why this harness exists.`,
+    `\nnumber a 1x whole-frame metric reports, and why this harness exists.` +
+    `\n\nTrust the non-integer scale for anything about edges. At a whole-number` +
+    `\nmagnification every lattice coordinate lands on a pixel boundary, so traced` +
+    `\noutput has no antialiased pixels at all and seams, sub-pixel placement and` +
+    `\ncompositing vanish from the score. Measured consequence: this harness once` +
+    `\nreported trace-default and trace+extendUnder as render-identical — 0 differing` +
+    `\nsubpixel channels of 4,194,304 — when at 3.902x they are 0.96 dB apart.`,
   );
 
-  await writeFile(OUT, JSON.stringify({ base: BASE, scale: SCALE, rows, detail: report }, null, 2));
+  await writeFile(OUT, JSON.stringify({ base: BASE, scales: SCALES, rows: allRows, detail: report }, null, 2));
   console.log(`\nwrote ${OUT}`);
 }
 

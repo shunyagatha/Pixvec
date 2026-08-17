@@ -174,13 +174,35 @@ export interface TraceOptions {
   strokeWidth?: number;
   /**
    * Extend each region's fill *under* the regions painted after it, instead of
-   * cutting at their shared edge. Render-identical — the later region repaints
-   * those pixels — but a shared boundary is then traced once rather than twice,
-   * and no antialiasing seam can open at a join that no longer exists.
+   * cutting at their shared edge. No antialiasing seam can open at a join that no
+   * longer exists, and this is the only mechanism here that actually removes one.
    *
-   * Off by default: it costs one extra contour pass per colour, and on artwork
-   * whose later colours are scattered the union can be *more* complex than the
-   * region it replaces. Worth measuring per image rather than assuming.
+   * **Measured, and the price is much higher than this once claimed.** Two things
+   * the earlier docstring said are wrong:
+   *
+   * - "Render-identical" holds *only at integer magnification*. At 4.000x it is
+   *   bit-identical to a plain trace — 0 differing subpixel channels out of
+   *   4,194,304 on every corpus shape — because traced coordinates all sit on the
+   *   pixel lattice and nothing is antialiased. At 3.902x it is **0.96 dB worse**
+   *   on real artwork.
+   * - "A shared boundary is traced once rather than twice" is not true in
+   *   aggregate. `extendedLoops` masks every class ranked at or after this one, so
+   *   the union's boundary is a new and generally longer curve: **3.97x the
+   *   anchors** (25,410 -> 100,784) and 3.75x the bytes on the real corpus.
+   *
+   * Its cost is a range across artwork classes, never one number: -0.03 dB to
+   * -0.96 dB, 1.8x to 4.0x anchors. Off by default, and it should stay off unless
+   * seam-free output is an explicit requirement — seams are worth only 0.11-0.17 dB
+   * of a ~1.4 dB deficit, so paying 4x the geometry to remove them loses.
+   *
+   * **A planar map is not the cheaper alternative.** One was built and measured: it
+   * removes **0 of 31,036** seam pixels. Painter's-algorithm compositing gives
+   * whatever lies beneath a join a weight of a(1-a) <= 0.25 regardless of geometry,
+   * so two faces whose shared edge is written with character-identical coordinates
+   * still leak. Geometric agreement is not what a seam is made of; only overlap
+   * (this option) or a renderer with analytic coverage removes one.
+   *
+   * Also incompatible with {@link subpixel} — see there.
    */
   extendUnder?: boolean;
   /**
@@ -200,9 +222,10 @@ export interface TraceOptions {
    * anti-aliasing the displacement is exactly zero, so pixel art and sprites are
    * byte-identical either way.
    *
-   * Ignored when `extendUnder` is on, because those loops bound a *union* of
-   * classes rather than this class's own pixels, so "inside" cannot be decided
-   * from the class map.
+   * Cannot be combined with `extendUnder`, and the combination is now an error
+   * rather than a silent downgrade: those loops bound a *union* of classes rather
+   * than one class's own pixels, so "inside" cannot be decided from the class map.
+   * Asking for both used to return output byte-identical to asking for neither.
    */
   subpixel?: boolean;
   /**
@@ -311,6 +334,31 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     minArea: autoMinArea(source.width * source.height),
     ...clean,
   };
+
+  // Refused rather than silently downgraded.
+  //
+  // `extendUnder` replaces each class's loops with a union's boundary, and
+  // sub-pixel refinement needs to know which class is inside — which the class
+  // map cannot answer for a union. So the two genuinely cannot be combined. The
+  // code handled that by quietly skipping refinement, which meant asking for both
+  // returned output byte-identical to asking for neither: measured at 1.36 dB
+  // worse on real artwork with all 2,121 curves discarded, and no indication that
+  // the option had been ignored.
+  //
+  // This project's own convention, set when `-m embed -l` stopped silently
+  // picking a winner, is that an impossible combination is rejected with an
+  // explanation. Both options landed off by default, so nothing can depend on the
+  // old behaviour.
+  if (o.subpixel && o.extendUnder) {
+    throw new Error(
+      'subpixel and extendUnder cannot be combined: extendUnder traces the union ' +
+        'of several classes, and sub-pixel refinement needs to know which single ' +
+        'class is inside a boundary to read its coverage. Pick one — subpixel is ' +
+        'worth about +1.4 dB of edge accuracy and is what lets the curve fitter ' +
+        'run at all, while extendUnder removes antialiasing seams at roughly 4x ' +
+        'the anchors. Previously this combination silently ignored subpixel.',
+    );
+  }
 
   // Progress and cancellation share one helper so a stage cannot report itself
   // without also being a place the caller can bail out. `aborted` is thrown as
@@ -545,9 +593,10 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     const path = new PathBuilder(o.precision);
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue; // emitted as its own element below
-      // Sub-pixel refinement, when asked for and when the loops are this
-      // class's own: `extendUnder` replaces them with a union's boundary, where
-      // "inside" cannot be read off the class map.
+      // `!rankOfClass` is belt-and-braces: the subpixel + extendUnder combination
+      // is refused above, so this can only be false when subpixel is off anyway.
+      // It stays because the two conditions are independent and a future caller of
+      // extendedLoops should not silently start refining a union boundary.
       const refined = o.subpixel && !rankOfClass
         ? refineLoop(loop, img, classes, cls).pts
         : loop.pts;
