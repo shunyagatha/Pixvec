@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { type Metadata } from 'sharp';
 import { loadSharp } from './native.js';
 import type { RasterImage, SourceMeta } from '../types.js';
+import { isApng, readApngFrames } from './formats/apng.js';
 import { decodeFallback, decodeTgaFallback, type FallbackResult } from './formats/index.js';
 import { findDecoder, registeredFormats, type CustomDecoder } from '../codecs.js';
 
@@ -197,12 +198,32 @@ export async function decodeRaster(
     space: raw.space ?? 'srgb',
     density: raw.density,
     hasProfile: Boolean(raw.icc),
-    frames: raw.pages ?? 1,
+    // libvips reports no page count for an APNG at all, so `pages` is
+    // undefined and this used to report 1 frame for a 20-frame file. The
+    // container itself is the authority; reading acTL costs a chunk walk.
+    frames: raw.pages ?? apngFrameCount(bytes) ?? 1,
     bytes: bytes.byteLength,
     orientation: raw.orientation,
   };
 
   return { image, meta, bytes };
+}
+
+/**
+ * Frames an APNG actually carries, or null if these bytes are not one.
+ *
+ * Reports what the file contains rather than what `acTL` claims, since the two
+ * differ in a truncated file and the count is used to tell callers how much
+ * animation is really there.
+ */
+function apngFrameCount(bytes: Uint8Array): number | null {
+  if (!isApng(bytes)) return null;
+  try {
+    const n = readApngFrames(bytes).frames.length;
+    return n > 0 ? n : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Run a user-registered decoder and package its result like any other decode. */

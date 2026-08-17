@@ -58,6 +58,11 @@ const CORE_MODULES = [
   'vectorize/index.ts',
   'io/route.ts',
   'io/formats/bytes.ts',
+  // APNG splitting and compositing are both pure: the reader hands back
+  // standalone PNG bytes and the compositor takes a decoder as a callback, so
+  // neither reaches a codec itself and both run anywhere.
+  'io/formats/apng.ts',
+  'io/apng-compose.ts',
   'io/formats/bmp.ts',
   'io/formats/ico.ts',
   'io/formats/pnm.ts',

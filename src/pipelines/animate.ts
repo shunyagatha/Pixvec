@@ -9,6 +9,8 @@
  * needs libvips (sharp).
  */
 
+import { composeApng } from '../io/apng-compose.js';
+import { isApng } from '../io/formats/apng.js';
 import { loadSharp } from '../io/native.js';
 import type { RasterImage, Rgba } from '../types.js';
 import { trace, type TraceOptions } from '../vectorize/trace.js';
@@ -49,27 +51,18 @@ export async function traceAnimation(
   // reports `pageHeight` per frame but decodes every page into one strip, so
   // the pixel budget covers width x pageHeight x pages. Left unguarded, a small
   // GIF declaring a large canvas and many frames allocates the product.
-  const sharp = await loadSharp();
-  const img = sharp(Buffer.from(bytes), {
-    animated: true,
-    limitInputPixels: opts.limitInputPixels ?? DEFAULT_MAX_INPUT_PIXELS,
-  });
-  const meta = await img.metadata();
-  const width = meta.width ?? 0;
-  const pages = meta.pages ?? 1;
-  const pageHeight = meta.pageHeight ?? meta.height ?? 0;
-  if (width < 1 || pageHeight < 1) {
-    throw new Error('Could not determine animation dimensions.');
-  }
+  const limit = opts.limitInputPixels ?? DEFAULT_MAX_INPUT_PIXELS;
 
-  const { data } = await img
-    .toColorspace('srgb')
-    .ensureAlpha()
-    .raw({ depth: 'uchar' })
-    .toBuffer({ resolveWithObject: true });
+  // APNG never reaches the libvips path. libvips builds against libspng, which
+  // decodes an APNG's still fallback image and reports no page count at all --
+  // `metadata().pages` is undefined, not 20 -- so every APNG used to come back
+  // as a single frame and an `animate` run silently dropped the rest.
+  const source = isApng(bytes)
+    ? await readApngStack(bytes, limit)
+    : await readVipsStack(bytes, limit);
 
+  const { width, pages, pageHeight, data, rawDelays } = source;
   const frameBytes = width * pageHeight * 4;
-  const rawDelays = normaliseDelays(meta.delay, pages);
 
   // Pick frames (evenly sampled if capped), carrying each one's delay along.
   const indices = sampleIndices(pages, opts.maxFrames);
@@ -111,6 +104,78 @@ export async function traceAnimation(
     width,
     height: pageHeight,
     duration,
+  };
+}
+
+/**
+ * One decoded frame stack: every frame's RGBA laid end to end, as libvips
+ * already produces for a multi-page image. Both loaders return this shape so
+ * nothing downstream has to know which format it came from.
+ */
+interface FrameStack {
+  width: number;
+  pages: number;
+  pageHeight: number;
+  data: Uint8Array | Uint8ClampedArray;
+  rawDelays: number[];
+}
+
+/** Animated GIF/WebP and anything else libvips opens as multi-page. */
+async function readVipsStack(bytes: Uint8Array, limit: number | false): Promise<FrameStack> {
+  const sharp = await loadSharp();
+  const img = sharp(Buffer.from(bytes), { animated: true, limitInputPixels: limit });
+  const meta = await img.metadata();
+  const width = meta.width ?? 0;
+  const pages = meta.pages ?? 1;
+  const pageHeight = meta.pageHeight ?? meta.height ?? 0;
+  if (width < 1 || pageHeight < 1) throw new Error('Could not determine animation dimensions.');
+
+  const { data } = await img
+    .toColorspace('srgb')
+    .ensureAlpha()
+    .raw({ depth: 'uchar' })
+    .toBuffer({ resolveWithObject: true });
+
+  return { width, pages, pageHeight, data, rawDelays: normaliseDelays(meta.delay, pages) };
+}
+
+/**
+ * APNG, composited here because libvips will not.
+ *
+ * The budget is checked against what `acTL` and `IHDR` *declare*, before any
+ * frame is decoded — a 30-byte header can claim a huge canvas and thousands of
+ * frames, and finding that out by allocating it is the bomb this guards.
+ */
+async function readApngStack(bytes: Uint8Array, limit: number | false): Promise<FrameStack> {
+  const sharp = await loadSharp();
+
+  // The contract is straight 8-bit RGBA. `ensureAlpha()` alone does not get
+  // there: a greyscale+alpha PNG stays 2 channels and a 16-bit one stays
+  // ushort, so `raw()` would hand back 2 or 8 bytes per pixel and compositing
+  // would read the wrong stride.
+  const decode = async (png: Uint8Array): Promise<RasterImage> => {
+    const { data, info } = await sharp(Buffer.from(png), { limitInputPixels: limit })
+      .toColorspace('srgb')
+      .ensureAlpha()
+      .raw({ depth: 'uchar' })
+      .toBuffer({ resolveWithObject: true });
+    return { width: info.width, height: info.height, data: new Uint8ClampedArray(data) };
+  };
+
+  const composed = await composeApng(bytes, decode, limit);
+  const pages = composed.frames.length;
+  if (pages < 1) throw new Error('APNG declares an animation but carries no frames.');
+
+  const frameBytes = composed.width * composed.height * 4;
+  const data = new Uint8ClampedArray(frameBytes * pages);
+  composed.frames.forEach((f, i) => data.set(f.image.data, i * frameBytes));
+
+  return {
+    width: composed.width,
+    pages,
+    pageHeight: composed.height,
+    data,
+    rawDelays: composed.frames.map((f) => Math.round(f.delayMs)),
   };
 }
 
