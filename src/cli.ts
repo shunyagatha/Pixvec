@@ -568,6 +568,22 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
   );
 
   for (const note of result.notes) info(`  ${dim('·')} ${note}`);
+  // An empty document is a suspicious kind of success.
+  //
+  // Nothing to draw means every pixel was transparent, which for a fully
+  // transparent source is the correct and genuinely bit-exact answer — but it is
+  // also what a decoder bug looks like from the outside. A TGA whose header said
+  // it had no alpha channel used to decode entirely transparent, and this command
+  // reported "0 shapes" and "bit-exact by construction" over it without pause.
+  // The decode is fixed; saying so when the output is empty is the cheap guard
+  // against the next one.
+  if (result.shapes === 0) {
+    info(
+      `${yellow('note')} the output contains no shapes: every pixel of the source ` +
+        `was fully transparent. That is exact if the image really is empty, and a ` +
+        `sign the input was not decoded as intended if it is not.`,
+    );
+  }
   if (result.budget) printBudget(result.budget);
   if (result.quality) printQuality(result.quality);
   else if (result.lossless) info(`\n${bold('Accuracy')}  ${green('bit-exact by construction')} ${dim('(pass --verify to prove it)')}`);

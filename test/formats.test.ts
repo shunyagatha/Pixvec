@@ -349,3 +349,66 @@ describe('unsupported input', () => {
       .rejects.toThrow(/PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO/);
   });
 });
+
+describe('TGA alpha follows the header, not the bytes', () => {
+  /**
+   * Bits 0-3 of the image descriptor are the ALPHA BIT COUNT. Zero means the file
+   * carries no alpha channel, so the fourth byte of a 32-bit pixel is undefined
+   * padding. This decoder read it anyway, and plenty of writers leave it as
+   * scratch precisely because the header says not to.
+   *
+   * Measured on real files from the format-authority corpora: a colour-mapped RLE
+   * TGA with attributeBits 0 decoded with 0 of 16,384 pixels opaque — the entire
+   * image invisible, which is why pixel mode emitted an SVG with no shapes and
+   * still called it bit-exact. A 32-bit RLE file came back 1 of 39,601 opaque.
+   */
+  function tga32(alphaByte: (i: number) => number, attributeBits: number): Buffer {
+    const w = 4, h = 4;
+    const body: number[] = [];
+    for (let i = 0; i < w * h; i++) body.push(20, 90, 200, alphaByte(i));
+    const b = Buffer.alloc(18 + body.length);
+    b[2] = 2;                       // uncompressed true-colour
+    b.writeUInt16LE(w, 12);
+    b.writeUInt16LE(h, 14);
+    b[16] = 32;
+    b[17] = 0x20 | (attributeBits & 0x0f);  // top-down, plus the alpha-bit count
+    Buffer.from(body).copy(b, 18);
+    return b;
+  }
+
+  const alphaOf = (img: RasterImage): number[] => {
+    const out: number[] = [];
+    for (let i = 3; i < img.data.length; i += 4) out.push(img.data[i]);
+    return out;
+  };
+
+  it('ignores the alpha byte when the header declares no alpha channel', () => {
+    // Garbage in the padding byte, and the header says it is padding.
+    const { image: img } = decodeTga(tga32((i) => i * 7, 0));
+    expect(alphaOf(img).every((a) => a === 255), 'a file with no alpha channel decoded translucent').toBe(true);
+  });
+
+  it('honours real alpha when the header declares 8 bits', () => {
+    const { image: img } = decodeTga(tga32((i) => (i < 8 ? 0 : 255), 8));
+    const alpha = alphaOf(img);
+    expect(alpha.filter((a) => a === 0).length).toBe(8);
+    expect(alpha.filter((a) => a === 255).length).toBe(8);
+  });
+
+  it('treats a declared-but-entirely-zero alpha channel as unused', () => {
+    // A writer can say "8 alpha bits" and leave every byte at 0. Taking that
+    // literally yields a wholly invisible image; stb_image and libtga apply the
+    // same heuristic. Two files in the corpora do exactly this.
+    const { image: img } = decodeTga(tga32(() => 0, 8));
+    expect(alphaOf(img).every((a) => a === 255)).toBe(true);
+  });
+
+  it('does not touch a genuinely transparent region inside a real RGBA image', () => {
+    // The heuristic is all-or-nothing on purpose: one non-zero alpha anywhere
+    // means the channel is in use and every value stands.
+    const { image: img } = decodeTga(tga32((i) => (i === 0 ? 255 : 0), 8));
+    const alpha = alphaOf(img);
+    expect(alpha[0]).toBe(255);
+    expect(alpha.slice(1).every((a) => a === 0)).toBe(true);
+  });
+});

@@ -73,6 +73,21 @@ export function decodeTga(bytes: Uint8Array): { image: RasterImage; bitDepth: nu
   const topDown = (descriptor & 0x20) !== 0;
   const rightToLeft = (descriptor & 0x10) !== 0;
 
+  // Bits 0-3 are the ALPHA BIT COUNT, and reading them is not optional.
+  //
+  // Zero means the file carries no alpha channel, so the fourth byte of a 32-bit
+  // pixel and bit 15 of a 16-bit one are undefined padding that must be ignored.
+  // This decoder trusted them anyway, and the result was not subtle: a
+  // colour-mapped RLE file with 16-bit map entries and `attributeBits = 0`
+  // decoded with 0 of 16,384 pixels opaque -- the entire image transparent, which
+  // is why pixel mode emitted an SVG containing no shapes at all and still
+  // reported "bit-exact by construction". A 32-bit RLE file with the same
+  // declaration came back with 1 of 39,601 pixels opaque.
+  //
+  // Both files are valid TGA. Plenty of writers leave those bytes as scratch
+  // precisely because the header says not to read them.
+  const attributeBits = descriptor & 0x0f;
+
   let p = 18 + idLength;
 
   let colorMap: Uint8Array | null = null;
@@ -82,7 +97,7 @@ export function decodeTga(bytes: Uint8Array): { image: RasterImage; bitDepth: nu
     for (let i = 0; i < mapLength; i++) {
       const o = p + i * entryBytes;
       const q = (mapFirst + i) * 4;
-      const px = readPixel(bytes, o, mapEntrySize);
+      const px = readPixel(bytes, o, mapEntrySize, attributeBits);
       colorMap[q] = px[0]; colorMap[q + 1] = px[1];
       colorMap[q + 2] = px[2]; colorMap[q + 3] = px[3];
     }
@@ -108,9 +123,9 @@ export function decodeTga(bytes: Uint8Array): { image: RasterImage; bitDepth: nu
     } else if (isGray) {
       const v = bytes[source];
       pixels[q] = v; pixels[q + 1] = v; pixels[q + 2] = v;
-      pixels[q + 3] = depth === 16 ? bytes[source + 1] : 255;
+      pixels[q + 3] = depth === 16 && attributeBits > 0 ? bytes[source + 1] : 255;
     } else {
-      const px = readPixel(bytes, source, depth);
+      const px = readPixel(bytes, source, depth, attributeBits);
       pixels[q] = px[0]; pixels[q + 1] = px[1]; pixels[q + 2] = px[2]; pixels[q + 3] = px[3];
     }
   };
@@ -139,6 +154,27 @@ export function decodeTga(bytes: Uint8Array): { image: RasterImage; bitDepth: nu
     }
   }
 
+  // A declared alpha channel that is zero everywhere is an unused one.
+  //
+  // The header can say "8 alpha bits" while the writer leaves the byte at 0 for
+  // every pixel, and taking that literally yields a wholly invisible image. Two
+  // files in the format-authority corpora do exactly this — a 32-bit and a
+  // 16-bit truecolour sample, both decoding 0 of 16,384 pixels opaque — and the
+  // same heuristic is what stb_image and libtga apply, for the same reason.
+  //
+  // Deliberately all-or-nothing: a single non-zero alpha anywhere means the
+  // channel is in use and every value is honoured, so a genuinely
+  // fully-transparent region inside a real RGBA image is never touched.
+  if (attributeBits > 0) {
+    let anyOpacity = false;
+    for (let i = 3; i < pixels.length; i += 4) {
+      if (pixels[i] !== 0) { anyOpacity = true; break; }
+    }
+    if (!anyOpacity) {
+      for (let i = 3; i < pixels.length; i += 4) pixels[i] = 255;
+    }
+  }
+
   // Re-orient into top-down, left-to-right.
   for (let y = 0; y < height; y++) {
     const srcY = topDown ? y : height - 1 - y;
@@ -156,8 +192,19 @@ export function decodeTga(bytes: Uint8Array): { image: RasterImage; bitDepth: nu
   return { image, bitDepth: depth };
 }
 
-/** Read one BGR(A) pixel at the given depth, returning RGBA. */
-function readPixel(bytes: Uint8Array, offset: number, depth: number): [number, number, number, number] {
+/**
+ * Read one BGR(A) pixel at the given depth, returning RGBA.
+ *
+ * `attributeBits` is the image descriptor's alpha-bit count. When it is 0 the
+ * file declares no alpha channel and any alpha-looking byte is padding, so the
+ * pixel is opaque regardless of what those bits contain.
+ */
+function readPixel(
+  bytes: Uint8Array,
+  offset: number,
+  depth: number,
+  attributeBits: number,
+): [number, number, number, number] {
   switch (depth) {
     case 8: {
       const v = bytes[offset] ?? 0;
@@ -167,14 +214,18 @@ function readPixel(bytes: Uint8Array, offset: number, depth: number): [number, n
     case 16: {
       const v = u16le(bytes, offset);
       const r = (v >> 10) & 31, g = (v >> 5) & 31, b = v & 31;
-      // Bit 15 is an attribute bit, honoured only at 16 bits per pixel.
-      const a = depth === 16 && (v & 0x8000) === 0 ? 0 : 255;
+      // Bit 15 is an attribute bit, honoured only at 16 bits per pixel AND only
+      // when the header says the bit is meaningful.
+      const a = depth === 16 && attributeBits > 0 && (v & 0x8000) === 0 ? 0 : 255;
       return [(r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2), a];
     }
     case 24:
       return [bytes[offset + 2] ?? 0, bytes[offset + 1] ?? 0, bytes[offset] ?? 0, 255];
     case 32:
-      return [bytes[offset + 2] ?? 0, bytes[offset + 1] ?? 0, bytes[offset] ?? 0, bytes[offset + 3] ?? 255];
+      return [
+        bytes[offset + 2] ?? 0, bytes[offset + 1] ?? 0, bytes[offset] ?? 0,
+        attributeBits > 0 ? (bytes[offset + 3] ?? 255) : 255,
+      ];
     default:
       throw new Error(`Unsupported TGA bit depth ${depth}`);
   }
