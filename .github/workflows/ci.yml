@@ -108,6 +108,20 @@ jobs:
       - name: Re-measure and compare
         run: npm run check:readme
 
+      # The scale-fidelity frontier: rendered at 4x against vector ground truth
+      # the tracer never sees, scored on the edge band, and reported as accuracy
+      # per anchor spent. This is the number `check:readme` above cannot see —
+      # whole-frame SSIM at 1x saturates at 1.0000 for output that is a bitmap in
+      # an SVG container, which is exactly what it reported.
+      #
+      # Deliberately NOT a pass/fail gate yet. Today's default emits zero curve
+      # commands and spends thousands of anchors, so a gate here would encode
+      # that as the baseline to protect. It runs so the table is visible on every
+      # PR while the foundation work lands; it becomes a gate once the numbers
+      # are worth defending.
+      - name: Scale-fidelity frontier (reported, not gated)
+        run: npm run bench:scale
+
   # The plugin's dist/ is gitignored, so the sandbox tests skip in the matrix
   # above rather than failing every contributor who has not built an extension
   # they are not touching. This job is what stops that skip becoming a place for

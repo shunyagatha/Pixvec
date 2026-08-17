@@ -1,0 +1,425 @@
+#!/usr/bin/env node
+// bench-scale.mjs — scale-fidelity benchmark for vectorizers.
+//
+// The premise: a vectorizer's job is not to reproduce the input bitmap. It is to
+// recover the resolution-independent shape the bitmap was a sample of. So score
+// it where that difference shows up — at a magnification the input never
+// contained.
+//
+//   ground-truth SVG --render 1x--> input PNG --vectorize--> candidate SVG
+//                    --render 4x--> truth PNG <--render 4x-- candidate SVG
+//                                      \____ compare, weighted to edges ____/
+//
+// Reproducing the input exactly ("lossless") scores like nearest-neighbour here,
+// which is the correct verdict and the one whole-image SSIM at 1x cannot deliver.
+//
+// WHY THIS EXISTS ALONGSIDE `npm run compare`. That harness scores a tracer
+// against its own input, at the input's own resolution, with whole-frame SSIM.
+// On flat artwork the boundary is ~4.5% of the pixels and the other 95.5% is
+// interior every method gets right, so the number saturates at 1.0000 — and it
+// reported exactly that for output which is a bitmap in an SVG container. It is
+// the right instrument for "did the conversion lose anything" and the wrong one
+// for "is this a vector".
+//
+// Usage:
+//   node scripts/bench-scale.mjs [corpusDir] [--base 256] [--scale 4] [--out report.json]
+//
+// corpusDir: a directory of ground-truth .svg files. Omit it for the built-in
+// synthetic set. Real corpora worth pointing this at: simple-icons, Material
+// Symbols, Twemoji — permissively licensed, genuine vector originals.
+//
+// Rivals: set VECLINE_VTRACER to vtracer's own binary to add its row. potrace is
+// a dev dependency and is included automatically when present.
+
+import { mkdir, readFile, readdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import path from 'node:path';
+
+// Everything below renders through the project's own renderer and its own resize,
+// so the numbers come from the code Vecline actually ships. The original draft of
+// this harness used Playwright/Chromium; that made the scores depend on a browser
+// build nobody else would have, and added a 300 MB dev dependency to measure a
+// library that already contains a renderer.
+import { loadRaster, vectorize } from '../dist/esm/api.js';
+import { rasterizeSvg } from '../dist/esm/io/rasterize.js';
+import { encodeRaster } from '../dist/esm/io/encode.js';
+import { editImage } from '../dist/esm/ops.js';
+
+const execFileAsync = promisify(execFile);
+
+// ---------------------------------------------------------------- configuration
+
+const argv = process.argv.slice(2);
+const flag = (name, fallback) => {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? fallback : argv[i + 1];
+};
+// Only a *present* flag consumes the token after it. Deriving this from
+// `indexOf` unconditionally reads argv[-1 + 1] = argv[0] for every absent flag,
+// which silently swallowed the positional corpus directory and fell back to the
+// synthetic set — reporting a full run against a corpus it never opened.
+const FLAG_VALUES = new Set(
+  ['base', 'scale', 'out']
+    .map((n) => argv.indexOf(`--${n}`))
+    .filter((i) => i !== -1)
+    .map((i) => argv[i + 1]),
+);
+const corpusDir = argv.find((a) => !a.startsWith('--') && !FLAG_VALUES.has(a));
+const BASE = Number(flag('base', 256));   // size the vectorizer sees
+const SCALE = Number(flag('scale', 4));   // magnification the score is taken at
+const OUT = flag('out', 'bench-scale.json');
+const BIG = BASE * SCALE;
+const WORK = '.bench-scale';
+const WHITE = { r: 255, g: 255, b: 255, a: 255 };
+
+// Candidate configurations. The harness is indifferent to what produced an SVG,
+// so rivals go in the same table through `external`.
+const CANDIDATES = [
+  { id: 'auto', opts: {} },
+  { id: 'trace-default', opts: { mode: 'trace' } },
+  { id: 'trace-tol1.2', opts: { mode: 'trace', trace: { tolerance: 1.2 } } },
+  { id: 'trace-tol2', opts: { mode: 'trace', trace: { tolerance: 2 } } },
+];
+
+// ------------------------------------------------------------------- rendering
+
+/** Render an SVG at an exact pixel width, over white. Returns a RasterImage. */
+async function render(svg, size) {
+  // resvg fits one axis and keeps the aspect ratio. Every fixture here is square
+  // and a candidate inherits the input's dimensions, so truth and candidate come
+  // out the same size — which the comparison asserts rather than assumes.
+  const { image } = await rasterizeSvg(svg, { width: size, background: WHITE });
+  return image;
+}
+
+/** The vectorizer's input: the ground truth, rasterised small. */
+async function renderToPng(svg, size) {
+  const image = await render(svg, size);
+  return encodeRaster(image, { format: 'png' });
+}
+
+/**
+ * Smooth upscale of the input bitmap — the accuracy ceiling.
+ *
+ * Not a competitor: it spends no anchors, so it is disqualified by construction
+ * and serves as the number to approach. `fit: 'fill'` because the target is a
+ * known exact size, and lanczos3 is what `vecline edit --resize` uses, so the
+ * ceiling is measured with the project's own resampler.
+ */
+async function upscale(image, width, height) {
+  // Sized from the truth render rather than from BASE * SCALE. resvg fits one
+  // axis and keeps the aspect ratio, so a non-square original renders 1024x655
+  // while a forced square upscale produced 1024x1024 — the comparison then
+  // failed its own size assertion instead of quietly scoring misaligned pixels.
+  return editImage(image, {
+    resize: { width, height, fit: 'fill', kernel: 'lanczos3' },
+  });
+}
+
+// --------------------------------------------------------------------- metrics
+
+/** Sobel magnitude of luma, used to find where the shape boundaries are. */
+function edgeMask(img, threshold = 40, dilate = 6) {
+  const { data, width: w, height: h } = img;
+  const lum = new Float32Array(w * h);
+  for (let i = 0, p = 0; i < lum.length; i++, p += 4) {
+    lum[i] = (data[p] + data[p + 1] + data[p + 2]) / 3;
+  }
+  const mask = new Uint8Array(w * h);
+  const at = (x, y) => lum[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const gx =
+        -at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1) +
+        at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1);
+      const gy =
+        -at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1) +
+        at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1);
+      if (Math.hypot(gx, gy) > threshold) mask[y * w + x] = 1;
+    }
+  }
+  return dilateMask(mask, w, h, dilate);
+}
+
+function dilateMask(mask, w, h, iterations) {
+  let cur = mask;
+  for (let n = 0; n < iterations; n++) {
+    const next = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (
+          cur[y * w + x] ||
+          (x > 0 && cur[y * w + x - 1]) ||
+          (x < w - 1 && cur[y * w + x + 1]) ||
+          (y > 0 && cur[(y - 1) * w + x]) ||
+          (y < h - 1 && cur[(y + 1) * w + x])
+        ) next[y * w + x] = 1;
+      }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+/**
+ * Anchor count — the axis that actually separates vectorizers.
+ *
+ * Accuracy alone cannot score one: a smooth upscale of the input beats every
+ * tracer on any raster-fidelity metric, at every magnification, because
+ * reconstructing a smooth edge from a well-anti-aliased sample is easy and
+ * carries no obligation to be compact or editable. So score the pair — accuracy,
+ * and the anchors spent reaching it — and rank on the frontier, not either axis
+ * alone.
+ */
+function countAnchors(svg) {
+  const d = [...svg.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1]).join(' ');
+  return {
+    anchors: (d.match(/[MmLlHhVvCcSsQqTtAa]/g) ?? []).length,
+    elements: (svg.match(/<(path|rect|circle|ellipse|polygon|line)\b/g) ?? []).length,
+    primitives: (svg.match(/<(rect|circle|ellipse|line|polygon)\b/g) ?? []).length,
+    curveOps: (d.match(/[CcSsQqTtAa]/g) ?? []).length,
+  };
+}
+
+/**
+ * Fidelity of `cand` against `truth`, over the whole frame and the edge band.
+ *
+ * The split matters. On typical artwork the boundary is ~5% of pixels and the
+ * flat interior is the rest, so a whole-frame number is ~95% consensus about
+ * regions every method gets right. It saturates near 1.0 and hides the only part
+ * of the image the vectorizer actually decided anything about.
+ */
+/**
+ * Force `img` to exactly `w` x `h`, tolerating only a rounding-scale difference.
+ *
+ * A non-square original cannot round-trip its aspect ratio exactly: a 1024x655
+ * truth is rasterised to 256x164 for the vectorizer (655/4 = 163.75, rounded up),
+ * and the candidate inherits those dimensions, so 4x gives 656 rows against the
+ * truth's 655. That is one row of rounding, not a misalignment — but the two must
+ * still be the same size to compare at all, so the extra row is dropped and any
+ * discrepancy larger than the rounding could produce is an error rather than a
+ * silent crop of real content.
+ */
+function conform(img, w, h) {
+  if (img.width === w && img.height === h) return img;
+  if (Math.abs(img.width - w) > SCALE || Math.abs(img.height - h) > SCALE) {
+    throw new Error(
+      `size mismatch beyond rounding: got ${img.width}x${img.height}, expected ` +
+        `${w}x${h}. A difference this large means the aspect ratios genuinely ` +
+        `differ, and comparing them would score misaligned pixels.`,
+    );
+  }
+  const out = { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
+  const cw = Math.min(w, img.width);
+  const ch = Math.min(h, img.height);
+  for (let y = 0; y < ch; y++) {
+    const src = y * img.width * 4;
+    const dst = y * w * 4;
+    out.data.set(img.data.subarray(src, src + cw * 4), dst);
+  }
+  return out;
+}
+
+function compare(truth, cand, mask) {
+  if (truth.width !== cand.width || truth.height !== cand.height) {
+    throw new Error(
+      `size mismatch: truth ${truth.width}x${truth.height} vs candidate ` +
+        `${cand.width}x${cand.height}. Both must render at the same size or the ` +
+        `comparison is meaningless.`,
+    );
+  }
+  let seFull = 0, seEdge = 0, aeEdge = 0, nEdge = 0;
+  const n = truth.width * truth.height;
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    let se = 0, ae = 0;
+    for (let c = 0; c < 3; c++) {
+      const d = truth.data[p + c] - cand.data[p + c];
+      se += d * d; ae += Math.abs(d);
+    }
+    se /= 3; ae /= 3;
+    seFull += se;
+    if (mask[i]) { seEdge += se; aeEdge += ae; nEdge++; }
+  }
+  const psnr = (mse) => 10 * Math.log10((255 * 255) / Math.max(mse, 1e-9));
+  return {
+    fullPsnr: psnr(seFull / n),
+    edgePsnr: psnr(seEdge / Math.max(nEdge, 1)),
+    edgeMae: aeEdge / Math.max(nEdge, 1),
+    edgeFraction: nEdge / n,
+  };
+}
+
+// ----------------------------------------------------------------- competitors
+
+/**
+ * vtracer's own released binary, when pointed at.
+ *
+ * Deliberately not the `@neplex/vectorizer` napi binding: it produces
+ * substantially larger files at the same quality, so measuring through it
+ * understates vtracer and flatters us. Defaults and nothing else — every entrant
+ * is scored at its out-of-the-box behaviour.
+ */
+const vtracerBin = process.env.VECLINE_VTRACER && existsSync(process.env.VECLINE_VTRACER)
+  ? process.env.VECLINE_VTRACER
+  : null;
+
+async function runVtracer(pngPath) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'bench-vtracer-'));
+  try {
+    const out = path.join(dir, 'out.svg');
+    await execFileAsync(vtracerBin, ['--input', pngPath, '--output', out]);
+    return await readFile(out, 'utf8');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** potrace, posterised so it can answer a colour fixture at all. */
+let potrace = null;
+try {
+  potrace = (await import('potrace')).default;
+} catch {
+  // Dev dependency; the row is simply absent rather than guessed at.
+}
+
+function runPotrace(pngBuffer) {
+  return new Promise((resolve, reject) => {
+    // potrace is bilevel by design. `posterize` is a bolt-on, and reporting it
+    // without saying so would be a rigged fight — the row is labelled.
+    potrace.posterize(pngBuffer, { steps: 4 }, (err, svg) => (err ? reject(err) : resolve(svg)));
+  });
+}
+
+const EXTERNALS = [
+  ...(vtracerBin ? [{ id: 'vtracer (defaults)', run: (png, buf) => runVtracer(png) }] : []),
+  ...(potrace ? [{ id: 'potrace posterize', run: (png, buf) => runPotrace(buf) }] : []),
+];
+
+// ----------------------------------------------------------------- test corpus
+
+/** Shapes with exactly the features vectorizers get wrong: a long straight
+ *  diagonal, a large smooth arc, a tight concave corner, a thin stroke. */
+const SYNTHETIC = {
+  'diagonal-wedge': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="#fff"/><circle cx="128" cy="128" r="96" fill="#1e5ac8"/><path d="M60 200 128 80 196 200Z" fill="#dc3246"/><rect x="110" y="110" width="36" height="86" fill="#ffd228"/></svg>`,
+  'smooth-arc': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="#fff"/><path d="M32 208a96 96 0 0 1 192 0Z" fill="#0f766e"/><circle cx="128" cy="120" r="34" fill="#fbbf24"/></svg>`,
+  'thin-stroke': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="#fff"/><path d="M40 128q44-72 88 0t88 0" fill="none" stroke="#111827" stroke-width="3"/><path d="M40 176q44-72 88 0t88 0" fill="none" stroke="#b91c1c" stroke-width="6"/></svg>`,
+  'concave-corner': `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" fill="#fff"/><path d="M128 24 158 98l80 6-61 52 19 78-68-42-68 42 19-78-61-52 80-6Z" fill="#4338ca"/></svg>`,
+};
+
+async function loadCorpus() {
+  if (corpusDir && existsSync(corpusDir)) {
+    const files = (await readdir(corpusDir)).filter((f) => f.endsWith('.svg'));
+    return Object.fromEntries(
+      await Promise.all(files.map(async (f) => [
+        path.basename(f, '.svg'),
+        await readFile(path.join(corpusDir, f), 'utf8'),
+      ])),
+    );
+  }
+  return SYNTHETIC;
+}
+
+// ------------------------------------------------------------------------ main
+
+async function main() {
+  await mkdir(WORK, { recursive: true });
+  const corpus = await loadCorpus();
+  const names = Object.keys(corpus);
+  console.log(
+    `corpus: ${names.length} shape(s) | input ${BASE}px | scored at ${BIG}px (${SCALE}x)` +
+    `\nrivals: ${EXTERNALS.length ? EXTERNALS.map((e) => e.id).join(', ') : 'none available'}\n`,
+  );
+
+  const totals = new Map();
+  const report = [];
+
+  function record(shape, id, m, bytes, mode) {
+    report.push({ shape, id, mode, bytes, ...m });
+    const t = totals.get(id) ?? { edge: 0, full: 0, anchors: 0, elements: 0, primitives: 0, curveOps: 0, bytes: 0, n: 0 };
+    t.edge += m.edgePsnr; t.full += m.fullPsnr;
+    t.anchors += m.anchors ?? 0; t.elements += m.elements ?? 0;
+    t.primitives += m.primitives ?? 0; t.curveOps += m.curveOps ?? 0;
+    t.bytes += bytes; t.n++;
+    totals.set(id, t);
+  }
+
+  for (const name of names) {
+    const source = corpus[name];
+    const truth = await render(source, BIG);
+    const mask = edgeMask(truth);
+
+    const smallPng = await renderToPng(source, BASE);
+    const inputPath = path.join(WORK, `${name}.${BASE}.png`);
+    await writeFile(inputPath, smallPng);
+
+    // The ceiling reference, from the project's own resampler.
+    const small = await render(source, BASE);
+    record(name, 'ceiling:smooth-upscale',
+      compare(truth, await upscale(small, truth.width, truth.height), mask), smallPng.length);
+
+    const loaded = await loadRaster(inputPath);
+    for (const cand of CANDIDATES) {
+      let out;
+      try { out = await vectorize(loaded, cand.opts); }
+      catch (e) { console.log(`  ${name}/${cand.id}: ERROR ${e.message}`); continue; }
+      const rendered = conform(await render(out.svg, BIG), truth.width, truth.height);
+      record(name, cand.id, { ...compare(truth, rendered, mask), ...countAnchors(out.svg) },
+        Buffer.byteLength(out.svg), out.mode);
+      await writeFile(path.join(WORK, `${name}.${cand.id}.svg`), out.svg);
+    }
+
+    for (const ext of EXTERNALS) {
+      let svg;
+      try { svg = await ext.run(inputPath, smallPng); }
+      catch (e) { console.log(`  ${name}/${ext.id}: ERROR ${e.message}`); continue; }
+      const rendered = conform(await render(svg, BIG), truth.width, truth.height);
+      record(name, ext.id, { ...compare(truth, rendered, mask), ...countAnchors(svg) },
+        Buffer.byteLength(svg));
+      await writeFile(path.join(WORK, `${name}.${ext.id.replace(/[^\w.-]+/g, '_')}.svg`), svg);
+    }
+  }
+
+  const rows = [...totals.entries()]
+    .map(([id, t]) => ({
+      id,
+      edge: t.edge / t.n,
+      full: t.full / t.n,
+      anchors: Math.round(t.anchors / t.n),
+      elements: Math.round(t.elements / t.n),
+      primitives: Math.round(t.primitives / t.n),
+      curveOps: Math.round(t.curveOps / t.n),
+      bytes: Math.round(t.bytes / t.n),
+    }))
+    // Frontier rank: accuracy earned per anchor spent. The ceiling has no
+    // anchors, so it sorts last here by construction — that is intended.
+    .sort((a, b) => (b.edge / Math.max(b.anchors, 1)) - (a.edge / Math.max(a.anchors, 1)));
+
+  const h = (s, w) => String(s).padStart(w);
+  console.log(
+    'candidate'.padEnd(24) + h('edgePSNR', 10) + h('fullPSNR', 10) +
+    h('anchors', 9) + h('curves', 8) + h('elems', 7) + h('prims', 7) + h('bytes', 9),
+  );
+  for (const r of rows) {
+    console.log(
+      r.id.padEnd(24) + h(r.edge.toFixed(2), 10) + h(r.full.toFixed(2), 10) +
+      h(r.anchors || '-', 9) + h(r.curveOps || '-', 8) +
+      h(r.elements || '-', 7) + h(r.primitives || '-', 7) + h(r.bytes, 9),
+    );
+  }
+  console.log(
+    `\nRead this as a frontier, not a ranking. ceiling:smooth-upscale is the accuracy` +
+    `\nceiling and spends no anchors — it is not a competitor, it is the number to` +
+    `\napproach. A vectorizer wins by getting close to it on edgePSNR while spending` +
+    `\nanchors in the order of magnitude the shape actually needs.` +
+    `\n\nfullPSNR is printed only to show how little it separates anything: that is the` +
+    `\nnumber a 1x whole-frame metric reports, and why this harness exists.`,
+  );
+
+  await writeFile(OUT, JSON.stringify({ base: BASE, scale: SCALE, rows, detail: report }, null, 2));
+  console.log(`\nwrote ${OUT}`);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });

@@ -26,3 +26,5 @@ mcp-publisher
 extensions/*/node_modules/
 extensions/*/out/
 extensions/*/*.vsix
+.bench-scale/
+bench-scale.json
