@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 // sharp 0.35 replaced its `sharp.*` type namespace with named exports.
-import sharp, { type Sharp } from 'sharp';
+import { type Sharp } from 'sharp';
+import { loadSharp } from '../io/native.js';
 import { SvgDoc, escapeAttr } from '../svg/build.js';
 import { fromBase64, toBase64 } from '../io/formats/bytes.js';
 import type { RasterImage, SourceMeta } from '../types.js';
@@ -191,7 +192,17 @@ export interface ExtractedPayload {
   actualSha256: string;
   /** True when the two digests agree — a proof of byte-identical recovery. */
   verified: boolean;
-  /** True when the payload is the untouched original file rather than a re-encode. */
+  /**
+   * True when *the SVG records* that its payload was the source file verbatim.
+   *
+   * This is a statement about the marker, not about the bytes, and only an SVG
+   * vecline wrote can carry it. On a foreign SVG it is `false` for want of a
+   * marker — which does **not** mean anything was re-encoded: extraction always
+   * copies the payload out of the data URI untouched. Callers reporting this to
+   * a human must distinguish "recorded as a re-encode" from "no record at all",
+   * or they will tell someone a provably byte-identical extraction is not the
+   * original. Use `recordedSha256 === undefined` to detect the unmarked case.
+   */
   isOriginal: boolean;
 }
 
@@ -243,16 +254,17 @@ export function extractEmbedded(svg: string): ExtractedPayload | null {
   };
 }
 
-function rawPipeline(img: RasterImage): Sharp {
+async function rawPipeline(img: RasterImage): Promise<Sharp> {
+  const sharp = await loadSharp();
   return sharp(Buffer.from(img.data.buffer, img.data.byteOffset, img.data.byteLength), {
     raw: { width: img.width, height: img.height, channels: 4 },
   });
 }
 
-function reencodePng(img: RasterImage): Promise<Buffer> {
-  return rawPipeline(img).png({ compressionLevel: 9, effort: 10, palette: false }).toBuffer();
+async function reencodePng(img: RasterImage): Promise<Buffer> {
+  return (await rawPipeline(img)).png({ compressionLevel: 9, effort: 10, palette: false }).toBuffer();
 }
 
-function reencodeWebpLossless(img: RasterImage): Promise<Buffer> {
-  return rawPipeline(img).webp({ lossless: true, effort: 6, quality: 100 }).toBuffer();
+async function reencodeWebpLossless(img: RasterImage): Promise<Buffer> {
+  return (await rawPipeline(img)).webp({ lossless: true, effort: 6, quality: 100 }).toBuffer();
 }

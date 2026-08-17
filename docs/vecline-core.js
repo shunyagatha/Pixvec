@@ -1191,8 +1191,9 @@ function vectorizePixels(img, opts = {}) {
         );
       }
       if (rectTotal > rectBudget && rectTotal > MIN_RECTS_BEFORE_REFUSING) {
+        const pct = (Math.ceil(rectTotal / n2 * 1e3) / 10).toFixed(1);
         throw new Error(
-          `Pixel-exact vectorisation has stopped compressing this image: ${rectTotal.toLocaleString("en-US")} rectangles for ${n2.toLocaleString("en-US")} pixels (${(rectTotal / n2 * 100).toFixed(0)}%, over the ${(ratio * 100).toFixed(0)}% budget). Finishing would emit roughly one <path> per distinct colour \u2014 megabytes of SVG that no renderer handles well. Use --mode embed for a lossless result or --mode trace for real curves; raise maxRectsPerPixel if you want the output regardless.`
+          `Pixel-exact vectorisation has stopped compressing this image: ${rectTotal.toLocaleString("en-US")} rectangles for ${n2.toLocaleString("en-US")} pixels (${pct}%, over the ${(ratio * 100).toFixed(0)}% budget). Finishing would emit roughly one <path> per distinct colour \u2014 megabytes of SVG that no renderer handles well. Use --mode embed for a lossless result or --mode trace for real curves; pass --max-rects-per-pixel 1 if you want the output regardless.`
         );
       }
     }

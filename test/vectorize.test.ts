@@ -88,7 +88,16 @@ describe('pixel mode', () => {
       try { vectorizePixels(photoLike(BIG, BIG)); } catch (e) { msg = (e as Error).message; }
       expect(msg).toMatch(/rectangles for/);
       expect(msg).toMatch(new RegExp(`${BIG * BIG}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')));
-      expect(msg).toMatch(/maxRectsPerPixel/);
+      // The remedy must be something a CLI user can actually type. The first
+      // version of this message named `maxRectsPerPixel`, an API option with no
+      // CLI equivalent — advice that could not be followed from the place the
+      // error appears.
+      expect(msg).toMatch(/--max-rects-per-pixel/);
+      // And the measured percentage must not read as equal to the budget it
+      // exceeded: `toFixed(0)` printed "50%, over the 50% budget".
+      const pct = msg.match(/\((\d+\.\d)%, over the (\d+)% budget\)/);
+      expect(pct).not.toBeNull();
+      expect(Number(pct![1])).toBeGreaterThan(Number(pct![2]));
     });
   });
 

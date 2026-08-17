@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import { loadSharp } from './native.js';
 import type { RasterFormat, RasterImage, Rgba } from '../types.js';
 import {
   encodeBmp, encodeIco, encodeIcoDib, encodePnm, encodeTga,
@@ -70,6 +70,7 @@ export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promi
     case 'ico': {
       // PNG payloads are what every icon above 48px uses, and libvips is right
       // here, so use it rather than the larger uncompressed DIB.
+      const sharp = await loadSharp();
       const png = await sharp(rawBuffer(img), {
         raw: { width: img.width, height: img.height, channels: 4 },
       }).png({ compressionLevel: 9 }).toBuffer();
@@ -86,6 +87,11 @@ export async function encodeRaster(img: RasterImage, opts: EncodeOptions): Promi
       break;
   }
 
+  // Loaded here rather than at the top of the function on purpose: the `bmp`,
+  // `pnm` and `tga` cases above return from this project's own pure-TypeScript
+  // encoders, and they must keep working on an install with no native addon at
+  // all. That is what "portable core" is supposed to mean.
+  const sharp = await loadSharp();
   let pipeline = sharp(rawBuffer(img), {
     raw: { width: img.width, height: img.height, channels: 4 },
   });

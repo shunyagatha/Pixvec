@@ -1,7 +1,11 @@
 import { readFile } from 'node:fs/promises';
 // sharp 0.35 replaced its `sharp.*` type namespace with named exports, so the
-// types are imported explicitly rather than reached through the default.
-import sharp, { type Metadata } from 'sharp';
+// types are imported explicitly rather than reached through the default. The
+// value is loaded lazily (see io/native.ts) so `--omit=optional` installs are
+// not dead on arrival; `import type` is erased at compile time, so this line
+// pulls in nothing at runtime.
+import { type Metadata } from 'sharp';
+import { loadSharp } from './native.js';
 import type { RasterImage, SourceMeta } from '../types.js';
 import { decodeFallback, decodeTgaFallback, type FallbackResult } from './formats/index.js';
 import { findDecoder, registeredFormats, type CustomDecoder } from '../codecs.js';
@@ -130,6 +134,7 @@ export async function decodeRaster(
   // `unlimited` is deliberately left at its default (false): it switches off
   // libvips' own safety limits, which is the opposite of what a decoder handed
   // untrusted bytes should do.
+  const sharp = await loadSharp();
   const base = () => sharp(asBuffer(bytes), { limitInputPixels, animated: false });
 
   let raw: Metadata;

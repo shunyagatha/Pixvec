@@ -378,11 +378,24 @@ async function findDominatingExact(
 
     if (!exact || !report) return null;
 
+    // The accuracy clause is conditional because the accuracy is usually
+    // unknown here. `quality` is only populated when the caller asked to
+    // verify, and this runs before that — so the previous unconditional
+    // `traced.quality?.ssim ?? 0` printed "SSIM 0.0000" on the default
+    // `convert` path for every input it rejected. Identical bytes, identical
+    // decision, and a figure that was the fallback rather than a measurement:
+    // the same trace scores 0.988411 when actually verified.
+    //
+    // Measuring it here to fill the sentence would mean rendering and scoring
+    // an SVG we are about to discard, on the common path, to print a number
+    // that decides nothing — the choice below is byte-dominance, not accuracy.
+    // So say what is known instead.
+    const accuracy = traced.quality ? ` at SSIM ${traced.quality.ssim.toFixed(4)}` : '';
     notes.push(
-      `Switched to embed: tracing produced ${formatCount(tracedBytes)} bytes at ` +
-        `SSIM ${(traced.quality?.ssim ?? 0).toFixed(4)}, while an exact copy is ` +
-        `${formatCount(exactBytes)} bytes. Smaller and bit-exact, so there was ` +
-        `nothing to trade. Use --mode trace to force real curves.`,
+      `Switched to embed: tracing produced ${formatCount(tracedBytes)} bytes${accuracy}, ` +
+        `while an exact copy is ${formatCount(exactBytes)} bytes. Smaller and ` +
+        `bit-exact, so there was nothing to trade. Use --mode trace to force ` +
+        `real curves.`,
     );
 
     return {
