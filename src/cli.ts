@@ -927,6 +927,7 @@ async function runVectorExport(
 
 interface VerifyCliOptions {
   alphaMode: string;
+  severity?: boolean;
   background: Rgba;
   renderBackground?: Rgba;
   width?: number;
@@ -1000,6 +1001,7 @@ async function runVerify(a: string, b: string, o: VerifyCliOptions): Promise<voi
   const report = compareImages(loadedA.image, loadedB.image, {
     alphaMode: o.alphaMode as AlphaMode,
     deltaEBackground: o.background,
+    severity: o.severity,
   });
 
   if (o.json) {
@@ -2453,6 +2455,10 @@ program
     'paint SVGs onto this colour before scoring — most tracers emit a transparent ground',
     colorArg,
   )
+  // The one measure that distinguishes a dusting of edge antialiasing from one
+  // wrong blob in the middle of a face. It existed, and was reachable only when
+  // vecline was scoring its own output — not when scoring anyone else's.
+  .option('--severity', 'also report where the error is (coherent regions vs edge dust) and a composite score')
   .option('--fail-under <ssim>', 'exit non-zero if SSIM falls below this', floatArg('--fail-under', 0, 1))
   .option('--json', 'machine-readable output')
   .action(runVerify);
