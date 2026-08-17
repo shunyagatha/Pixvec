@@ -111,6 +111,17 @@ let jsonRequested = false;
  * stderr keeps the human sentence regardless, because a person watching a
  * terminal should not have to pipe through a parser to read an error.
  */
+/**
+ * Note this still calls `process.exit`, and deliberately.
+ *
+ * Elsewhere the exits became `process.exitCode` assignments, because
+ * `process.exit` discards whatever stdout has not drained and a macOS pipe holds
+ * only 8192 bytes — which silently truncated `--help` and could truncate a large
+ * `--json` payload. This one writes a single-line error object and one stderr
+ * sentence, both far under any pipe buffer, and it is typed `never` so callers
+ * may use it in expression position. Converting it would mean throwing, and the
+ * top-level handler would then print the same message twice.
+ */
 function fail(msg: string, code = 1): never {
   if (jsonRequested) emitJson({ ok: false, error: msg, exitCode: code });
   process.stderr.write(`${red('error')} ${msg}\n`);
@@ -361,6 +372,7 @@ interface VectorizeCliOptions {
   strokeWidth?: number;
   turnPolicy?: string;
   extendUnder?: boolean;
+  subpixel?: boolean;
   maxRectsPerPixel?: number;
   fillStrategy?: string;
   rightAngle?: boolean;
@@ -492,6 +504,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       strokeWidth: o.strokeWidth,
       turnPolicy: o.turnPolicy as never,
       extendUnder: o.extendUnder,
+      subpixel: o.subpixel,
       fillStrategy: o.fillStrategy as never,
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
@@ -1016,7 +1029,7 @@ async function runVerify(a: string, b: string, o: VerifyCliOptions): Promise<voi
     process.stderr.write(
       `${red('fail')} mean SSIM ${report.ssim.toFixed(6)} is below --fail-under ${o.failUnder}\n`,
     );
-    process.exit(2);
+    process.exitCode = 2;
   }
 }
 
@@ -1076,7 +1089,7 @@ async function runDiff(
     process.stderr.write(
       `${red('fail')} changed fraction ${result.changedFraction.toFixed(6)} exceeds --fail-over ${o.failOver}\n`,
     );
-    process.exit(2);
+    process.exitCode = 2;
   }
 }
 
@@ -1138,7 +1151,7 @@ async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
         : payload.recordedSha256 ? 'recorded-reencoded' : 'unmarked',
       matchesSource: matchesSource ?? null,
     });
-    if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exit(2);
+    if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exitCode = 2;
     return;
   }
 
@@ -1179,7 +1192,7 @@ async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
     );
   }
 
-  if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exit(2);
+  if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exitCode = 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -1437,7 +1450,7 @@ async function runOffice(
     info(`${green('✓')} ${bold(String(ok.length))} document${ok.length === 1 ? '' : 's'} → ${o.to}${failed.length ? `, ${red(`${failed.length} failed`)}` : ''} ${dim(`in ${o.output}  (via LibreOffice)`)}`);
     for (const r of results) info(`  ${r.error ? red(`✗ ${basename(r.input)}: ${r.error}`) : dim(basename(r.output!))}`);
   }
-  if (failed.length) process.exit(1);
+  if (failed.length) process.exitCode = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -1959,7 +1972,7 @@ async function runBatch(patterns: string[], o: BatchCliOptions): Promise<void> {
     info(`\n${done} succeeded, ${failed} failed.`);
   }
   if (o.summary) await writeFile(o.summary, formatBatchSummary(rows, done, failed));
-  if (failed > 0) process.exit(1);
+  if (failed > 0) process.exitCode = 1;
 }
 
 
@@ -2070,6 +2083,7 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
+  .option('--subpixel', 'place boundary vertices where the antialiasing says the edge actually fell, instead of on the pixel lattice — this is what lets the curve fitter engage at all (no effect on hard-edged art, where the lattice is already exact)')
   .optionsGroup('Pixel mode:')
   .option(
     '--max-rects-per-pixel <ratio>',
@@ -2568,7 +2582,44 @@ program.hook('preAction', (thisCommand, actionCommand) => {
   if (max !== undefined) setDefaultMaxInputPixels(max);
 });
 
+/**
+ * Let commander report its own exits instead of calling `process.exit()`.
+ *
+ * `process.exit()` does not wait for stdout to drain, and a pipe on macOS holds
+ * **8192 bytes**. `vecline vectorize --help` is 8517, so the last 325 — the whole
+ * trailing `Options:` section, `-h, --help` included — were silently discarded
+ * whenever help was piped or redirected. It looked like a formatting difference
+ * and was data loss: the same command printed in full to a terminal, which is
+ * why nobody noticed, and only the macOS leg of CI ever failed because Linux
+ * pipes hold 64 KB.
+ *
+ * Setting `process.exitCode` and returning lets Node flush and then exit with
+ * the code commander asked for.
+ *
+ * Applied to every subcommand, not just the program. `exitOverride()` affects
+ * only the instance it is called on, and `vectorize --help` is handled by the
+ * *subcommand* — so setting it on `program` alone left the one case that actually
+ * overflows a pipe still calling `process.exit()`, and macOS went on capturing
+ * exactly 8192 bytes.
+ */
+for (const cmd of [program, ...program.commands]) cmd.exitOverride();
+
+interface CommanderExit { exitCode: number; code: string }
+
+/** Commander's own help/version/parse-error exit, rather than a real failure. */
+function isCommanderExit(err: unknown): err is CommanderExit {
+  return typeof err === 'object' && err !== null
+    && typeof (err as CommanderExit).exitCode === 'number'
+    && typeof (err as CommanderExit).code === 'string'
+    && (err as CommanderExit).code.startsWith('commander.');
+}
+
 program.parseAsync(process.argv).catch((err: unknown) => {
+  if (isCommanderExit(err)) {
+    // Commander has already written the help text or the parse error itself.
+    process.exitCode = err.exitCode;
+    return;
+  }
   const message = err instanceof Error ? err.message : String(err);
   // An unexpected throw is still a failure the caller asked to receive as JSON.
   if (jsonRequested) emitJson({ ok: false, error: message, exitCode: 1 });

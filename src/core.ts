@@ -146,6 +146,7 @@ export {
 } from './vectorize/components.js';
 
 export { traceComponents, type Loop, type TurnPolicy } from './vectorize/contour.js';
+export { refineLoop, type RefinedLoop } from './vectorize/subpixel.js';
 
 export {
   centerlineTrace,

@@ -6,6 +6,7 @@ import { assertRasterImage, type RasterImage, type Rgba } from '../types.js';
 import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, type SpeckleScope } from './components.js';
 import { traceComponents, type TurnPolicy, type Loop } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
+import { refineLoop } from './subpixel.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -183,6 +184,28 @@ export interface TraceOptions {
    */
   extendUnder?: boolean;
   /**
+   * Move each boundary vertex to where the anti-aliasing says the edge actually
+   * fell, before simplification and curve fitting.
+   *
+   * Crack following can only put vertices on integer lattice points, so a traced
+   * outline is a staircase whose every turn is 90°. That is what stops the curve
+   * fitter from ever running: a vertex 0.707px off its chord survives any
+   * sub-pixel tolerance, and a 90° turn reads as a hard corner, so every span is
+   * two points and every fit degrades to a line. Coverage in the boundary pixels
+   * says where the edge really was — see `subpixel.ts` — and recovers it to
+   * ~0.002px on a synthetic ramp.
+   *
+   * Off by default while it is measured on the scale-fidelity frontier
+   * (`npm run bench:scale`). It cannot change hard-edged output at all: with no
+   * anti-aliasing the displacement is exactly zero, so pixel art and sprites are
+   * byte-identical either way.
+   *
+   * Ignored when `extendUnder` is on, because those loops bound a *union* of
+   * classes rather than this class's own pixels, so "inside" cannot be decided
+   * from the class map.
+   */
+  subpixel?: boolean;
+  /**
    * Emit one named `<g>` per colour, tagged as an Inkscape/Illustrator layer, so
    * the SVG opens as editable colour layers (weeding/separation-ready) instead
    * of one flattened blob. Off by default.
@@ -250,6 +273,7 @@ export const TRACE_DEFAULTS = {
   refineIterations: 4,
   strokeWidth: 0,
   extendUnder: false,
+  subpixel: false,
   groupByColor: false,
   turnPolicy: 'left',
   gradients: false,
@@ -521,7 +545,13 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     const path = new PathBuilder(o.precision);
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue; // emitted as its own element below
-      const fitted = fitLoop(loop.pts, fitOpts);
+      // Sub-pixel refinement, when asked for and when the loops are this
+      // class's own: `extendUnder` replaces them with a union's boundary, where
+      // "inside" cannot be read off the class map.
+      const refined = o.subpixel && !rankOfClass
+        ? refineLoop(loop, img, classes, cls).pts
+        : loop.pts;
+      const fitted = fitLoop(refined, fitOpts);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {

@@ -2331,6 +2331,110 @@ function B3(t) {
   return t * t * t;
 }
 
+// src/vectorize/subpixel.ts
+var MIN_CONTRAST_SQ = 3 * 3 * 4;
+var MAX_SHIFT = 0.5;
+function refineLoop(loop, img, classes, cls) {
+  const { width, height, data } = img;
+  const src = loop.pts;
+  const srcN = src.length / 2;
+  if (srcN < 2) return { pts: Float64Array.from(src), moved: 0, total: srcN };
+  let count2 = 0;
+  for (let i = 0; i < srcN; i++) {
+    const j = (i + 1) % srcN;
+    count2 += Math.abs(src[j * 2] - src[i * 2]) + Math.abs(src[j * 2 + 1] - src[i * 2 + 1]);
+  }
+  if (count2 === 0) return { pts: Float64Array.from(src), moved: 0, total: srcN };
+  const vx = new Float64Array(count2);
+  const vy = new Float64Array(count2);
+  const sx = new Float64Array(count2);
+  const sy = new Float64Array(count2);
+  const hits = new Uint8Array(count2);
+  let k = 0;
+  for (let i = 0; i < srcN; i++) {
+    const j = (i + 1) % srcN;
+    const x0 = src[i * 2], y0 = src[i * 2 + 1];
+    const x1 = src[j * 2], y1 = src[j * 2 + 1];
+    const steps = Math.abs(x1 - x0) + Math.abs(y1 - y0);
+    const dx = Math.sign(x1 - x0);
+    const dy = Math.sign(y1 - y0);
+    for (let s = 0; s < steps; s++) {
+      vx[k] = x0 + dx * s;
+      vy[k] = y0 + dy * s;
+      k++;
+    }
+  }
+  const at = (x, y) => (y * width + x) * 4;
+  const inBounds = (x, y) => x >= 0 && y >= 0 && x < width && y < height;
+  let moved = 0;
+  for (let i = 0; i < count2; i++) {
+    const j = (i + 1) % count2;
+    const ax = vx[i], ay = vy[i];
+    const bx = vx[j], by = vy[j];
+    const ex = bx - ax, ey = by - ay;
+    let p1x, p1y, p2x, p2y;
+    if (ey === 0) {
+      const x = Math.min(ax, bx);
+      p1x = x;
+      p1y = ay - 1;
+      p2x = x;
+      p2y = ay;
+    } else {
+      const y = Math.min(ay, by);
+      p1x = ax - 1;
+      p1y = y;
+      p2x = ax;
+      p2y = y;
+    }
+    const in1 = inBounds(p1x, p1y) && classes[p1y * width + p1x] === cls;
+    const in2 = inBounds(p2x, p2y) && classes[p2y * width + p2x] === cls;
+    if (in1 === in2) continue;
+    const ix = in1 ? p1x : p2x, iy = in1 ? p1y : p2y;
+    const ox = in1 ? p2x : p1x, oy = in1 ? p2y : p1y;
+    if (!inBounds(ox, oy)) continue;
+    const nx = ox - ix, ny = oy - iy;
+    const pax = ix - nx, pay = iy - ny;
+    const pbx = ox + nx, pby = oy + ny;
+    const aOff = inBounds(pax, pay) ? at(pax, pay) : at(ix, iy);
+    const bOff = inBounds(pbx, pby) ? at(pbx, pby) : at(ox, oy);
+    let contrast = 0;
+    const abr = data[aOff] - data[bOff];
+    const abg = data[aOff + 1] - data[bOff + 1];
+    const abb = data[aOff + 2] - data[bOff + 2];
+    const aba = data[aOff + 3] - data[bOff + 3];
+    contrast = abr * abr + abg * abg + abb * abb + aba * aba;
+    if (contrast < MIN_CONTRAST_SQ) continue;
+    const iOff = at(ix, iy);
+    const oOff = at(ox, oy);
+    const project = (off) => {
+      const t = ((data[off] - data[bOff]) * abr + (data[off + 1] - data[bOff + 1]) * abg + (data[off + 2] - data[bOff + 2]) * abb + (data[off + 3] - data[bOff + 3]) * aba) / contrast;
+      return t < 0 ? 0 : t > 1 ? 1 : t;
+    };
+    let d = project(iOff) + project(oOff) - 1;
+    if (d > MAX_SHIFT) d = MAX_SHIFT;
+    else if (d < -MAX_SHIFT) d = -MAX_SHIFT;
+    if (d === 0) continue;
+    sx[i] += d * nx;
+    sy[i] += d * ny;
+    hits[i]++;
+    sx[j] += d * nx;
+    sy[j] += d * ny;
+    hits[j]++;
+    moved++;
+  }
+  const out = new Float64Array(count2 * 2);
+  let displaced = 0;
+  for (let i = 0; i < count2; i++) {
+    const n2 = hits[i];
+    const ox = n2 > 0 ? sx[i] / n2 : 0;
+    const oy = n2 > 0 ? sy[i] / n2 : 0;
+    if (ox !== 0 || oy !== 0) displaced++;
+    out[i * 2] = vx[i] + ox;
+    out[i * 2 + 1] = vy[i] + oy;
+  }
+  return { pts: out, moved: displaced, total: count2 };
+}
+
 // src/vectorize/quantize.ts
 var SIDE = 33;
 var R_STRIDE = SIDE * SIDE;
@@ -3939,6 +4043,7 @@ var TRACE_DEFAULTS = {
   refineIterations: 4,
   strokeWidth: 0,
   extendUnder: false,
+  subpixel: false,
   groupByColor: false,
   turnPolicy: "left",
   gradients: false,
@@ -4108,7 +4213,8 @@ function trace(source, opts = {}) {
     const path = new PathBuilder(o.precision);
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue;
-      const fitted = fitLoop(loop.pts, fitOpts);
+      const refined = o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts;
+      const fitted = fitLoop(refined, fitOpts);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
@@ -6238,6 +6344,7 @@ export {
   primitiveSvg,
   quantize,
   quantizeAlpha,
+  refineLoop,
   registerDecoder,
   registerEncoder,
   registeredFormats,
