@@ -37,23 +37,40 @@ export function toEps(geometry: TraceGeometry, opts: EpsOptions = {}): string {
       ? `${rgbToCmyk(r, g, b).map((v) => n(v)).join(' ')} setcmykcolor`
       : `${n(r / 255)} ${n(g / 255)} ${n(b / 255)} setrgbcolor`);
     out.push('newpath');
-    for (const sub of path.subpaths) {
+    path.subpaths.forEach((sub, i) => {
+      // A recognised circle is drawn with the operator PostScript has for it.
+      // `traceGeometry` already knows the subpath is round; emitting the fitted
+      // polygon instead spends hundreds of `lineto`s describing a shape the
+      // language can express in one word, and hands a cutter or an illustrator
+      // a many-sided polygon where an arc was meant.
+      const prim = path.primitives?.[i];
+      if (prim?.kind === 'circle') {
+        // The `moveto` is not optional. `arc` appends a line from the current
+        // point when the path is non-empty, and a colour's subpath list is
+        // routinely rect-then-hole, so the hole is rarely first. Starting at the
+        // 0-radian point makes that implicit line zero-length by construction.
+        out.push(`${n(prim.cx + prim.r)} ${n(fy(prim.cy))} moveto`);
+        // Angles run counter-clockwise in PostScript's up-is-up space, which is
+        // the mirror of the screen-space sweep — irrelevant here: a full circle
+        // covers the same set either way, and `eofill` below ignores winding, so
+        // `arcn` buys nothing.
+        out.push(`${n(prim.cx)} ${n(fy(prim.cy))} ${n(prim.r)} 0 360 arc`);
+        out.push('closepath');
+        return;
+      }
+
       out.push(`${n(sub.start.x)} ${n(fy(sub.start.y))} moveto`);
-      let cx = sub.start.x, cy = sub.start.y;
       for (const seg of sub.segments) {
         if (seg.kind === 'line') {
           out.push(`${n(seg.x)} ${n(fy(seg.y))} lineto`);
-          cx = seg.x; cy = seg.y;
         } else {
           out.push(
             `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} curveto`,
           );
-          cx = seg.x; cy = seg.y;
         }
       }
-      void cx; void cy;
       out.push('closepath');
-    }
+    });
     out.push('eofill');
   }
 

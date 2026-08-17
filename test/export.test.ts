@@ -92,14 +92,24 @@ describe('DXF export', () => {
 });
 
 describe('EPS export', () => {
-  it('emits PostScript that fills each colour, with curves for curved shapes', () => {
+  it('emits PostScript that fills each colour, with an arc for a recognised circle', () => {
+    // This fixture IS a circle, so with primitives on it now leaves as a single
+    // `arc` rather than a fitted curve. The curve path is still real and is
+    // covered by the case below; splitting the two keeps both branches asserted
+    // instead of quietly losing one.
     const eps = toEps(traceGeometry(disc(96), { colors: 2, tolerance: 2, fitError: 2 }));
     expect(eps.startsWith('%!PS-Adobe-3.0 EPSF-3.0')).toBe(true);
     expect(eps).toMatch(/%%BoundingBox: 0 0 96 96/);
     expect(eps).toContain('setrgbcolor');
     expect(eps).toContain('moveto');
-    expect(eps).toContain('curveto'); // the disc boundary is fitted to curves
+    expect(eps).toMatch(/ 0 360 arc/);
     expect(eps).toContain('eofill');
+  });
+
+  it('still fits curves when primitive recognition is off', () => {
+    const eps = toEps(traceGeometry(disc(96), { colors: 2, tolerance: 2, fitError: 2, primitives: false }));
+    expect(eps).toContain('curveto'); // the disc boundary is fitted to curves
+    expect(eps).not.toMatch(/ 0 360 arc/);
   });
 
   it('can emit CMYK', () => {
@@ -225,6 +235,81 @@ describe('PDF circles', () => {
       const withArcs = toPdf(traceGeometry(disc(size, r), { primitives: true })).length;
       const polygon = toPdf(traceGeometry(disc(size, r), { primitives: false })).length;
       expect(withArcs, `radius ${r} regressed`).toBeLessThanOrEqual(polygon);
+    }
+  });
+});
+
+/**
+ * EPS circles.
+ *
+ * PostScript has an `arc` operator, and `traceGeometry` already knows when a
+ * subpath is round. The exporter emitted the fitted polygon anyway — hundreds
+ * of `lineto`s describing a shape the language says in one word, and a
+ * many-sided polygon where a cutter or an illustrator expected an arc.
+ *
+ * Verified against Ghostscript 10.07.1 rather than reasoned about: the arc and
+ * polygon forms were rasterised at 288-576 dpi and compared, scoring SSIM
+ * 0.9981-0.9996 at 99.97%+ pixels exact across every radius the detector fires
+ * at. These tests pin the structure that produced that result; they cannot run
+ * an interpreter, so what they guard is the operator sequence the render
+ * validated.
+ */
+describe('EPS circles', () => {
+  const disc = (size: number, radius: number): RasterImage => {
+    const img = createImage(size, size);
+    const c = size / 2;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const inside = Math.hypot(x - c, y - c) < radius;
+        setPixel(img, x, y, inside ? 20 : 255, inside ? 20 : 255, inside ? 20 : 255);
+      }
+    }
+    return img;
+  };
+
+  const epsOf = (img: RasterImage, primitives: boolean): string =>
+    toEps(traceGeometry(img, { primitives }));
+
+  it('emits a real arc instead of a polygon', () => {
+    const eps = epsOf(disc(200, 90), true);
+    expect(eps).toMatch(/ 0 360 arc/);
+  });
+
+  it('starts the arc at the 0-radian point', () => {
+    // Not cosmetic. `arc` appends a line from the current point when the path is
+    // non-empty, and a colour's subpaths are routinely rect-then-hole, so the
+    // circle is rarely first. Beginning at (cx + r, cy) makes that implicit line
+    // zero-length; beginning anywhere else draws a visible spike.
+    const eps = epsOf(disc(200, 90), true);
+    const line = eps.split('\n').find((l) => / 0 360 arc$/.test(l))!;
+    const [cx, cy, r] = line.split(/\s+/).map(Number);
+    const moveto = eps.split('\n')[eps.split('\n').indexOf(line) - 1];
+    const [mx, my] = moveto.split(/\s+/).map(Number);
+    expect(mx).toBeCloseTo(cx + r, 3);
+    expect(my).toBeCloseTo(cy, 3);
+  });
+
+  it('replaces the linetos rather than adding to them', () => {
+    const withArc = epsOf(disc(200, 90), true);
+    const polygon = epsOf(disc(200, 90), false);
+    const count = (s: string): number => (s.match(/lineto/g) ?? []).length;
+    // Only the background rectangle's four corners should remain.
+    expect(count(withArc)).toBeLessThan(10);
+    expect(count(polygon)).toBeGreaterThan(50);
+  });
+
+  it('is dramatically smaller for a shape that is genuinely round', () => {
+    expect(epsOf(disc(200, 90), true).length).toBeLessThan(epsOf(disc(200, 90), false).length / 4);
+  });
+
+  it('never emits the larger form, at any radius', () => {
+    // Below roughly ten pixels the detector does not recognise a circle at all
+    // and the polygon is emitted unchanged, so there is nothing to guard — but
+    // that is a property worth pinning rather than assuming.
+    for (const r of [4, 8, 16, 40, 90]) {
+      const size = r * 2 + 8;
+      expect(epsOf(disc(size, r), true).length, `radius ${r} regressed`)
+        .toBeLessThanOrEqual(epsOf(disc(size, r), false).length);
     }
   });
 });

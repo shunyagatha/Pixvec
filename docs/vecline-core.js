@@ -6001,24 +6001,26 @@ function toEps(geometry, opts = {}) {
     const { r, g, b } = path.color;
     out.push(opts.cmyk ? `${rgbToCmyk(r, g, b).map((v) => n(v)).join(" ")} setcmykcolor` : `${n(r / 255)} ${n(g / 255)} ${n(b / 255)} setrgbcolor`);
     out.push("newpath");
-    for (const sub of path.subpaths) {
+    path.subpaths.forEach((sub, i) => {
+      const prim = path.primitives?.[i];
+      if (prim?.kind === "circle") {
+        out.push(`${n(prim.cx + prim.r)} ${n(fy(prim.cy))} moveto`);
+        out.push(`${n(prim.cx)} ${n(fy(prim.cy))} ${n(prim.r)} 0 360 arc`);
+        out.push("closepath");
+        return;
+      }
       out.push(`${n(sub.start.x)} ${n(fy(sub.start.y))} moveto`);
-      let cx = sub.start.x, cy = sub.start.y;
       for (const seg of sub.segments) {
         if (seg.kind === "line") {
           out.push(`${n(seg.x)} ${n(fy(seg.y))} lineto`);
-          cx = seg.x;
-          cy = seg.y;
         } else {
           out.push(
             `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} curveto`
           );
-          cx = seg.x;
-          cy = seg.y;
         }
       }
       out.push("closepath");
-    }
+    });
     out.push("eofill");
   }
   out.push("%%EOF");

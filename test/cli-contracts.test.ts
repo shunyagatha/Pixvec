@@ -271,3 +271,52 @@ describe.skipIf(!built)('CLI: exit codes are documented', () => {
     expect(r.stdout).toMatch(/2\s+the command ran/);
   });
 });
+
+describe.skipIf(!built)('CLI: exports reach the primitive-aware writers', () => {
+  let disc: string;
+
+  beforeAll(async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vecline-prim-'));
+    disc = join(dir, 'disc.png');
+    const size = 200, r = 70;
+    const img = { width: size, height: size, data: new Uint8ClampedArray(size * size * 4) };
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const o = (y * size + x) * 4;
+        const inside = Math.hypot(x - size / 2, y - size / 2) < r;
+        img.data[o] = inside ? 214 : 255;
+        img.data[o + 1] = inside ? 69 : 255;
+        img.data[o + 2] = inside ? 65 : 255;
+        img.data[o + 3] = 255;
+      }
+    }
+    await writeFile(disc, await encode(img, 'png'));
+  });
+
+  // These assert the WIRING, not the writers. The writers have their own unit
+  // tests, and they passed for a fortnight while the CLI silently never handed
+  // them the annotation: `convert` decides per format whether to detect
+  // primitives at all, PDF learned to consume them in a later change, and the
+  // list of formats that receive them was not updated. Result — a feature that
+  // worked when called as a library and did nothing when called as a tool.
+  //
+  // A unit test on toPdf cannot catch that. Only running the binary can.
+  for (const [ext, marker] of [['pdf', / c\n/], ['eps', / 0 360 arc/]] as const) {
+    it(`${ext} export receives the primitive annotation`, async () => {
+      const out = join(tmpdir(), `vecline-prim-check.${ext}`);
+      const r = await cli(['convert', disc, out]);
+      expect(r.code).toBe(0);
+      const { readFile } = await import('node:fs/promises');
+      const text = await readFile(out, 'latin1');
+      expect(text, `${ext} fell back to the flattened polygon`).toMatch(marker);
+    });
+  }
+
+  it('dxf still declares a CIRCLE entity', async () => {
+    const out = join(tmpdir(), 'vecline-prim-check.dxf');
+    const r = await cli(['convert', disc, out]);
+    expect(r.code).toBe(0);
+    const { readFile } = await import('node:fs/promises');
+    expect(await readFile(out, 'utf8')).toContain('CIRCLE');
+  });
+});

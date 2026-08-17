@@ -879,7 +879,7 @@ async function runVectorExport(
   //
   // Written as the set of formats that consume it rather than as `ext !== …`,
   // so that teaching EPS to emit `arc` is a one-word change here.
-  const PRIMITIVE_AWARE = new Set(['.dxf']);
+  const PRIMITIVE_AWARE = new Set(['.dxf', '.eps', '.pdf']);
   const geometry = traceGeometry(source.image, {
     colors: o.colors,
     tolerance: o.tolerance,
