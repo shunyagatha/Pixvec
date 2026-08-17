@@ -6130,6 +6130,66 @@ function toDxf(geometry, opts = {}) {
         );
         return;
       }
+      if (prim?.kind === "sector") {
+        const deg = (rad) => -rad * 180 / Math.PI;
+        const start = deg(prim.a1);
+        const end = deg(prim.a0);
+        const cx = sx(prim.cx);
+        const cy = fy(prim.cy);
+        const arc = (r) => {
+          lines.push(
+            "0",
+            "ARC",
+            "8",
+            layer,
+            "62",
+            aci,
+            "420",
+            String(trueColor),
+            "10",
+            n(cx),
+            "20",
+            n(cy),
+            "30",
+            "0",
+            "40",
+            n(s(r)),
+            "50",
+            n(start),
+            "51",
+            n(end)
+          );
+        };
+        arc(prim.r1);
+        if (prim.r0 > 0) arc(prim.r0);
+        if (Math.abs(prim.a1 - prim.a0) < Math.PI * 2 - 1e-9) {
+          for (const a of [prim.a0, prim.a1]) {
+            lines.push(
+              "0",
+              "LINE",
+              "8",
+              layer,
+              "62",
+              aci,
+              "420",
+              String(trueColor),
+              "10",
+              n(sx(prim.cx + prim.r0 * Math.cos(a))),
+              "20",
+              n(fy(prim.cy + prim.r0 * Math.sin(a))),
+              "30",
+              "0",
+              "11",
+              n(sx(prim.cx + prim.r1 * Math.cos(a))),
+              "21",
+              n(fy(prim.cy + prim.r1 * Math.sin(a))),
+              "31",
+              "0"
+            );
+          }
+        }
+        return;
+      }
       const verts = flatten(sub, steps);
       if (verts.length > 1) {
         const a = verts[0], b = verts[verts.length - 1];

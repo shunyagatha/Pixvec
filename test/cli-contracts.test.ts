@@ -424,3 +424,36 @@ describe.skipIf(!built)('CLI: converting an animation says what it dropped', () 
     expect(r.stdout + r.stderr).not.toMatch(/not carried over/);
   });
 });
+
+describe.skipIf(!built)('CLI: vectorize refuses a non-SVG output name', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vecline-ext-'));
+
+  it('does not write an SVG under a .dxf name', async () => {
+    // It used to. `vectorize logo.png -o logo.dxf` produced an SVG document
+    // called logo.dxf and said nothing — a file that opens in a browser and
+    // fails in every CAD tool, which is the one place a .dxf is going.
+    const src = join(dir, 'in.png');
+    const sharpMod = (await import('sharp')).default;
+    await sharpMod({ create: { width: 16, height: 16, channels: 4, background: { r: 20, g: 90, b: 200, alpha: 1 } } })
+      .png().toFile(src);
+
+    const r = await cli(['vectorize', src, '-o', join(dir, 'out.dxf')]);
+    expect(r.code).not.toBe(0);
+    const all = r.stdout + r.stderr;
+    expect(all).toMatch(/vectorize writes SVG/);
+    // It must name the command that does work.
+    expect(all).toMatch(/vecline convert/);
+    expect(existsSync(join(dir, 'out.dxf'))).toBe(false);
+  });
+
+  it('still accepts .svg and the default output', async () => {
+    const src = join(dir, 'in2.png');
+    const sharpMod = (await import('sharp')).default;
+    await sharpMod({ create: { width: 16, height: 16, channels: 4, background: { r: 20, g: 90, b: 200, alpha: 1 } } })
+      .png().toFile(src);
+
+    const r = await cli(['vectorize', src, '-o', join(dir, 'out.svg')]);
+    expect(r.code).toBe(0);
+    expect(existsSync(join(dir, 'out.svg'))).toBe(true);
+  });
+});

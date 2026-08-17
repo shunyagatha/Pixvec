@@ -42,6 +42,27 @@ function ellipseImg(w: number, h: number): RasterImage {
   return img;
 }
 
+/**
+ * A pie slice — the shape every chart is made of, and the one `--primitives`
+ * names when it promises a real arc for CAD.
+ */
+function pieSlice(size: number, a0: number, a1: number): RasterImage {
+  const img = createImage(size, size);
+  const c = size / 2;
+  const r = size * 0.42;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x + 0.5 - c;
+      const dy = y + 0.5 - c;
+      let a = Math.atan2(dy, dx);
+      if (a < 0) a += Math.PI * 2;
+      const inside = dx * dx + dy * dy <= r * r && a >= a0 && a <= a1;
+      setPixel(img, x, y, inside ? 30 : 250, inside ? 80 : 250, inside ? 200 : 250);
+    }
+  }
+  return img;
+}
+
 describe('DXF export', () => {
   it('is a valid entities document of closed polylines with true colour', () => {
     const dxf = toDxf(traceGeometry(flatArtwork(60, 48), { colors: 4 }));
@@ -73,6 +94,41 @@ describe('DXF export', () => {
     expect(withArc).toContain('\nCIRCLE\n');
     expect(flattened).not.toContain('\nCIRCLE\n');
     expect(flattened).toContain('\nLWPOLYLINE\n');
+    expect(withArc.length).toBeLessThan(flattened.length);
+  });
+
+  /**
+   * A sector reached no exporter at all before this. DXF handled circle and
+   * ellipse, EPS and PDF only circle, and every detected sector fell through to a
+   * flattened polyline — so a chart traced for cutting arrived as chords, while
+   * `--primitives` promised "a real arc for CAD" in its own help text. Untrue for
+   * exactly the shape it named.
+   */
+  it('emits real ARC entities for a pie slice, not chords', () => {
+    const dxf = toDxf(traceGeometry(pieSlice(160, 0.2, 1.6), { colors: 2 }));
+    expect(dxf).toContain('\nARC\n');
+
+    // Presence is not correctness. DXF is Y-up where the raster is Y-down, so the
+    // centre's Y is flipped and the sweep direction flips with it.
+    const m = dxf.match(/\nARC\n[\s\S]*?\n10\n([-\d.]+)\n20\n([-\d.]+)\n30\n0\n40\n([\d.]+)\n/);
+    expect(m, 'ARC carried no centre/radius').not.toBeNull();
+    const [cx, cy, r] = [Number(m![1]), Number(m![2]), Number(m![3])];
+    expect(Math.abs(cx - 80)).toBeLessThanOrEqual(2);
+    expect(Math.abs(cy - 80)).toBeLessThanOrEqual(2);
+    expect(Math.abs(r - 160 * 0.42)).toBeLessThanOrEqual(2);
+
+    // A slice is closed by its two radial edges.
+    expect(dxf).toContain('\nLINE\n');
+  });
+
+  it('replaces the sector polyline rather than adding to it', () => {
+    const img = pieSlice(160, 0.2, 1.6);
+    const withArc = toDxf(traceGeometry(img, { colors: 2 }));
+    const flattened = toDxf(traceGeometry(img, { colors: 2, primitives: false }));
+    expect(withArc).toContain('\nARC\n');
+    expect(flattened).not.toContain('\nARC\n');
+    expect(flattened).toContain('\nLWPOLYLINE\n');
+    // The whole point for a cutter: one arc move instead of a ring of chords.
     expect(withArc.length).toBeLessThan(flattened.length);
   });
 

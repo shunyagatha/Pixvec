@@ -118,6 +118,50 @@ export function toDxf(geometry: TraceGeometry, opts: DxfOptions = {}): string {
         return;
       }
 
+      // A pie slice or donut segment becomes real ARC entities.
+      //
+      // This is the shape the `--primitives` help text promises "a real arc for
+      // CAD" for, and until now no exporter handled `sector` at all — DXF took
+      // circles and ellipses, EPS and PDF only circles, and every detected sector
+      // fell through to a flattened polyline. So a chart traced for cutting
+      // arrived as chords, and the claim was untrue for exactly the shape it named.
+      //
+      // A sector is up to four entities: the outer arc, the inner arc when it is a
+      // donut segment rather than a pie slice, and the two radial edges that close
+      // it. DXF angles are degrees, counter-clockwise from +X — and because this
+      // writer flips Y (DXF is Y-up, the raster is Y-down), the sweep direction
+      // flips with it, so the stored angles are negated and swapped.
+      if (prim?.kind === 'sector') {
+        const deg = (rad: number): number => (-rad * 180) / Math.PI;
+        // Negating swaps which end is "start" for a counter-clockwise arc.
+        const start = deg(prim.a1);
+        const end = deg(prim.a0);
+        const cx = sx(prim.cx);
+        const cy = fy(prim.cy);
+        const arc = (r: number): void => {
+          lines.push(
+            '0', 'ARC', '8', layer, '62', aci, '420', String(trueColor),
+            '10', n(cx), '20', n(cy), '30', '0',
+            '40', n(s(r)),
+            '50', n(start), '51', n(end),
+          );
+        };
+        arc(prim.r1);
+        if (prim.r0 > 0) arc(prim.r0);
+        // The two radial edges. A full-turn sector is a ring or disc and has
+        // none — its arcs already close it.
+        if (Math.abs(prim.a1 - prim.a0) < Math.PI * 2 - 1e-9) {
+          for (const a of [prim.a0, prim.a1]) {
+            lines.push(
+              '0', 'LINE', '8', layer, '62', aci, '420', String(trueColor),
+              '10', n(sx(prim.cx + prim.r0 * Math.cos(a))), '20', n(fy(prim.cy + prim.r0 * Math.sin(a))), '30', '0',
+              '11', n(sx(prim.cx + prim.r1 * Math.cos(a))), '21', n(fy(prim.cy + prim.r1 * Math.sin(a))), '31', '0',
+            );
+          }
+        }
+        return;
+      }
+
       const verts = flatten(sub, steps);
       // Drop a duplicated closing vertex; DXF closes via flag 70=1.
       if (verts.length > 1) {

@@ -415,6 +415,22 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
   let source = await loadRaster(bytes);
   const outPath = o.output ?? defaultOutput(input, '.svg');
 
+  // `vectorize` writes SVG and only SVG. It used to write it under whatever name
+  // it was given, so `vectorize logo.png -o logo.dxf` produced an SVG document
+  // called `logo.dxf` and said nothing — a file that opens in a browser and fails
+  // in every CAD tool, which is the one place a `.dxf` is going. `convert` is the
+  // command that routes on the output extension.
+  const outExt = extname(outPath).toLowerCase();
+  if (outExt && outExt !== '.svg' && outExt !== '.svgz') {
+    fail(
+      `vectorize writes SVG, but ${basename(outPath)} asks for ${outExt.slice(1).toUpperCase()}. ` +
+        `Use \`vecline convert ${basename(input)} ${basename(outPath)}\`, which routes on the ` +
+        `output extension and emits real ${outExt === '.dxf' || outExt === '.eps' || outExt === '.pdf' ? 'geometry' : 'raster'} ` +
+        `for it. (Naming an SVG \`${basename(outPath)}\` would have opened in a browser and ` +
+        `failed everywhere it was actually going.)`,
+    );
+  }
+
   // Knock out the background before vectorising, so the tracer never sees it
   // as a region worth describing.
   const transparency = transparencyOptions(o);
