@@ -1216,7 +1216,7 @@ function vectorizePixels(img, opts = {}) {
     shapeRendering: opts.crispEdges === false ? "auto" : "crispEdges"
   });
   if (backgroundKey !== 0) doc.addBackground(unpackRgba(backgroundKey));
-  const ordered = [...byColor.keys()].filter((k) => k !== backgroundKey).sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0) || a - b);
+  const ordered = [...byColor.keys()].filter((k) => k !== backgroundKey).map((k) => [counts.get(k) ?? 0, k]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).map(([, k]) => k);
   for (const key of ordered) {
     const rects = byColor.get(key);
     const path = new PathBuilder(0);
