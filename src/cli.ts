@@ -2595,8 +2595,14 @@ program.hook('preAction', (thisCommand, actionCommand) => {
  *
  * Setting `process.exitCode` and returning lets Node flush and then exit with
  * the code commander asked for.
+ *
+ * Applied to every subcommand, not just the program. `exitOverride()` affects
+ * only the instance it is called on, and `vectorize --help` is handled by the
+ * *subcommand* — so setting it on `program` alone left the one case that actually
+ * overflows a pipe still calling `process.exit()`, and macOS went on capturing
+ * exactly 8192 bytes.
  */
-program.exitOverride();
+for (const cmd of [program, ...program.commands]) cmd.exitOverride();
 
 interface CommanderExit { exitCode: number; code: string }
 
