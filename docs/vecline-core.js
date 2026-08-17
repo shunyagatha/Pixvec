@@ -484,31 +484,51 @@ function gaussianKernel(radius, sigma) {
   return k;
 }
 function blur(src, width, height, kernel, radius, tmp, dst) {
+  const xLo = Math.min(radius, width);
+  const xHi = Math.max(xLo, width - radius);
+  const yLo = Math.min(radius, height);
+  const yHi = Math.max(yLo, height - radius);
   for (let y = 0; y < height; y++) {
     const row = y * width;
-    for (let x = 0; x < width; x++) {
+    for (let x = 0; x < xLo; x++) tmp[row + x] = clampedTap(src, row, x, width, kernel, radius);
+    for (let x = xLo; x < xHi; x++) {
       let acc = 0;
-      for (let t = -radius; t <= radius; t++) {
-        let sx = x + t;
-        if (sx < 0) sx = 0;
-        else if (sx >= width) sx = width - 1;
-        acc += src[row + sx] * kernel[t + radius];
-      }
+      for (let t = -radius; t <= radius; t++) acc += src[row + x + t] * kernel[t + radius];
       tmp[row + x] = acc;
     }
+    for (let x = xHi; x < width; x++) tmp[row + x] = clampedTap(src, row, x, width, kernel, radius);
   }
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let acc = 0;
-      for (let t = -radius; t <= radius; t++) {
-        let sy = y + t;
-        if (sy < 0) sy = 0;
-        else if (sy >= height) sy = height - 1;
-        acc += tmp[sy * width + x] * kernel[t + radius];
+    const row = y * width;
+    if (y >= yLo && y < yHi) {
+      for (let x = 0; x < width; x++) {
+        let acc = 0;
+        for (let t = -radius; t <= radius; t++) acc += tmp[(y + t) * width + x] * kernel[t + radius];
+        dst[row + x] = acc;
       }
-      dst[y * width + x] = acc;
+    } else {
+      for (let x = 0; x < width; x++) {
+        let acc = 0;
+        for (let t = -radius; t <= radius; t++) {
+          let sy = y + t;
+          if (sy < 0) sy = 0;
+          else if (sy >= height) sy = height - 1;
+          acc += tmp[sy * width + x] * kernel[t + radius];
+        }
+        dst[row + x] = acc;
+      }
     }
   }
+}
+function clampedTap(src, row, x, width, kernel, radius) {
+  let acc = 0;
+  for (let t = -radius; t <= radius; t++) {
+    let sx = x + t;
+    if (sx < 0) sx = 0;
+    else if (sx >= width) sx = width - 1;
+    acc += src[row + sx] * kernel[t + radius];
+  }
+  return acc;
 }
 function ssimPlane(x, y, width, height) {
   const minDim = Math.min(width, height);
