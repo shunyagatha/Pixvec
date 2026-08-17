@@ -171,14 +171,19 @@ export function vectorizePixels(
         // the machine's locale, so this same message reads "360,000" on one box
         // and "3,60,000" on another. Diagnostics should not depend on where
         // they run.
+        // Rounded *up*, and to one decimal. `toFixed(0)` on a ratio a hair over
+        // the budget printed "50%, over the 50% budget", which reads as a
+        // contradiction: the number that triggered the refusal appeared equal
+        // to the number it was compared against.
+        const pct = (Math.ceil((rectTotal / n) * 1000) / 10).toFixed(1);
         throw new Error(
           `Pixel-exact vectorisation has stopped compressing this image: ` +
             `${rectTotal.toLocaleString('en-US')} rectangles for ${n.toLocaleString('en-US')} pixels ` +
-            `(${((rectTotal / n) * 100).toFixed(0)}%, over the ` +
-            `${(ratio * 100).toFixed(0)}% budget). Finishing would emit roughly one ` +
-            `<path> per distinct colour — megabytes of SVG that no renderer handles ` +
-            `well. Use --mode embed for a lossless result or --mode trace for real ` +
-            `curves; raise maxRectsPerPixel if you want the output regardless.`,
+            `(${pct}%, over the ${(ratio * 100).toFixed(0)}% budget). Finishing would ` +
+            `emit roughly one <path> per distinct colour — megabytes of SVG that no ` +
+            `renderer handles well. Use --mode embed for a lossless result or ` +
+            `--mode trace for real curves; pass --max-rects-per-pixel 1 if you want ` +
+            `the output regardless.`,
         );
       }
     }

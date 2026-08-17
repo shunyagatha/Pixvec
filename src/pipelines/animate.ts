@@ -9,7 +9,7 @@
  * needs libvips (sharp).
  */
 
-import sharp from 'sharp';
+import { loadSharp } from '../io/native.js';
 import type { RasterImage, Rgba } from '../types.js';
 import { trace, type TraceOptions } from '../vectorize/trace.js';
 import { quantize } from '../vectorize/quantize.js';
@@ -49,6 +49,7 @@ export async function traceAnimation(
   // reports `pageHeight` per frame but decodes every page into one strip, so
   // the pixel budget covers width x pageHeight x pages. Left unguarded, a small
   // GIF declaring a large canvas and many frames allocates the product.
+  const sharp = await loadSharp();
   const img = sharp(Buffer.from(bytes), {
     animated: true,
     limitInputPixels: opts.limitInputPixels ?? DEFAULT_MAX_INPUT_PIXELS,

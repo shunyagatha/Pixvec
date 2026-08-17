@@ -361,6 +361,7 @@ interface VectorizeCliOptions {
   strokeWidth?: number;
   turnPolicy?: string;
   extendUnder?: boolean;
+  maxRectsPerPixel?: number;
   fillStrategy?: string;
   rightAngle?: boolean;
   rightAngleThreshold?: number;
@@ -500,7 +501,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       precision: o.precision,
       background: o.background,
     },
-    pixel: { background: o.background },
+    pixel: { background: o.background, maxRectsPerPixel: o.maxRectsPerPixel },
     embed: {
       strategy: o.embedStrategy as never,
       xlink: o.xlink,
@@ -1126,6 +1127,15 @@ async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
       recordedSha256: payload.recordedSha256 ?? null,
       digestVerified: payload.verified,
       isOriginalFile: payload.isOriginal,
+      // `isOriginalFile` answers "did the SVG record that its payload was the
+      // source file verbatim", which only an SVG vecline wrote can answer. On a
+      // foreign SVG it is false for lack of a marker, not because anything was
+      // re-encoded — reporting that alone produced `"isOriginalFile": false`
+      // beside `"matchesSource": true` in the same object. This says which of
+      // the three cases actually holds.
+      provenance: payload.isOriginal
+        ? 'recorded-original'
+        : payload.recordedSha256 ? 'recorded-reencoded' : 'unmarked',
       matchesSource: matchesSource ?? null,
     });
     if (matchesSource === false || (payload.recordedSha256 && !payload.verified)) process.exit(2);
@@ -1147,10 +1157,18 @@ async function runExtract(input: string, o: ExtractCliOptions): Promise<void> {
     info(`  ${dim('digest')}   ${dim('no recorded digest; nothing to check against')}`);
   }
 
+  // Three cases, not two. The payload is *always* copied verbatim out of the
+  // data URI — extract never re-encodes anything — so the question this answers
+  // is what the SVG says the payload was *before* it was embedded. Only an SVG
+  // vecline wrote carries that record. Collapsing "no marker" into "re-encoded"
+  // asserted a re-encode that never happened, on every foreign SVG, and told
+  // users to distrust a provably byte-identical extraction.
   info(
     payload.isOriginal
       ? `  ${dim('payload')}  ${green('the original file, preserved byte for byte')}`
-      : `  ${dim('payload')}  re-encoded from the source pixels (not the original bytes)`,
+      : payload.recordedSha256
+        ? `  ${dim('payload')}  re-encoded from the source pixels when this SVG was written`
+        : `  ${dim('payload')}  copied verbatim from the SVG; no provenance marker, so what it was before embedding is unknown`,
   );
 
   if (matchesSource !== undefined) {
@@ -2052,6 +2070,12 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
+  .optionsGroup('Pixel mode:')
+  .option(
+    '--max-rects-per-pixel <ratio>',
+    'in pixel mode, the share of pixels allowed to become rectangles before it refuses (default 0.5); 1 permits the fully degenerate one-rectangle-per-pixel case',
+    floatArg('--max-rects-per-pixel', 0.001, 1),
+  )
   .optionsGroup('Output and document:')
   .option('--minify', 'minify the output SVG (render-preserving: round coords, strip defaults)')
   .option('--precision <n>', 'decimals kept in path coordinates', intArg('--precision', 0, 8))

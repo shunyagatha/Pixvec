@@ -142,6 +142,10 @@ describe('vecline/core portability', () => {
       // cli-help.ts imports commander, so it belongs with cli.ts rather than
       // with anything the browser bundle can reach.
       'index.ts', 'api.ts', 'cli.ts', 'cli-help.ts', 'ops.ts',
+      // native.ts exists to load the two native addons, so it is node-only by
+      // definition — it is the one file whose whole purpose is the thing the
+      // portable core must not reach.
+      'io/native.ts',
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts', 'io/batch-summary.ts', 'io/pdf.ts', 'io/office.ts', 'io/images-pdf.ts',
       // Opens a socket and spawns LibreOffice — node:http, node:fs, node:crypto.
       'io/bridge.ts',
@@ -318,4 +322,66 @@ describe('vecline/core bundles for the browser', () => {
     // eslint-disable-next-line no-console
     console.log(`  vecline/core bundles to ${(bytes / 1024).toFixed(1)} KB minified`);
   }, 60_000);
+});
+
+describe('optional dependencies are actually optional', () => {
+  /**
+   * The two native addons must not be imported at module top level.
+   *
+   * `sharp` and `@resvg/resvg-js` are declared in `optionalDependencies`, and
+   * `--omit=optional` is offered as a supported install. That combination was
+   * broken: both were static top-level imports, so an install without them made
+   * even `vecline --version` die on a raw `ERR_MODULE_NOT_FOUND` out of Node's
+   * module reader — no mention of a codec, no mention of which one.
+   *
+   * This reads the source rather than trusting review, because the regression is
+   * one stray `import sharp from 'sharp'` away and it cannot be felt on a
+   * developer machine where both packages are installed.
+   */
+  const NATIVE = ['sharp', '@resvg/resvg-js'];
+
+  it('imports no native addon as a value, anywhere in src', async () => {
+    const offenders: string[] = [];
+    async function walk(dir: string, prefix = ''): Promise<void> {
+      for (const entry of await readdir(join('src', dir), { withFileTypes: true })) {
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) { await walk(join(dir, entry.name), rel); continue; }
+        if (!entry.name.endsWith('.ts')) continue;
+        const source = await readFile(join('src', dir, entry.name), 'utf8');
+        for (const pkg of NATIVE) {
+          // A value import. `import type { X } from 'sharp'` is erased at
+          // compile time and therefore costs nothing at runtime, so it is fine;
+          // so is a lazy `await import(name)` behind a string variable.
+          const valueImport = new RegExp(
+            String.raw`^\s*import\s+(?!type\b)[^;]*?from\s*['"]` + pkg.replace(/[/\^$*+?.()|[\]{}]/g, '\$&') + String.raw`['"]`,
+            'm',
+          );
+          const m = source.match(valueImport);
+          if (!m) continue;
+          // `import { type A, type B } from 'x'` is also fully erased — every
+          // binding is type-only even though the statement lacks the modifier.
+          const allTypeOnly = /^\s*import\s*\{([^}]*)\}/.exec(m[0]);
+          if (allTypeOnly) {
+            const bindings = allTypeOnly[1].split(',').map((b) => b.trim()).filter(Boolean);
+            if (bindings.length > 0 && bindings.every((b) => b.startsWith('type '))) continue;
+          }
+          offenders.push(`${rel}: ${m[0].trim()}`);
+        }
+      }
+    }
+    await walk('.');
+    expect(offenders).toEqual([]);
+  });
+
+  it('loads them through the lazy loader, which reports what is missing', async () => {
+    const source = await readFile(join('src', 'io/native.ts'), 'utf8');
+    // The specifier must be a variable, or TypeScript resolves it statically and
+    // emits a hard dependency on a package consumers need not install.
+    expect(source).toMatch(/const name: string = 'sharp'/);
+    expect(source).toMatch(/const name: string = '@resvg\/resvg-js'/);
+    // And a failure has to name the package and the fix, not surface Node's
+    // module-resolution error.
+    expect(source).toMatch(/npm i \$\{pkg\}|npm i sharp/);
+    for (const pkg of ['sharp', '@resvg/resvg-js']) expect(source).toContain(pkg);
+  });
 });

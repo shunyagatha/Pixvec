@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, resolve, sep } from 'node:path';
-import { Resvg, type ResvgRenderOptions } from '@resvg/resvg-js';
+// Type-only, so this line is erased at compile time and pulls in no addon.
+import type { Resvg as ResvgInstance, ResvgRenderOptions } from '@resvg/resvg-js';
+import { loadResvg } from './native.js';
 import type { RasterImage, Rgba } from '../types.js';
 
 export interface RasterizeOptions {
@@ -96,7 +98,14 @@ export async function rasterizeSvg(
     render.background = a >= 255 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${(a / 255).toFixed(4)})`;
   }
 
-  let resvg: Resvg;
+  // Loading the renderer and parsing the document are separate failures and
+  // must not be reported as one. Wrapping both said "Failed to parse SVG" over a
+  // perfectly valid SVG when the real problem was that the renderer itself was
+  // not installed — which sends the reader to inspect their document instead of
+  // their install.
+  const { Resvg } = await loadResvg();
+
+  let resvg: ResvgInstance;
   try {
     resvg = new Resvg(source, render);
   } catch (err) {

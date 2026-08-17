@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import { loadSharp } from './io/native.js';
 import type { RasterImage, Rgba } from './types.js';
 
 /**
@@ -151,6 +151,7 @@ function rgbaToSharp(c: Rgba): { r: number; g: number; b: number; alpha: number 
  * caller — a blur before a downscale is not the same as after.
  */
 export async function editImage(img: RasterImage, ops: OpsChain): Promise<RasterImage> {
+  const sharp = await loadSharp();
   let pipeline = sharp(rawBuffer(img), {
     raw: { width: img.width, height: img.height, channels: 4 },
   });
