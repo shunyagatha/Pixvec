@@ -227,6 +227,7 @@ describe.skipIf(!built)('CLI: --help groups the big commands', () => {
       'Colour and palette:',
       'Geometry and curve fitting:',
       'Thresholding (bilevel / line art):',
+      'Pixel mode:',
       'Budgets and measurement:',
       'Transparency and background:',
       'Output and document:',
@@ -239,7 +240,12 @@ describe.skipIf(!built)('CLI: --help groups the big commands', () => {
     // Commander synthesises it after everything declared, so a positional rule
     // silently files it under the final group.
     const r = await cli(['vectorize', '--help']);
-    expect(r.stdout).toMatch(/\nOptions:\n\s+-h, --help/);
+    // Reported with the tail of the output, because vitest truncates a 6 KB
+    // received value and the preview then says nothing about whether the section
+    // was present, absent, or merely formatted differently.
+    const tail = r.stdout.slice(-300);
+    expect(r.stdout, `help did not end with an ungrouped Options section. tail:\n${tail}`)
+      .toMatch(/\nOptions:\n\s+-h, --help/);
   });
 
   it('does not change commands that declare no groups', async () => {
