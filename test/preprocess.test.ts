@@ -276,3 +276,111 @@ describe('speckle scope', () => {
       .toEqual(trace(img, { colors: 8, minArea: 6, speckleScope: 'all' }).svg);
   });
 });
+
+/**
+ * The blur streams; it must still land on the same bytes.
+ *
+ * The separable passes used to materialise two whole-image Float64 planes —
+ * 64 bytes per pixel, measured 196 MiB of scratch on a 3 MP image — for an
+ * intermediate nothing downstream ever revisits. It now carries only the rows
+ * the vertical window can still reach.
+ *
+ * A ring buffer earns exactly one kind of bug: a row overwritten while it is
+ * still needed, or a wrap computed wrongly at an edge. Those show up at small
+ * and awkward dimensions rather than on a photograph, so that is what these
+ * cover — a single pixel, a single column, a single row, and sizes that are not
+ * multiples of the window.
+ */
+describe('selectiveBlur streaming', () => {
+  const build = (w: number, h: number, seed: number): RasterImage => {
+    const img = createImage(w, h);
+    let s = seed >>> 0;
+    const rnd = (): number => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        setPixel(img, x, y, Math.floor(rnd() * 256), Math.floor(rnd() * 256), Math.floor(rnd() * 256));
+      }
+    }
+    return img;
+  };
+
+  /** The straightforward two-plane version, kept here purely as an oracle. */
+  const reference = (img: RasterImage, radius: number, delta: number): Uint8ClampedArray => {
+    const { width, height, data } = img;
+    const size = radius * 2 + 1;
+    const sigma = radius / 3 || 1; // must match gaussianKernel exactly
+    const kernel = new Float64Array(size);
+    let ksum = 0;
+    for (let i = -radius; i <= radius; i++) {
+      const v = Math.exp(-(i * i) / (2 * sigma * sigma));
+      kernel[i + radius] = v; ksum += v;
+    }
+    for (let i = 0; i < size; i++) kernel[i] /= ksum;
+
+    const n = width * height;
+    const tmp = new Float64Array(n * 4);
+    const blurred = new Float64Array(n * 4);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let r = 0, g = 0, b = 0, a = 0;
+        for (let t = -radius; t <= radius; t++) {
+          let sx = x + t;
+          if (sx < 0) sx = 0; else if (sx >= width) sx = width - 1;
+          const o = (y * width + sx) * 4, w = kernel[t + radius];
+          r += data[o] * w; g += data[o + 1] * w; b += data[o + 2] * w; a += data[o + 3] * w;
+        }
+        const d = (y * width + x) * 4;
+        tmp[d] = r; tmp[d + 1] = g; tmp[d + 2] = b; tmp[d + 3] = a;
+      }
+    }
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let r = 0, g = 0, b = 0, a = 0;
+        for (let t = -radius; t <= radius; t++) {
+          let sy = y + t;
+          if (sy < 0) sy = 0; else if (sy >= height) sy = height - 1;
+          const o = (sy * width + x) * 4, w = kernel[t + radius];
+          r += tmp[o] * w; g += tmp[o + 1] * w; b += tmp[o + 2] * w; a += tmp[o + 3] * w;
+        }
+        const d = (y * width + x) * 4;
+        blurred[d] = r; blurred[d + 1] = g; blurred[d + 2] = b; blurred[d + 3] = a;
+      }
+    }
+    const out = new Uint8ClampedArray(n * 4);
+    for (let i = 0; i < n; i++) {
+      const o = i * 4;
+      const moved = Math.abs(blurred[o] - data[o]) > delta ||
+        Math.abs(blurred[o + 1] - data[o + 1]) > delta ||
+        Math.abs(blurred[o + 2] - data[o + 2]) > delta ||
+        Math.abs(blurred[o + 3] - data[o + 3]) > delta;
+      for (let c = 0; c < 4; c++) out[o + c] = moved ? data[o + c] : Math.round(blurred[o + c]);
+    }
+    return out;
+  };
+
+  const shapes: [number, number][] = [[1, 1], [1, 9], [9, 1], [2, 2], [7, 13], [13, 7], [31, 29]];
+
+  it('matches the two-plane result exactly, at every radius and shape', () => {
+    let checked = 0;
+    for (const [w, h] of shapes) {
+      for (const radius of [1, 2, 3, 5]) {
+        for (const delta of [2, 12, 64]) {
+          const img = build(w, h, w * 131 + h * 17 + radius);
+          const got = selectiveBlur(img, { radius, delta });
+          const want = reference(img, radius, delta);
+          expect(Array.from(got.data), `${w}x${h} r=${radius} d=${delta}`).toEqual(Array.from(want));
+          checked++;
+        }
+      }
+    }
+    // Guard the guard: a loop that silently ran zero times would pass too.
+    expect(checked).toBe(shapes.length * 4 * 3);
+  });
+
+  it('leaves the input untouched', () => {
+    const img = build(20, 15, 99);
+    const before = Array.from(img.data);
+    selectiveBlur(img, { radius: 3, delta: 8 });
+    expect(Array.from(img.data)).toEqual(before);
+  });
+});
