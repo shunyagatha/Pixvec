@@ -161,10 +161,17 @@ export async function decodeRaster(
       );
     }
 
+    // Some failures are a specific, nameable limitation rather than "this is
+    // not an image". Saying which one, once, beats forwarding the codec's own
+    // diagnostics and a list of formats that sends the reader looking in the
+    // wrong place.
+    const explained = explainCodecFailure(message);
+    if (explained) throw new Error(`${explained} (${tidyCodecMessage(message)})`);
+
     const extra = registeredFormats().decode;
     const registeredNote = extra.length ? `, plus registered: ${extra.join(', ')}` : '';
     throw new Error(
-      `Could not read image metadata: ${message}. ` +
+      `Could not read image metadata: ${tidyCodecMessage(message)}. ` +
         `Supported inputs: PNG, JPEG, WebP, AVIF, TIFF, GIF, BMP, ICO, PNM/PPM, TGA${registeredNote}.`,
     );
   }
@@ -172,11 +179,28 @@ export async function decodeRaster(
   let pipeline = base();
   if (applyOrientation) pipeline = pipeline.rotate(); // no argument = honour EXIF
 
-  const { data, info } = await pipeline
-    .toColorspace('srgb')
-    .ensureAlpha()
-    .raw({ depth: 'uchar' })
-    .toBuffer({ resolveWithObject: true });
+  // Decoding the pixels can fail long after the header parsed cleanly: a TIFF
+  // announces its tiling and planar config in the header and only fails when
+  // libvips tries to read it, and libheif reports a missing codec at the same
+  // point. Left unwrapped, that surfaced the codec's own diagnostics verbatim —
+  // six "source: bad seek to N" lines ahead of the one that mattered.
+  let data: Buffer;
+  let info: { width: number; height: number; channels: number };
+  try {
+    ({ data, info } = await pipeline
+      .toColorspace('srgb')
+      .ensureAlpha()
+      .raw({ depth: 'uchar' })
+      .toBuffer({ resolveWithObject: true }));
+  } catch (err) {
+    const message = (err as Error).message;
+    const explained = explainCodecFailure(message);
+    throw new Error(
+      explained
+        ? `${explained} (${tidyCodecMessage(message)})`
+        : `Could not decode this ${raw.format ?? 'image'}: ${tidyCodecMessage(message)}`,
+    );
+  }
 
   if (info.channels !== 4) {
     throw new Error(`Expected 4 channels after normalisation, got ${info.channels}`);
@@ -207,6 +231,69 @@ export async function decodeRaster(
   };
 
   return { image, meta, bytes };
+}
+
+/**
+ * Strip a codec diagnostic down to the part that carries information.
+ *
+ * libheif emits one `source: bad seek to N` line per probe while it works out
+ * the file layout — six of them precede the real cause on a HEIC — and libvips
+ * repeats `tiffload_buffer: load error` once per attempted load. None of it
+ * tells the reader anything, and it buries the one line that does.
+ *
+ * Repeated *phrases* are collapsed too, because libheif concatenates its own
+ * prefix as an error propagates: "Memory allocation error: Security limit
+ * exceeded: Memory allocation error: Security limit exceeded: Allocating..."
+ * is one failure, reported twice inside one string.
+ */
+export function tidyCodecMessage(message: string): string {
+  const lines = message
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^source: bad seek to \d+$/i.test(l));
+
+  const deduped = lines.filter((l, i) => lines.indexOf(l) === i);
+  const joined = deduped.join('; ');
+
+  // Collapse an immediately repeated "Prefix: Prefix:" run to one.
+  return joined.replace(/(\b[\w ]+?: [\w ]+?: )\1/g, '$1');
+}
+
+/**
+ * Name the limitation behind a codec failure, or null if it is not one we know.
+ *
+ * Each of these is a genuine capability boundary of the bundled libvips or
+ * libheif rather than a broken file, so the useful answer is what the boundary
+ * is and what to do about it — not the codec's internal diagnostic.
+ */
+export function explainCodecFailure(message: string): string | null {
+  if (/tiled separate planes not supported/i.test(message)) {
+    return 'This TIFF stores tiled data with separate colour planes ' +
+      '(PLANARCONFIG_SEPARATE), a combination libvips does not read. ' +
+      'Convert it to contiguous planes first — `tiffcp -p contig in.tif out.tif`, ' +
+      'or re-save it as a striped TIFF';
+  }
+
+  if (/Support for this compression format has not been built in/i.test(message)) {
+    return 'This file needs an HEVC decoder, which the bundled libheif does not ' +
+      'include — HEIC/HEIF from Apple devices is normally HEVC-coded. ' +
+      'Convert it first (macOS `sips -s format png`, or ImageMagick with a ' +
+      'HEIC delegate), or use an AVIF instead, which decodes here natively';
+  }
+
+  if (/exceeds the security limit/i.test(message)) {
+    // Reads as a memory error, but it is libheif declining on principle: the
+    // other AVIFs in the format corpus decode at the same sizes, and only the
+    // layered one trips this. The limit is libheif's, not a Vecline setting,
+    // so there is no option here to point the reader at.
+    return 'libheif refused this file under its own security limit. That normally ' +
+      'means layered (multi-layer) HEIF/AVIF coding, which it declines to ' +
+      'reconstruct — ordinary single-layer AVIF is unaffected. Re-encode it as ' +
+      'a flat single-layer AVIF or as PNG';
+  }
+
+  return null;
 }
 
 /**
