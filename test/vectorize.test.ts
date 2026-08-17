@@ -49,6 +49,49 @@ describe('pixel mode', () => {
     expect(out.colors).toBe(4);
   });
 
+  describe('the degenerate-meshing guard', () => {
+    // 600x600 of noise meshes at ~100%, so it clears both halves of the guard.
+    const BIG = 600;
+
+    it('refuses a large image that has stopped compressing', () => {
+      expect(() => vectorizePixels(photoLike(BIG, BIG))).toThrow(/stopped compressing/);
+    });
+
+    it('still allows it when the caller raises the budget', () => {
+      const out = vectorizePixels(photoLike(BIG, BIG), { maxRectsPerPixel: 1 });
+      expect(out.rects).toBeGreaterThan(BIG * BIG * 0.5);
+    });
+
+    it('does NOT refuse a small image, however degenerate', () => {
+      // The reason the guard needs two halves. A 48x36 patch of noise meshes at
+      // ~100% — perfectly degenerate — and produces a few kilobytes: bit-exact,
+      // small, entirely usable. A ratio test alone refuses this, which would
+      // break `--prefer geometry` and four other tested contracts. Whether the
+      // output hurts is a question about size, not shape.
+      const small = photoLike(48, 36);
+      const out = vectorizePixels(small);
+      expect(out.rects).toBeGreaterThan(small.width * small.height * 0.5);
+      expect(out.svg.length).toBeLessThan(400_000);
+    });
+
+    it('leaves blocky artwork alone no matter how large', () => {
+      // Same pixel count as the refused case, so only the ratio distinguishes
+      // them — this must pass on shape, not on being small.
+      const out = vectorizePixels(flatArtwork(BIG, BIG));
+      expect(out.rects).toBeLessThan(BIG * BIG * 0.5);
+    });
+
+    it('names the measured numbers rather than guessing at the damage', () => {
+      // An earlier version said "tens of megabytes" unconditionally, which was
+      // false for the small inputs it was also refusing.
+      let msg = '';
+      try { vectorizePixels(photoLike(BIG, BIG)); } catch (e) { msg = (e as Error).message; }
+      expect(msg).toMatch(/rectangles for/);
+      expect(msg).toMatch(new RegExp(`${BIG * BIG}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')));
+      expect(msg).toMatch(/maxRectsPerPixel/);
+    });
+  });
+
   it('refuses to explode on photographic input', () => {
     expect(() => vectorizePixels(photoLike(200, 200), { maxRects: 1000 })).toThrow(/embed|trace/);
   });
