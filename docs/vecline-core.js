@@ -3556,7 +3556,7 @@ function detectPrimitive(pts, opts = {}) {
       bestErr = ell.err;
     }
   }
-  const round4 = fitRoundRect(pts, n2, b, w, h);
+  const round4 = fitRoundRect(pts, n2, b, w, h, area);
   if (round4 && round4.err <= maxError && round4.err < bestErr) {
     best = round4.prim;
     bestErr = round4.err;
@@ -3606,9 +3606,10 @@ function fitRect(pts, n2, b, w, h, area) {
   }
   return { prim: { kind: "rect", x: b.minX, y: b.minY, w, h }, err };
 }
-function fitRoundRect(pts, n2, b, w, h) {
+function fitRoundRect(pts, n2, b, w, h, area) {
   const maxR = Math.min(w, h) / 2;
   if (maxR < 2) return null;
+  if (area < 0.75 * w * h) return null;
   const MIN_R = 2;
   const STEPS = 48;
   let bestR = 0;
