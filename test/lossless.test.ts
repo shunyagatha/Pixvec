@@ -62,13 +62,33 @@ describe('exact contours', () => {
 });
 
 describe('vectorizeExact', () => {
+  /**
+   * Both candidates are rebuilt here independently, and the assertion is
+   * equality against their minimum.
+   *
+   * The earlier form could not fail. It read the contour size back out of
+   * `chosen.sizes.contours` — the value under test — and compared the winner
+   * against `Math.max(rects, contours)`, an upper bound that picking *either*
+   * candidate satisfies. So the one defect worth catching, silently returning
+   * the larger encoding, passed: both candidates are bit-exact, so no other test
+   * in this file can notice it either.
+   */
   it('keeps whichever exact encoding is smaller', () => {
     for (const source of [flatArtwork(), pixelArt(4), alphaBlob()]) {
       const chosen = vectorizeExact(source);
+
       const rects = vectorizePixels(source).svg.length;
-      const contours = chosen.sizes.contours;
-      expect(chosen.svg.length).toBeLessThanOrEqual(rects);
-      if (contours !== undefined) expect(chosen.svg.length).toBeLessThanOrEqual(Math.max(rects, contours));
+      let contours: number | undefined;
+      try { contours = vectorizeExactContours(source).svg.length; } catch { contours = undefined; }
+
+      expect(chosen.svg.length).toBe(contours === undefined ? rects : Math.min(rects, contours));
+      // Ties go to rectangles, matching the `>=` in vectorizeExact.
+      expect(chosen.strategy).toBe(contours !== undefined && contours < rects ? 'contours' : 'rectangles');
+
+      // The reported sizes are what callers see; check them against the
+      // independent builds rather than against each other.
+      expect(chosen.sizes.rectangles).toBe(rects);
+      expect(chosen.sizes.contours).toBe(contours);
     }
   });
 
