@@ -4030,6 +4030,27 @@ var TRACE_DEFAULTS = {
   // producing *larger* files than a tighter fit. The one thing a large
   // tolerance buys — few smooth curves on a big arc — is preserved by the
   // `logo`/`lineart` presets, which keep a higher value on purpose.
+  //
+  // **0.4 is the top of a flat dead zone, not an optimum, and it is kept anyway.**
+  // A 131-setting sweep found that every tolerance in (0, 0.44] produces
+  // *byte-identical* output — same sha256, 34,084 B, 12,603 segments, zero curves —
+  // and that `cornerAngle` and `fitError` are unreachable there: all six
+  // cornerAngle values from 45 to 135 give the same sha at tolerance 0.4, and the
+  // instrumented fitter shows why. Every one of 12,879 loops takes the
+  // `fitterIsDead` shortcut, Douglas-Peucker removes 0.0% of 63,338 lattice
+  // points, and `findBreakpoints` is called **zero** times.
+  //
+  // Raising it to 0.45 wakes the fitter and is worse on both axes at once:
+  // -0.03 dB and +44% bytes (68,328 -> 98,189 on the real corpus). Accuracy then
+  // falls monotonically to 2.0 while bytes keep climbing to 137,278, because
+  // curves cost more characters than the `h`/`v` shorthand they replace.
+  //
+  // The real reason to keep 0.4 is the one that is easy to miss: it is the only
+  // setting where **100% of emitted path coordinates stay integers**. That is what
+  // buys the `h`/`v` shorthand, and integers gzip about 5.8x against 2.7x for
+  // fractionals — so the lattice is not a limitation being tolerated here, it is
+  // load-bearing for file size. Anything that moves coordinates off it (see
+  // `subpixel`) should be opt-in or preset-scoped, and is.
   tolerance: 0.4,
   fitError: 0.4,
   cornerAngle: 75,

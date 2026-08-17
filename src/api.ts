@@ -34,8 +34,44 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // logo tracer. `poster`, `photo` and `detailed` favour accuracy, where the
   // measured win is largest; `photo` at the old 1.4 was the worst setting in the
   // whole table.
-  logo: { colors: 16, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75 },
-  lineart: { colors: 6, minArea: 4, tolerance: 0.6, fitError: 0.6, cornerAngle: 60 },
+  // `subpixel` and `precision: 1` are here and nowhere else, and the sweep that
+  // decided that is worth recording because three of the five presets failed it.
+  //
+  // Sub-pixel edge extraction is what lets the curve fitter run at all (see
+  // `subpixel.ts`), and on the two presets that already sit above the fitter's
+  // engagement threshold it buys a lot for less geometry:
+  //
+  //   logo      +1.84 dB @4x, +1.68 @3.902x, true segments -21.2%
+  //   lineart   +1.92 dB @4x, +1.74 @3.902x, true segments -19.2%
+  //
+  // It costs bytes — logo x1.80 raw / x2.90 gzip, lineart x2.08 / x3.61 across the
+  // twelve corpus inputs — and time, x1.49 and x1.77. That trade is worth taking
+  // where someone has said "this is a logo" and wants editable curves.
+  //
+  // It is NOT worth taking anywhere else, measured rather than assumed:
+  //
+  // - `detailed` couples tolerance/fitError at 0.3, which is *inside* the fitter's
+  //   dead zone, so it emits zero curve segments today. Sub-pixel input there does
+  //   not simplify an existing fit, it creates one and pays full price: **more**
+  //   geometry (+10.1% true segments), x4.07 raw and x6.66 gzip bytes, x2.83 time,
+  //   worse on 12 of 12 inputs — and it loses accuracy on the statistic these
+  //   presets were tuned on (photo-cat SSIM 0.8645 -> 0.7003).
+  // - `poster` is the same story more mildly: x1.87 raw, x3.53 gzip, only -7.2%
+  //   segments, and SSIM down on photographs.
+  // - `photo` is untouched on purpose; see its own note below.
+  //
+  // `precision: 1` is a separate, free win and applies only here for the same
+  // reason: -13.3% raw and -17.0% gzip for -0.001 dB. It pays for itself because
+  // sub-pixel coordinates are fractional, and a fractional coordinate costs both
+  // more characters and worse compression (integers gzip ~5.8x, fractionals ~2.7x).
+  logo: {
+    colors: 16, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75,
+    subpixel: true, precision: 1,
+  },
+  lineart: {
+    colors: 6, minArea: 4, tolerance: 0.6, fitError: 0.6, cornerAngle: 60,
+    subpixel: true, precision: 1,
+  },
   poster: { colors: 32, minArea: 12, tolerance: 0.5, fitError: 0.5, cornerAngle: 80 },
   // `photo` carries no minArea/tolerance/cornerAngle overrides on purpose. It
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake
@@ -167,7 +203,16 @@ export async function vectorize(
   // Auto mode picked a strategy from image statistics before seeing the result.
   // If that guess produced something an exact alternative beats on *both* size
   // and accuracy, take the alternative — there is no trade-off to weigh.
-  if ((opts.mode ?? 'auto') === 'auto' && result.mode === 'trace') {
+  //
+  // Exempt an explicit preset. This check fires on exactly the images a tracing
+  // preset is for — its own docstring names "a logo with 194 colours and soft
+  // edges" — so without the exemption, making a preset select trace mode would be
+  // inert: the trace would be built and then swapped straight back for a base64
+  // copy. Someone who typed `--preset logo` has said which *kind* of output they
+  // want, and "smaller" is not the axis they asked about. Plain `auto` is
+  // unchanged and still takes the exact copy when it dominates.
+  const presetChose = opts.preset !== undefined && opts.preset !== 'auto';
+  if ((opts.mode ?? 'auto') === 'auto' && !presetChose && result.mode === 'trace') {
     const better = await findDominatingExact(input, result, opts, notes);
     if (better) result = better;
   }
@@ -267,6 +312,31 @@ function resolveMode(
   // `lossless` and the `exact` preset never reach here — `vectorize` routes them
   // to `runLossless`, which decides by measuring candidates rather than guessing.
   if (opts.mode && opts.mode !== 'auto' && opts.mode !== 'lossless') return opts.mode;
+
+  // An explicit preset outranks the auto heuristics.
+  //
+  // Until now it did not, and the consequence was total rather than subtle: this
+  // function read `opts.preset` for exactly two values, `'pixelart'` above and
+  // `'exact'` in `vectorize`. Every other preset was consulted only inside
+  // `runTrace`, which is never reached when the statistics choose pixel — so
+  // `logo`, `lineart`, `poster`, `photo` and `detailed` all produced output
+  // *byte-identical to `auto`*. Measured on a rasterised vector original: all five
+  // returned the same sha256, the same 40,630 bytes and the same 57 shapes; and on
+  // this project's own `logo-tux.png`, `--preset logo` returned a 16 KB base64
+  // raster. Naming a tracing preset is a statement that a resolution-independent
+  // result is wanted, and it was being ignored.
+  //
+  // Placed *after* the `opts.mode` check so `--mode pixel --preset logo` still
+  // honours the more specific flag, and the note says how to get an exact copy
+  // back, because for a flat logo that genuinely is the smaller answer.
+  if (opts.preset !== undefined && opts.preset !== 'auto') {
+    notes.push(
+      `Preset '${opts.preset}' selected trace mode: naming a preset outranks the ` +
+        `auto heuristics, which would otherwise have measured this image and may ` +
+        `have chosen an exact copy. Use --mode pixel or --mode embed for that.`,
+    );
+    return 'trace';
+  }
 
   const flat = measureFlatness(input.image, 4096);
   if (isPixelFeasible(input.image, flat)) {
