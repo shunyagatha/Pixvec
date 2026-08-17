@@ -382,6 +382,23 @@ const FLAT_COLOR_COUNT = 64;
 function isPixelFeasible(img: RasterImage, flat: Flatness): boolean {
   if (flat.capped || flat.distinctColors > 4096) return false;
 
+  // `runRatio` counts HORIZONTAL runs, so this product is the rectangle count
+  // *before* greedy meshing merges anything vertically — an upper bound, and a
+  // deliberately one-sided one. Measured against the real count it is tight:
+  // 1.04x-1.62x, median 1.13x across the corpus, with zero images where the
+  // bound and the truth land on opposite sides of the budget.
+  //
+  // It is blind to vertical coherence, and that blindness is unbounded rather
+  // than merely loose: 1px-wide alternating stripes at 2000x2000 estimate
+  // 4,000,000 against a true 2,000, so a two-colour image whose exact output is
+  // 14.8 KB is refused. Left alone deliberately, because nothing realistic
+  // reaches it — the input must have runRatio near 1 AND near-perfect vertical
+  // coherence at once. Real vertical structure has *few* runs per row, so it is
+  // not close: a 3000x1200 barcode estimates 145,200, an A4 ruled form at
+  // 400 dpi 109,256, and 1920x1080 colour bars 7,560, all against a 600,000
+  // budget. Widening the estimate to min(horizontal, vertical) runs would cost
+  // a second cache-hostile pass in what is deliberately a cheap pre-filter, and
+  // would trade a measured-tight bound for an unproven one.
   const estimatedRects = flat.runRatio * img.width * img.height;
   if (estimatedRects > PIXEL_RECT_BUDGET) return false;
 
