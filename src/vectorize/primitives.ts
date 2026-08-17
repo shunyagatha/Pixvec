@@ -10,18 +10,35 @@
  * of real SVG arc commands.
  *
  * The decision is gated on a hard geometric residual — a loop only becomes a
- * primitive when its boundary lies within `maxError` pixels of the fitted shape
- * — never a guess that rounds an organic blob into a circle. Rectangles fit
- * exactly (their contour *is* four integer corners); circles, ellipses and
- * sectors clear the same sub-pixel bar.
+ * primitive when its boundary lies within `maxError` pixels of the fitted shape.
+ * Rectangles fit exactly (their contour *is* four integer corners); circles,
+ * ellipses and sectors clear the same sub-pixel bar.
  *
- * "Within a pixel" is not the same as "identical", and the honest word is a
- * *trade*, not "render-preserving". A curved primitive replaces a pixel
- * staircase with a true arc, and an ideal arc cannot follow a staircase exactly
- * — so a `<circle>` or a `<sector>` gives up on the order of 0.02 SSIM against
- * the source raster in exchange for geometry a fraction of the size that a CAD
- * tool can actually read as an arc. That is the same bargain the shipped
- * `<circle>` already makes; the `<rect>` alone is genuinely render-identical.
+ * **A residual alone is not enough, and this file learned that the hard way.**
+ * The distance from a boundary to a fitted *level set* says nothing about whether
+ * the interior is filled, so an outline can sit perfectly on a shape it does not
+ * enclose. `fitRoundRect` had no area gate, and a 1-pixel-wide L — the top and
+ * left border of a UI panel — scored 0.828 and was claimed as a solid rounded
+ * rectangle, taking a rasterised mock from SSIM 0.9280 to 0.7527 while making the
+ * file larger. Every fitter here now checks coverage as well as residual. Read a
+ * new fitter's gate as two questions: *is the boundary in the right place*, and
+ * *is the inside actually inside*.
+ *
+ * "Within a pixel" is not the same as "identical", so the honest word is a
+ * *trade*, not "render-preserving" — but on the shapes this module is named for
+ * the trade currently runs in our favour, which the previous version of this note
+ * had backwards. Measured at 256px, substituting the primitive **improves** every
+ * axis at once: a disc goes 452 anchors / 1312 B / SSIM 0.9853 to 4 anchors /
+ * 190 B / 0.9931, and an ellipse and a stadium come back bit-exact. The `<rect>`
+ * is render-identical by construction.
+ *
+ * That gain is currently out of reach at the shipped `maxError` of 1.0: detection
+ * runs on the raw crack-following loop, whose antialiased rim puts every curved
+ * shape at a residual of 1.16–1.44. **Raising the budget is not the fix** — a disc
+ * with a 12% flat chord is accepted at 1.4 (SSIM 0.989 -> 0.942), and a false
+ * positive can score *below* a genuine circle (1.077 against 1.211), so no
+ * threshold separates them. Densifying the boundary before fitting is the fix;
+ * until then this stays opt-in.
  *
  * The residual is measured differently for the sector: the contour tracer stores
  * a straight run as its two endpoints however long it is, so a sector's radial
@@ -105,7 +122,7 @@ export function detectPrimitive(
   // A rounded rectangle — the workhorse UI/icon shape. A sharp rect wins ties
   // (its err is 0), and a circle is caught above, so this only claims shapes
   // that genuinely have rounded corners and no better fit.
-  const round = fitRoundRect(pts, n, b, w, h);
+  const round = fitRoundRect(pts, n, b, w, h, area);
   if (round && round.err <= maxError && round.err < bestErr) {
     best = round.prim;
     bestErr = round.err;
@@ -207,9 +224,38 @@ function fitRoundRect(
   b: Bbox,
   w: number,
   h: number,
+  area: number,
 ): { prim: Primitive; err: number } | null {
   const maxR = Math.min(w, h) / 2;
   if (maxR < 2) return null; // too small to carry a meaningful radius
+
+  // Does the outline actually ENCLOSE its bounding box?
+  //
+  // Every other fitter here asks that — `fitRect` above, `fitCircle` and
+  // `fitEllipse` below, and `fitSector` checks its own parametric area. This one
+  // did not, and it was not even passed `area`, which made it the only fitter
+  // whose residual could be satisfied by a shape enclosing almost nothing.
+  //
+  // The residual below is one-sided: it measures how far each vertex sits from
+  // the rounded-rectangle *level set*, never whether the interior is filled. So a
+  // 1-pixel-wide L — the top and left border of a UI panel, which real artwork is
+  // full of — sits exactly on the boundary of a box it does not fill, scores
+  // 2*(sqrt(2)-1) = 0.828, and is claimed as a solid rounded rectangle. The area
+  // error at a fixed residual is unbounded for this fitter, where for the circle
+  // it is bounded by roughly a one-pixel annulus.
+  //
+  // Measured harm before this gate, on a rasterised UI mock at 256px: one
+  // `<rect x=3 y=3 width=115 height=116 rx=2>` swallowed the panel border and took
+  // SSIM 0.9280 -> 0.7527 and PSNR 25.20 -> 13.58 dB, with the file *larger*. The
+  // gate restores that fixture to its plain-trace value exactly and costs no true
+  // positive on any fixture measured: pie charts, logo-tux and alpha-dice are
+  // unchanged.
+  //
+  // 0.75 rather than `fitRect`'s 0.95 because rounded corners genuinely remove
+  // area: a stadium (r = h/2) fills 1 - (4-pi)/4 ~= 0.79 of its box, so 0.95 would
+  // reject the shape this fitter exists for. 0.75 sits below that and far above
+  // the ~2% an outline achieves.
+  if (area < 0.75 * w * h) return null;
 
   const MIN_R = 2;
   const STEPS = 48;

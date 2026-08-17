@@ -397,3 +397,55 @@ function soleLoops(img: RasterImage, colors: number): Int32Array[] {
   }
   return out;
 }
+
+describe('a primitive must enclose its bounding box, not just touch it', () => {
+  /**
+   * `fitRoundRect` was the only fitter without a coverage gate — it was not even
+   * passed `area`. Its residual is one-sided: it measures how far each vertex sits
+   * from the rounded-rectangle *level set*, never whether the interior is filled.
+   *
+   * So a 1-pixel-wide L — the top and left border of a UI panel, which real
+   * artwork is full of — sits exactly on the boundary of a box it does not fill,
+   * scores 2*(sqrt(2)-1) = 0.828, and was claimed as a solid rounded rectangle.
+   * On a rasterised UI mock that single element took SSIM 0.9280 to 0.7527 and
+   * PSNR 25.20 to 13.58 dB, with the output *larger*.
+   *
+   * These cases need no raster: they are the fitter's own contract.
+   */
+  it('refuses a 1px-wide L that merely traces a box outline', () => {
+    // Top and left border of a 116x116 panel, one pixel thick.
+    const outline = [3, 3, 119, 3, 119, 118, 118, 118, 118, 4, 4, 4, 4, 119, 3, 119];
+    expect(detectPrimitive(outline, { maxError: 1.0 })).toBeNull();
+  });
+
+  it('refuses it at a loose budget too — this is coverage, not residual', () => {
+    const outline = [3, 3, 119, 3, 119, 118, 118, 118, 118, 4, 4, 4, 4, 119, 3, 119];
+    // Raising maxError must not buy the shape back: the defect was never that the
+    // residual was too tight.
+    for (const maxError of [1.0, 1.4, 2.0, 4.0]) {
+      expect(detectPrimitive(outline, { maxError }), `accepted at maxError ${maxError}`).toBeNull();
+    }
+  });
+
+  it('still accepts a genuinely filled rounded rectangle', () => {
+    // The gate must not cost the shape this fitter exists for. A stadium is the
+    // worst legitimate case — r = h/2 leaves only 1 - (4-pi)/4 = 79% of the box
+    // filled — so the threshold has to sit below that.
+    const w = 120, h = 60, r = 30;
+    const pts: number[] = [];
+    const STEPS = 256;
+    for (let i = 0; i < STEPS; i++) {
+      const t = (i / STEPS) * Math.PI * 2;
+      // Superellipse-free construction: walk the true stadium outline.
+      const cx = w / 2, cy = h / 2;
+      const ux = Math.cos(t), uy = Math.sin(t);
+      const ex = Math.max(0, w / 2 - r), ey = Math.max(0, h / 2 - r);
+      pts.push(Math.round(cx + Math.sign(ux) * Math.min(Math.abs(ux) * w, ex) + ux * r));
+      pts.push(Math.round(cy + Math.sign(uy) * Math.min(Math.abs(uy) * h, ey) + uy * r));
+    }
+    const prim = detectPrimitive(pts, { maxError: 2.0 });
+    // Either a roundrect or an ellipse is a defensible read of a stadium; what it
+    // must NOT be is null, which would mean the gate rejected a filled shape.
+    expect(prim, 'the gate rejected a genuinely filled shape').not.toBeNull();
+  });
+});
