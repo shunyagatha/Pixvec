@@ -356,6 +356,14 @@ That flag is not a detail. On one 200×200 disc the *same artwork* scores **29.9
 
 For a full head-to-head against potrace, imagetracerjs and vtracer on a shared corpus, `npm run compare` in a clone of this repo runs the whole panel; `node scripts/fetch-corpus.mjs` fetches the images with their provenance and licences recorded.
 
+**Enter your own tracer.** The scoring was always tool-agnostic; the entrant list was not. Pass a command and it joins every panel, measured exactly like the rest:
+
+```bash
+npm run compare -- --tool "mytracer=/path/to/bin --input {in} --output {out}"
+```
+
+`{in}` receives a PNG, `{out}` is where the SVG is expected, and the flag is repeatable. The exact command is printed above the table, because a comparison is a claim about someone else’s software and the reader should be able to check how it was invoked.
+
 ## How it works
 
 ### `pixel` — exact geometry from flat artwork

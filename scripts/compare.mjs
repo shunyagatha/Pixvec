@@ -271,6 +271,67 @@ const vtracerCli = async (_file, source) => {
   }
 };
 
+/**
+ * Entrants supplied from the command line, so a rival tracer can be measured
+ * without editing this file.
+ *
+ *   npm run compare -- --tool 'mytracer=/path/to/bin --in {in} --out {out}'
+ *
+ * `{in}` receives a PNG and `{out}` is where the SVG is expected. Repeatable.
+ *
+ * This exists because the harness was tool-agnostic in its scoring and closed
+ * in its entrant list: `score()` has always taken any SVG from any producer and
+ * rendered it on the same white ground with the same metrics, but the list of
+ * competitors was hard-coded, so "run it yourself" meant "fork it yourself".
+ *
+ * The provenance line is not decoration. A comparison table is a claim about
+ * someone else's software, and the exact command that produced each row is the
+ * difference between a result and an assertion — the same reason the absent
+ * vtracer row prints a warning rather than quietly leaving vecline unopposed.
+ */
+const externalTools = [];
+for (let i = 0; i < process.argv.length; i++) {
+  if (process.argv[i] !== '--tool') continue;
+  const spec = process.argv[i + 1];
+  const eq = spec ? spec.indexOf('=') : -1;
+  if (eq <= 0) {
+    console.error("--tool expects 'name=command {in} {out}'");
+    process.exit(1);
+  }
+  const name = spec.slice(0, eq).trim();
+  const template = spec.slice(eq + 1).trim();
+  if (!template.includes('{in}') || !template.includes('{out}')) {
+    console.error(`--tool ${name}: the command must contain both {in} and {out}`);
+    process.exit(1);
+  }
+  // Quote-aware, because a naive whitespace split turns
+  // "F:/Open Source Tool/tracer.mjs" into three arguments — and this repo's own
+  // path has a space in it, so that is the normal case rather than the exotic
+  // one. Single and double quotes both group; everything else splits.
+  const parts = (template.match(/"[^"]*"|'[^']*'|\S+/g) ?? [])
+    .map((p) => (/^".*"$|^'.*'$/.test(p) ? p.slice(1, -1) : p));
+  const run = async (_file, source) => {
+    const dir = await mkdtemp(join(tmpdir(), 'vecline-tool-'));
+    try {
+      const png = join(dir, 'in.png');
+      const svg = join(dir, 'out.svg');
+      await writeFile(png, await toPng(source));
+      const argv = parts.map((p) => p.replace('{in}', png).replace('{out}', svg));
+      await execFileAsync(argv[0], argv.slice(1));
+      return await readFile(svg, 'utf8');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+  externalTools.push([name, run, template]);
+}
+if (externalTools.length > 0) {
+  console.log('External entrants, with the exact command used:');
+  for (const [name, , template] of externalTools) console.log(`  ${name}: ${template}`);
+  console.log();
+}
+const withExternal = (entrants) => [...entrants, ...externalTools.map(([n, r]) => [n, r])];
+
 // vtracer only makes sense in colour, so it joins the colour and photo panels.
 const withVtracer = (entrants) => {
   // Prefer the real released binary; fall back to the npm binding; otherwise
@@ -282,21 +343,21 @@ const withVtracer = (entrants) => {
 
 // The colour/photo panel: every colour tracer, plus vecline's flat trace, its
 // gradient-enabled trace, and its lossless fallback.
-const colourPanel = withVtracer([
+const colourPanel = withExternal(withVtracer([
   ['potrace posterize', (file) => runPosterize(file, { steps: 4 })],
   ['imagetracerjs', tracerjs],
   ['vecline (auto)', veclineTrace],
   ['vecline photo', veclinePhotoPreset],
   ['vecline lossless', veclineLossless],
-]);
+]));
 
 try {
-  await contend('bilevel', bilevelArt(160, 120), [
+  await contend('bilevel', bilevelArt(160, 120), withExternal([
     ['potrace', (file) => runPotrace(file, { threshold: 128 })],
     ['imagetracerjs', tracerjs],
     ['vecline trace', veclineTrace],
     ['vecline lossless', veclineLossless],
-  ]);
+  ]));
 
   await contend('colour art', colourArt(160, 120), colourPanel);
   await contend('photo (synthetic)', photoLike(120, 90), colourPanel);
