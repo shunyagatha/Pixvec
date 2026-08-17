@@ -248,6 +248,30 @@ describe.skipIf(!built)('CLI: --help groups the big commands', () => {
       .toMatch(/\nOptions:\n\s+-h, --help/);
   });
 
+  /**
+   * Help must survive a pipe, whole.
+   *
+   * `process.exit()` does not wait for stdout to drain, and a pipe on macOS holds
+   * 8192 bytes. `vectorize --help` is now 8517, so the last 325 — the entire
+   * trailing `Options:` section — were discarded whenever help was piped or
+   * redirected. It printed in full to a terminal, which is why nobody saw it, and
+   * only the macOS leg of CI ever failed, because Linux pipes hold 64 KB.
+   *
+   * This asserts the property rather than the platform: the output is captured
+   * through a pipe, and it must be complete and end where help ends. Anything
+   * that reintroduces an un-drained exit fails here on every OS whose pipe is
+   * smaller than the help text.
+   */
+  it('delivers the whole of a >8KB help text through a pipe', async () => {
+    const r = await cli(['vectorize', '--help']);
+    expect(r.code).toBe(0);
+    // Guard the guard: if help ever shrinks below a pipe buffer this test stops
+    // proving anything, and should be pointed at a longer command instead.
+    expect(Buffer.byteLength(r.stdout)).toBeGreaterThan(8192);
+    // The last thing help writes. Present => nothing was dropped.
+    expect(r.stdout.trimEnd().endsWith('display help for command')).toBe(true);
+  });
+
   it('does not change commands that declare no groups', async () => {
     // The whole design rests on this: grouping is opt-in per command, and a
     // command that opts out must render exactly as commander would.
