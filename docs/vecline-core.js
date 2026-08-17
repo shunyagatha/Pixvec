@@ -5155,6 +5155,7 @@ function decodeTga(bytes) {
   if (width === 0 || height === 0) throw new Error("TGA has zero dimensions");
   const topDown = (descriptor & 32) !== 0;
   const rightToLeft = (descriptor & 16) !== 0;
+  const attributeBits = descriptor & 15;
   let p = 18 + idLength;
   let colorMap = null;
   if (colorMapType === 1) {
@@ -5163,7 +5164,7 @@ function decodeTga(bytes) {
     for (let i = 0; i < mapLength; i++) {
       const o = p + i * entryBytes;
       const q = (mapFirst + i) * 4;
-      const px = readPixel(bytes, o, mapEntrySize);
+      const px = readPixel(bytes, o, mapEntrySize, attributeBits);
       colorMap[q] = px[0];
       colorMap[q + 1] = px[1];
       colorMap[q + 2] = px[2];
@@ -5192,9 +5193,9 @@ function decodeTga(bytes) {
       pixels[q] = v;
       pixels[q + 1] = v;
       pixels[q + 2] = v;
-      pixels[q + 3] = depth === 16 ? bytes[source + 1] : 255;
+      pixels[q + 3] = depth === 16 && attributeBits > 0 ? bytes[source + 1] : 255;
     } else {
-      const px = readPixel(bytes, source, depth);
+      const px = readPixel(bytes, source, depth, attributeBits);
       pixels[q] = px[0];
       pixels[q + 1] = px[1];
       pixels[q + 2] = px[2];
@@ -5223,6 +5224,18 @@ function decodeTga(bytes) {
       emit2(i, o);
     }
   }
+  if (attributeBits > 0) {
+    let anyOpacity = false;
+    for (let i = 3; i < pixels.length; i += 4) {
+      if (pixels[i] !== 0) {
+        anyOpacity = true;
+        break;
+      }
+    }
+    if (!anyOpacity) {
+      for (let i = 3; i < pixels.length; i += 4) pixels[i] = 255;
+    }
+  }
   for (let y = 0; y < height; y++) {
     const srcY = topDown ? y : height - 1 - y;
     for (let x = 0; x < width; x++) {
@@ -5237,7 +5250,7 @@ function decodeTga(bytes) {
   }
   return { image, bitDepth: depth };
 }
-function readPixel(bytes, offset, depth) {
+function readPixel(bytes, offset, depth, attributeBits) {
   switch (depth) {
     case 8: {
       const v = bytes[offset] ?? 0;
@@ -5247,13 +5260,18 @@ function readPixel(bytes, offset, depth) {
     case 16: {
       const v = u16le(bytes, offset);
       const r = v >> 10 & 31, g = v >> 5 & 31, b = v & 31;
-      const a = depth === 16 && (v & 32768) === 0 ? 0 : 255;
+      const a = depth === 16 && attributeBits > 0 && (v & 32768) === 0 ? 0 : 255;
       return [r << 3 | r >> 2, g << 3 | g >> 2, b << 3 | b >> 2, a];
     }
     case 24:
       return [bytes[offset + 2] ?? 0, bytes[offset + 1] ?? 0, bytes[offset] ?? 0, 255];
     case 32:
-      return [bytes[offset + 2] ?? 0, bytes[offset + 1] ?? 0, bytes[offset] ?? 0, bytes[offset + 3] ?? 255];
+      return [
+        bytes[offset + 2] ?? 0,
+        bytes[offset + 1] ?? 0,
+        bytes[offset] ?? 0,
+        attributeBits > 0 ? bytes[offset + 3] ?? 255 : 255
+      ];
     default:
       throw new Error(`Unsupported TGA bit depth ${depth}`);
   }
