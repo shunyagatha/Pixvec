@@ -2277,8 +2277,10 @@ function bezierAt(bez, t) {
     y: bez[1] * b0 + bez[3] * b1 + bez[5] * b2 + bez[7] * b3
   };
 }
+var DERIV_Q = new Float64Array(6);
+var DERIV_R = new Float64Array(4);
 function derivativeAt(bez, t, order) {
-  const q = new Float64Array(6);
+  const q = DERIV_Q;
   for (let i = 0; i < 3; i++) {
     q[i * 2] = (bez[(i + 1) * 2] - bez[i * 2]) * 3;
     q[i * 2 + 1] = (bez[(i + 1) * 2 + 1] - bez[i * 2 + 1]) * 3;
@@ -2290,7 +2292,7 @@ function derivativeAt(bez, t, order) {
       y: q[1] * mt * mt + q[3] * 2 * mt * t + q[5] * t * t
     };
   }
-  const r = new Float64Array(4);
+  const r = DERIV_R;
   for (let i = 0; i < 2; i++) {
     r[i * 2] = (q[(i + 1) * 2] - q[i * 2]) * 2;
     r[i * 2 + 1] = (q[(i + 1) * 2 + 1] - q[i * 2 + 1]) * 2;

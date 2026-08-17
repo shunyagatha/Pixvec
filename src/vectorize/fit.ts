@@ -777,8 +777,22 @@ function bezierAt(bez: Float64Array, t: number): Point {
 }
 
 /** First or second derivative of the cubic, via its hodograph. */
+/**
+ * Scratch for {@link derivativeAt}, hoisted out of the call.
+ *
+ * This function runs once per Newton–Raphson reparameterisation step, per
+ * point, per fitting iteration — the innermost loop in the fitter — and it was
+ * allocating two typed arrays every time. Same reasoning, and the same safety
+ * argument, as the hoisted scratch in `contour.ts`: the values are written
+ * before they are read on every path, the fitter is strictly single-threaded
+ * (parallelising it was measured and is a large regression), and nothing here
+ * yields, so no second caller can observe a half-filled buffer.
+ */
+const DERIV_Q = new Float64Array(6);
+const DERIV_R = new Float64Array(4);
+
 function derivativeAt(bez: Float64Array, t: number, order: 1 | 2): Point {
-  const q = new Float64Array(6);
+  const q = DERIV_Q;
   for (let i = 0; i < 3; i++) {
     q[i * 2] = (bez[(i + 1) * 2] - bez[i * 2]) * 3;
     q[i * 2 + 1] = (bez[(i + 1) * 2 + 1] - bez[i * 2 + 1]) * 3;
@@ -790,7 +804,7 @@ function derivativeAt(bez: Float64Array, t: number, order: 1 | 2): Point {
       y: q[1] * mt * mt + q[3] * 2 * mt * t + q[5] * t * t,
     };
   }
-  const r = new Float64Array(4);
+  const r = DERIV_R;
   for (let i = 0; i < 2; i++) {
     r[i * 2] = (q[(i + 1) * 2] - q[i * 2]) * 2;
     r[i * 2 + 1] = (q[(i + 1) * 2 + 1] - q[i * 2 + 1]) * 2;
