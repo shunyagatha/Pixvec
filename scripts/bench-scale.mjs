@@ -82,6 +82,11 @@ const CANDIDATES = [
   { id: 'trace-default', opts: { mode: 'trace' } },
   { id: 'trace-tol1.2', opts: { mode: 'trace', trace: { tolerance: 1.2 } } },
   { id: 'trace-tol2', opts: { mode: 'trace', trace: { tolerance: 2 } } },
+  // Sub-pixel refinement, at the shipped tolerance and at values where the
+  // fitter can actually engage once its input is no longer a staircase.
+  { id: 'sub-default', opts: { mode: 'trace', trace: { subpixel: true } } },
+  { id: 'sub-tol1.2', opts: { mode: 'trace', trace: { subpixel: true, tolerance: 1.2 } } },
+  { id: 'sub-tol2', opts: { mode: 'trace', trace: { subpixel: true, tolerance: 2 } } },
 ];
 
 // ------------------------------------------------------------------- rendering

@@ -361,6 +361,7 @@ interface VectorizeCliOptions {
   strokeWidth?: number;
   turnPolicy?: string;
   extendUnder?: boolean;
+  subpixel?: boolean;
   maxRectsPerPixel?: number;
   fillStrategy?: string;
   rightAngle?: boolean;
@@ -492,6 +493,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       strokeWidth: o.strokeWidth,
       turnPolicy: o.turnPolicy as never,
       extendUnder: o.extendUnder,
+      subpixel: o.subpixel,
       fillStrategy: o.fillStrategy as never,
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
@@ -2070,6 +2072,7 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
+  .option('--subpixel', 'place boundary vertices where the antialiasing says the edge actually fell, instead of on the pixel lattice — this is what lets the curve fitter engage at all (no effect on hard-edged art, where the lattice is already exact)')
   .optionsGroup('Pixel mode:')
   .option(
     '--max-rects-per-pixel <ratio>',
