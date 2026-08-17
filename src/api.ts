@@ -77,11 +77,27 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake
   // `autoTracePreset` documents having removed — and `npm run compare` caught
   // the result: a preset named "photo" was *worse than auto on photographs*.
-  // Measured on the corpus, this configuration beats the old one on every axis
-  // at once (parrots 0.7892 vs 0.7868 SSIM, 251 vs 261 KB, 25 vs 30 s;
-  // portrait 0.7140 vs 0.6983, 329 vs 473 KB, 63 vs 91 s), because despeckling
-  // at 16px erases exactly the fine detail — feathers, hair, foliage — that a
-  // photograph is made of, and the extra 16 colours never paid for themselves.
+  // Despeckling at 16px erases exactly the fine detail — feathers, hair,
+  // foliage — that a photograph is made of, and the extra 16 colours never paid
+  // for themselves.
+  //
+  // Re-measured against the shipped path, because the figures recorded here
+  // originally were not reproducible from it. The old arm still reproduces
+  // exactly (parrots 0.7868 SSIM / 262 KB, portrait 0.6983 / 439 KB) since it
+  // passes an explicit `minArea`. This preset does not, and "no override" no
+  // longer means "adaptive": `TRACE_DEFAULTS.minArea` is 0 and is spread over
+  // every call site below, while the adaptive floor only applies when `minArea`
+  // is `undefined`. So the preset now traces with no despeckling at all.
+  //
+  // What that actually buys, measured:
+  //
+  //   parrots   0.8340 SSIM / 640 KB   vs old 0.7868 / 262 KB
+  //   portrait  0.9127 SSIM / 1366 KB  vs old 0.6983 / 439 KB
+  //
+  // Quality is far ahead — the point above still holds, and more strongly than
+  // the original numbers suggested. But this is a trade, not a clean sweep: it
+  // costs 2.4x to 3.1x the bytes. Any claim that it wins "on every axis at
+  // once" is false and should not be restored.
   photo: { colors: 48, gradients: true },
   detailed: { colors: 48, minArea: 2, tolerance: 0.3, fitError: 0.3, cornerAngle: 60 },
 };
