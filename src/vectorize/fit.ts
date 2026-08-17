@@ -749,20 +749,47 @@ function reparameterize(
   first: number, last: number,
   u: Float64Array, bez: Float64Array,
 ): Float64Array {
-  const out = new Float64Array(u.length);
+  // Written in place. Each output depends only on the input at the *same*
+  // index, so there is no read-after-write hazard within the loop, and the one
+  // caller (`fitCubic`) drops the old parameterisation the moment this returns.
   for (let i = first; i <= last; i++) {
-    out[i - first] = newtonRaphsonRootFind(bez, x[i], y[i], u[i - first]);
+    u[i - first] = newtonRaphsonRootFind(bez, x[i], y[i], u[i - first]);
   }
-  return out;
+  return u;
 }
 
+/**
+ * One Newton step, written out longhand rather than composed from helpers.
+ *
+ * This is the innermost expression in the fitter — four million calls on a
+ * single photograph at the `logo` preset. Calling `bezierAt` and `derivativeAt`
+ * here cost three `{x, y}` objects per call plus two typed-array allocations
+ * inside `derivativeAt`, and computed the hodograph twice because the two
+ * derivative calls could not see each other's work.
+ *
+ * The arithmetic is reproduced term for term, in the same association order, so
+ * the result is bit-identical — verified as unchanged sha256 across the corpus.
+ * `bezierAt` stays for `computeMaxError`, which is not hot.
+ */
 function newtonRaphsonRootFind(bez: Float64Array, px: number, py: number, u: number): number {
-  const q = bezierAt(bez, u);
-  const d1 = derivativeAt(bez, u, 1);
-  const d2 = derivativeAt(bez, u, 2);
+  const b0 = B0(u), b1 = B1(u), b2 = B2(u), b3 = B3(u);
+  const qx = bez[0] * b0 + bez[2] * b1 + bez[4] * b2 + bez[6] * b3;
+  const qy = bez[1] * b0 + bez[3] * b1 + bez[5] * b2 + bez[7] * b3;
 
-  const numerator = (q.x - px) * d1.x + (q.y - py) * d1.y;
-  const denominator = d1.x * d1.x + d1.y * d1.y + (q.x - px) * d2.x + (q.y - py) * d2.y;
+  // The hodograph, once — both derivatives are read off it.
+  const h0x = (bez[2] - bez[0]) * 3, h0y = (bez[3] - bez[1]) * 3;
+  const h1x = (bez[4] - bez[2]) * 3, h1y = (bez[5] - bez[3]) * 3;
+  const h2x = (bez[6] - bez[4]) * 3, h2y = (bez[7] - bez[5]) * 3;
+
+  const mt = 1 - u;
+  const d1x = h0x * mt * mt + h1x * 2 * mt * u + h2x * u * u;
+  const d1y = h0y * mt * mt + h1y * 2 * mt * u + h2y * u * u;
+
+  const d2x = ((h1x - h0x) * 2) * mt + ((h2x - h1x) * 2) * u;
+  const d2y = ((h1y - h0y) * 2) * mt + ((h2y - h1y) * 2) * u;
+
+  const numerator = (qx - px) * d1x + (qy - py) * d1y;
+  const denominator = d1x * d1x + d1y * d1y + (qx - px) * d2x + (qy - py) * d2y;
 
   if (denominator === 0) return u;
   return u - numerator / denominator;
@@ -776,44 +803,10 @@ function bezierAt(bez: Float64Array, t: number): Point {
   };
 }
 
-/** First or second derivative of the cubic, via its hodograph. */
-/**
- * Scratch for {@link derivativeAt}, hoisted out of the call.
- *
- * This function runs once per Newton–Raphson reparameterisation step, per
- * point, per fitting iteration — the innermost loop in the fitter — and it was
- * allocating two typed arrays every time. Same reasoning, and the same safety
- * argument, as the hoisted scratch in `contour.ts`: the values are written
- * before they are read on every path, the fitter is strictly single-threaded
- * (parallelising it was measured and is a large regression), and nothing here
- * yields, so no second caller can observe a half-filled buffer.
- */
-const DERIV_Q = new Float64Array(6);
-const DERIV_R = new Float64Array(4);
-
-function derivativeAt(bez: Float64Array, t: number, order: 1 | 2): Point {
-  const q = DERIV_Q;
-  for (let i = 0; i < 3; i++) {
-    q[i * 2] = (bez[(i + 1) * 2] - bez[i * 2]) * 3;
-    q[i * 2 + 1] = (bez[(i + 1) * 2 + 1] - bez[i * 2 + 1]) * 3;
-  }
-  if (order === 1) {
-    const mt = 1 - t;
-    return {
-      x: q[0] * mt * mt + q[2] * 2 * mt * t + q[4] * t * t,
-      y: q[1] * mt * mt + q[3] * 2 * mt * t + q[5] * t * t,
-    };
-  }
-  const r = DERIV_R;
-  for (let i = 0; i < 2; i++) {
-    r[i * 2] = (q[(i + 1) * 2] - q[i * 2]) * 2;
-    r[i * 2 + 1] = (q[(i + 1) * 2 + 1] - q[i * 2 + 1]) * 2;
-  }
-  return {
-    x: r[0] * (1 - t) + r[2] * t,
-    y: r[1] * (1 - t) + r[3] * t,
-  };
-}
+// The cubic's derivatives used to live here as a `derivativeAt(bez, t, order)`
+// helper with hoisted scratch arrays. `newtonRaphsonRootFind` was its only
+// caller, and inlining it there removed the scratch along with the function:
+// the hodograph is now computed once per step instead of once per derivative.
 
 // Cubic Bernstein basis.
 function B0(t: number): number { const m = 1 - t; return m * m * m; }

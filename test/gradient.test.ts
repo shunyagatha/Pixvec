@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { trace } from '../src/vectorize/trace.js';
 import { detectGradients, GRAD_BASE } from '../src/vectorize/gradient.js';
-import { quantize, quantizeAlpha, NearestColor } from '../src/vectorize/quantize.js';
+import { quantize, quantizeAlpha, NearestColor, type Palette } from '../src/vectorize/quantize.js';
 import { createImage, setPixel, flatArtwork, pixelArt } from './fixtures.js';
+import { srgbToOklab } from '../src/color.js';
 import type { RasterImage } from '../src/types.js';
 
 /**
@@ -245,5 +246,94 @@ describe('gradient impossibility bound', () => {
     const withGradients = trace(img, { colors: 32, gradients: true });
     const flat = trace(img, { colors: 32, gradients: false });
     expect(withGradients.svg).toBe(flat.svg);
+  });
+});
+
+describe('NearestColor direct-indexed table', () => {
+  /** A palette of exactly `count` distinct colours, spread over the cube. */
+  function paletteOf(count: number): Palette {
+    const rgb = new Uint8Array(count * 3);
+    const lab = new Float64Array(count * 3);
+    const scratch = new Float64Array(3);
+    for (let c = 0; c < count; c++) {
+      // Bit-reversed spread so consecutive indices are far apart perceptually,
+      // which stops the "nearest" answer being trivially the previous index.
+      const v = ((c * 2654435761) >>> 0) % 0xffffff;
+      const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
+      rgb[c * 3] = r; rgb[c * 3 + 1] = g; rgb[c * 3 + 2] = b;
+      srgbToOklab(r, g, b, scratch);
+      lab[c * 3] = scratch[0]; lab[c * 3 + 1] = scratch[1]; lab[c * 3 + 2] = scratch[2];
+    }
+    return { rgb, lab, count };
+  }
+
+  // Above the 250 000-pixel threshold, so the table is used rather than the Map.
+  const BIG = 300_000;
+
+  // 255 takes the byte table; 256 is the boundary that forces the 16-bit one,
+  // because a byte has no value left over for "unresolved" once every index is
+  // in use. Both widths must answer identically.
+  for (const count of [2, 16, 255, 256]) {
+    it(`agrees with a linear scan at ${count} colours, on both miss and hit`, () => {
+      const palette = paletteOf(count);
+      const near = new NearestColor(palette, BIG);
+      const scratch = new Float64Array(3);
+
+      const brute = (r: number, g: number, b: number): number => {
+        srgbToOklab(r, g, b, scratch);
+        let best = 0, bestD = Infinity;
+        for (let c = 0; c < count; c++) {
+          const dL = scratch[0] - palette.lab[c * 3];
+          const dA = scratch[1] - palette.lab[c * 3 + 1];
+          const dB = scratch[2] - palette.lab[c * 3 + 2];
+          const d = dL * dL + dA * dA + dB * dB;
+          if (d < bestD) { bestD = d; best = c; }
+        }
+        return best;
+      };
+
+      const seen = new Set<number>();
+      for (let i = 0; i < 4096; i++) {
+        const v = ((i * 2246822519) >>> 0) % 0xffffff;
+        const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
+        const first = near.index(r, g, b);   // cache miss: computes and stores
+        const second = near.index(r, g, b);  // cache hit: reads back what it stored
+        expect(first).toBe(brute(r, g, b));
+        // The encoding's real failure mode is silent: a sentinel that collides
+        // with a valid index makes the stored value unreadable, so the hit path
+        // disagrees with the miss path. Every index must survive the round trip.
+        expect(second).toBe(first);
+        seen.add(first);
+      }
+      // Guard the guard: a palette this size must actually exercise a spread of
+      // indices, or the round-trip assertion above proves very little.
+      expect(seen.size).toBeGreaterThan(Math.min(count, 8) / 2);
+    });
+  }
+
+  it('caches the top palette index, which a byte-wide table could not', () => {
+    // The failure this guards against is invisible through the return value. If
+    // the sentinel collided with a real index, that entry would read back as
+    // "unresolved" and quietly re-run the linear scan on every pixel of that
+    // colour — the right answer, at 256x the cost. So assert cacheability, not
+    // correctness: `search()` is the only thing that reads `palette.count`, so
+    // counting reads of it counts scans.
+    let scans = 0;
+    const base = paletteOf(256);
+    const probe: Palette = {
+      rgb: base.rgb,
+      lab: base.lab,
+      get count(): number { scans++; return base.count; },
+    };
+    const near = new NearestColor(probe, BIG);
+
+    // 255 is the highest index a 256-entry palette can return, and the exact
+    // value a byte table would have to spend on its sentinel.
+    const r = base.rgb[255 * 3], g = base.rgb[255 * 3 + 1], b = base.rgb[255 * 3 + 2];
+    expect(near.index(r, g, b)).toBe(255);
+
+    scans = 0;
+    expect(near.index(r, g, b)).toBe(255);
+    expect(scans).toBe(0); // a second look must be a table read, not a rescan
   });
 });
