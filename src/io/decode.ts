@@ -22,6 +22,31 @@ import { findDecoder, registeredFormats, type CustomDecoder } from '../codecs.js
  */
 export const DEFAULT_MAX_INPUT_PIXELS = 268_402_689;
 
+/**
+ * The ceiling every decode falls back to when a caller does not name one.
+ *
+ * Mutable so a host process can lower it once instead of threading an option
+ * through every call site — the CLI reaches this decoder from twenty places,
+ * and a `--max-pixels` wired through nineteen of them would be a limit that
+ * lies. An explicit `limitInputPixels` always wins, so a library caller is
+ * never affected by what some other part of the process decided.
+ *
+ * Deliberately settable only downward-or-upward by an explicit call: it is not
+ * read from the environment, because a decompression guard that a stray
+ * variable can switch off is not a guard.
+ */
+let processMaxInputPixels: number | false = DEFAULT_MAX_INPUT_PIXELS;
+
+/** Set the fallback ceiling for decodes that do not specify one. */
+export function setDefaultMaxInputPixels(limit: number | false): void {
+  processMaxInputPixels = limit;
+}
+
+/** The fallback ceiling currently in force. */
+export function getDefaultMaxInputPixels(): number | false {
+  return processMaxInputPixels;
+}
+
 export interface DecodeOptions {
   /**
    * Apply the EXIF orientation tag so the pixels match what a viewer shows.
@@ -88,7 +113,7 @@ export async function decodeRaster(
     );
   }
 
-  const { applyOrientation = true, limitInputPixels = DEFAULT_MAX_INPUT_PIXELS } = opts;
+  const { applyOrientation = true, limitInputPixels = processMaxInputPixels } = opts;
 
   // Formats libvips was not built with are handled in pure TypeScript. They are
   // identified by signature first, because libvips would otherwise reject them

@@ -24,6 +24,10 @@ import { centerlineTrace, centerlinePolylines } from '../vectorize/centerline.js
 import { traceGeometry, toDxf, toEps, toPdf, toGcode } from '../io/export/index.js';
 import { extractPalette } from '../vectorize/quantize.js';
 import { blurHash } from '../placeholder/index.js';
+import { parseCssColor } from '../color.js';
+import { extractEmbedded } from '../vectorize/embed.js';
+import { optimizeSvg } from '../svg/optimize.js';
+import { toComponent } from '../emit/component.js';
 import { diffImages } from '../diff.js';
 import { smartCrop, cropImage } from '../crop.js';
 import { isPdf, renderPdfPages, countPdfPages, resolvePageIndices } from '../io/pdf.js';
@@ -192,6 +196,66 @@ const TOOLS = [
         output: { type: 'string', description: 'Destination path; its extension chooses the target format' },
       },
       required: ['input', 'output'],
+    }),
+  },
+  {
+    name: 'rasterize',
+    description:
+      'Render an SVG to a raster image (PNG/JPEG/WebP/AVIF/TIFF). The inverse of vectorize, and the '
+      + 'way to see what an SVG actually draws — an agent that has produced or received SVG can turn it '
+      + 'into pixels it is able to inspect.',
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the SVG' },
+        output: { type: 'string', description: 'Destination path; its extension chooses the encoder (default .png)' },
+        width: { type: 'number', description: 'Render width in pixels; height follows the aspect ratio' },
+        background: { type: 'string', description: 'Paint onto this colour, e.g. "#ffffff". SVGs render on transparent by default.' },
+      },
+      required: ['input'],
+    }),
+  },
+  {
+    name: 'extract',
+    description:
+      'Recover the original bitmap from an SVG written by embed/lossless mode, and verify it byte for byte. '
+      + 'This is the proof behind the round-trip claim: the recovered file is hashed and checked against the '
+      + 'digest recorded when the SVG was written, so an agent can demonstrate exactness rather than assert it.',
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to an SVG carrying an embedded bitmap' },
+        output: { type: 'string', description: 'Where to write the recovered file; defaults beside the input with its own extension' },
+      },
+      required: ['input'],
+    }),
+  },
+  {
+    name: 'optimize',
+    description:
+      'Minify an SVG without changing what it draws: round coordinates, drop default attributes, strip the '
+      + 'prolog. Render-preserving by construction, so it is safe on any SVG, not only ours.',
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the SVG' },
+        output: { type: 'string', description: 'Destination path; overwrites the input when omitted' },
+        precision: { type: 'number', description: 'Decimal places kept in path coordinates (0–8)' },
+      },
+      required: ['input'],
+    }),
+  },
+  {
+    name: 'component',
+    description:
+      'Turn an SVG into a React, Vue, Svelte or Solid component, ready to import. Emits typed TSX for React '
+      + 'and Solid and an SFC for Vue and Svelte, and refuses rather than writing source that will not parse.',
+    inputSchema: s({
+      properties: {
+        input: { type: 'string', description: 'Path to the SVG' },
+        output: { type: 'string', description: 'Destination path; defaults beside the input with the framework extension' },
+        framework: { type: 'string', enum: ['react', 'vue', 'svelte', 'solid'], description: 'Target framework (default react)' },
+        name: { type: 'string', description: 'Component name, PascalCase (default Icon)' },
+        currentColor: { type: 'boolean', description: 'Replace solid fills with currentColor so CSS `color` drives it' },
+      },
+      required: ['input'],
     }),
   },
   {
@@ -467,6 +531,69 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       const fmt = formatFromExtension(extname(out)) ?? 'png';
       await writeFile(out, await encodeRaster(cropped, { format: fmt }));
       return `Wrote ${out} — content-aware crop ${rect.width}×${rect.height} at (${rect.x},${rect.y}) from ${src.image.width}×${src.image.height}.`;
+    }
+    case 'rasterize': {
+      const bytes = await readFile(inPath);
+      if (!looksLikeSvg(bytes)) throw new Error('rasterize expects an SVG. Use convert for raster→raster.');
+      const { image } = await rasterizeSvg(new TextDecoder().decode(bytes), {
+        baseDir: baseDirFor(inPath),
+        width: args.width !== undefined ? Number(args.width) : undefined,
+        background: args.background !== undefined ? (parseCssColor(String(args.background)) ?? undefined) : undefined,
+      });
+      const out = String(args.output ?? inPath.replace(/\.svg$/i, '.png'));
+      const fmt = formatFromExtension(extname(out)) ?? 'png';
+      await writeFile(out, await encodeRaster(image, { format: fmt }));
+      return `Wrote ${out} (${fmt}, ${image.width}×${image.height}).`;
+    }
+    case 'extract': {
+      const svg = new TextDecoder().decode(await readFile(inPath));
+      const payload = extractEmbedded(svg);
+      if (!payload) {
+        throw new Error(
+          `${basename(inPath)} carries no embedded bitmap. Only SVGs written by embed or lossless mode do.`,
+        );
+      }
+      const out = String(args.output ?? inPath.replace(/\.svg$/i, `.${payload.extension}`));
+      await writeFile(out, payload.bytes);
+      // The digests are the whole point of this tool, so they are returned
+      // rather than summarised: an agent can show the recovery was exact
+      // instead of repeating our claim that it is.
+      return JSON.stringify({
+        input: inPath,
+        output: out,
+        mime: payload.mime,
+        bytes: payload.bytes.length,
+        sha256: payload.actualSha256,
+        recordedSha256: payload.recordedSha256 ?? null,
+        digestVerified: payload.verified,
+        isOriginalFile: payload.isOriginal,
+      }, null, 2);
+    }
+    case 'optimize': {
+      const before = new TextDecoder().decode(await readFile(inPath));
+      if (!looksLikeSvg(new TextEncoder().encode(before))) throw new Error('optimize expects an SVG.');
+      const after = optimizeSvg(before, {
+        precision: args.precision !== undefined ? Number(args.precision) : undefined,
+      });
+      const out = String(args.output ?? inPath);
+      await writeFile(out, after);
+      const saved = Buffer.byteLength(before, 'utf8') - Buffer.byteLength(after, 'utf8');
+      const pct = saved > 0 ? ((saved / Buffer.byteLength(before, 'utf8')) * 100).toFixed(1) : '0.0';
+      return `Wrote ${out} — ${Buffer.byteLength(before, 'utf8')} → ${Buffer.byteLength(after, 'utf8')} bytes (${pct}% smaller). Rendering is unchanged.`;
+    }
+    case 'component': {
+      const svg = new TextDecoder().decode(await readFile(inPath));
+      const framework = (args.framework ? String(args.framework) : 'react') as
+        'react' | 'vue' | 'svelte' | 'solid';
+      const source = toComponent(svg, {
+        framework,
+        name: args.name !== undefined ? String(args.name) : undefined,
+        currentColor: args.currentColor === true,
+      });
+      const ext = framework === 'vue' ? 'vue' : framework === 'svelte' ? 'svelte' : 'tsx';
+      const out = String(args.output ?? inPath.replace(/\.svg$/i, `.${ext}`));
+      await writeFile(out, source);
+      return `Wrote ${out} (${framework}, ${Buffer.byteLength(source, 'utf8')} bytes).`;
     }
     case 'palette': {
       const src = await loadRaster(await readFile(inPath));
