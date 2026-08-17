@@ -124,3 +124,99 @@ describe('premultiply', () => {
     expect(out[0]).toBe(Math.round(200 * (128 / 255)));
   });
 });
+
+describe('ssimPlane border/interior split', () => {
+  /**
+   * The convolution as it was written before the border and interior were
+   * separated: every tap clamped, no special cases. Kept here deliberately as
+   * an oracle — the split is only worth having if it computes exactly this, and
+   * "exactly" is the right word, because SSIM is the number this project
+   * publishes and re-measures in CI. A drift too small for `toBeCloseTo` is
+   * still a drift in a printed figure.
+   */
+  function referenceSsim(x: Float64Array, y: Float64Array, width: number, height: number): number {
+    const minDim = Math.min(width, height);
+    let win = 11;
+    if (minDim < win) win = minDim % 2 === 0 ? minDim - 1 : minDim;
+    const radius = (win - 1) / 2;
+
+    const kernel = new Float64Array(radius * 2 + 1);
+    let ksum = 0;
+    for (let i = -radius; i <= radius; i++) {
+      const v = Math.exp(-(i * i) / (2 * 1.5 * 1.5));
+      kernel[i + radius] = v; ksum += v;
+    }
+    for (let i = 0; i < kernel.length; i++) kernel[i] /= ksum;
+
+    const n = width * height;
+    const blur = (src: Float64Array): Float64Array => {
+      const tmp = new Float64Array(n), dst = new Float64Array(n);
+      for (let py = 0; py < height; py++) {
+        const row = py * width;
+        for (let px = 0; px < width; px++) {
+          let acc = 0;
+          for (let t = -radius; t <= radius; t++) {
+            let sx = px + t;
+            if (sx < 0) sx = 0; else if (sx >= width) sx = width - 1;
+            acc += src[row + sx] * kernel[t + radius];
+          }
+          tmp[row + px] = acc;
+        }
+      }
+      for (let py = 0; py < height; py++) {
+        for (let px = 0; px < width; px++) {
+          let acc = 0;
+          for (let t = -radius; t <= radius; t++) {
+            let sy = py + t;
+            if (sy < 0) sy = 0; else if (sy >= height) sy = height - 1;
+            acc += tmp[sy * width + px] * kernel[t + radius];
+          }
+          dst[py * width + px] = acc;
+        }
+      }
+      return dst;
+    };
+
+    const xx = new Float64Array(n), yy = new Float64Array(n), xy = new Float64Array(n);
+    for (let i = 0; i < n; i++) { xx[i] = x[i] * x[i]; yy[i] = y[i] * y[i]; xy[i] = x[i] * y[i]; }
+    const muX = blur(x), muY = blur(y), sXX = blur(xx), sYY = blur(yy), sXY = blur(xy);
+
+    const C1 = (0.01 * 255) ** 2, C2 = (0.03 * 255) ** 2;
+    let total = 0, count = 0;
+    for (let py = radius; py < height - radius; py++) {
+      for (let px = radius; px < width - radius; px++) {
+        const i = py * width + px;
+        const mx = muX[i], my = muY[i];
+        const mx2 = mx * mx, my2 = my * my, mxy = mx * my;
+        total += ((2 * mxy + C1) * (2 * (sXY[i] - mxy) + C2))
+          / ((mx2 + my2 + C1) * ((sXX[i] - mx2) + (sYY[i] - my2) + C2));
+        count++;
+      }
+    }
+    return count > 0 ? total / count : 1;
+  }
+
+  // Shapes chosen to exercise the split from both sides: square with a large
+  // interior, strips thinner than the 11-wide window in one axis (so that axis
+  // is *all* border), and one small enough that the window itself shrinks.
+  const SHAPES: Array<[number, number]> = [[64, 64], [97, 41], [41, 97], [8, 40], [40, 8], [5, 5], [12, 12]];
+
+  for (const [w, h] of SHAPES) {
+    it(`matches the fully clamped reference exactly at ${w}x${h}`, () => {
+      const n = w * h;
+      const a = new Float64Array(n), b = new Float64Array(n);
+      const ra = mulberry32(w * 31 + h), rb = mulberry32(h * 17 + w);
+      for (let i = 0; i < n; i++) {
+        a[i] = Math.floor(ra() * 256);
+        // Correlated, not independent: an SSIM near zero would pass this test
+        // for the wrong reason, since both sides would agree on "no structure".
+        b[i] = Math.min(255, Math.max(0, a[i] + (rb() - 0.5) * 40));
+      }
+      const got = ssimPlane(a, b, w, h);
+      expect(got).toBe(referenceSsim(a, b, w, h));
+      // Guard the guard: a degenerate score would make equality meaningless.
+      expect(got).toBeGreaterThan(0.1);
+      expect(got).toBeLessThan(0.999);
+    });
+  }
+});

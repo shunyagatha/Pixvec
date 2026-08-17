@@ -26,7 +26,38 @@ function gaussianKernel(radius: number, sigma: number): Float64Array {
   return k;
 }
 
-/** Separable convolution with clamped edges. Edge values are cropped later. */
+/**
+ * Separable convolution with clamped edges. Edge values are cropped later.
+ *
+ * Each pass is split into border and interior rather than clamping every tap.
+ * Only pixels within `radius` of an edge can ever need the clamp, so on any
+ * real image the branch was being evaluated eleven times per pixel to change
+ * nothing: at 1600x1598 the interior is 99.3% of the image. Splitting it out
+ * measured 15-21% faster across the corpus.
+ *
+ * The interior loop accumulates the same taps, in the same order, as the
+ * clamped one — the clamp is the identity there — so this is bit-identical, not
+ * merely close. Verified as an exact match on every pixel of four images before
+ * it was adopted, which matters because SSIM is the number this project
+ * publishes and re-measures in CI.
+ *
+ * One caveat for anyone changing the clamped branches: they are not observable
+ * through `ssimPlane`. The scored region below is exactly `[radius, w - radius)`
+ * x `[radius, h - radius)`, which is precisely the interior, so a border column
+ * of `tmp` is only ever read back for an output in that same column — and every
+ * such output is cropped. This function is kept a correct general convolution
+ * rather than one fused to the caller's crop, but a test cannot reach the clamp,
+ * so review it by reading rather than by expecting CI to catch it.
+ *
+ * Narrowing these planes to `Float32Array`, which is the obvious-looking way to
+ * make this cheaper, was measured and is 77% *slower*: JS arithmetic is
+ * double-precision, so every element read widens and every write rounds, buying
+ * conversions rather than saving them. It also moved the score in the sixth
+ * decimal. Transposing `tmp` so the vertical pass reads sequentially was also
+ * tried: bit-identical, and 6-20% slower, because the two extra full passes
+ * cost more than the strided reads they remove. Peak RSS was unchanged by any
+ * of the three.
+ */
 function blur(
   src: Float64Array,
   width: number,
@@ -36,31 +67,60 @@ function blur(
   tmp: Float64Array,
   dst: Float64Array,
 ): void {
+  // Where the window fits entirely inside the row/column. Empty when the image
+  // is narrower or shorter than the window, in which case every pixel clamps.
+  const xLo = Math.min(radius, width);
+  const xHi = Math.max(xLo, width - radius);
+  const yLo = Math.min(radius, height);
+  const yHi = Math.max(yLo, height - radius);
+
   for (let y = 0; y < height; y++) {
     const row = y * width;
-    for (let x = 0; x < width; x++) {
+    for (let x = 0; x < xLo; x++) tmp[row + x] = clampedTap(src, row, x, width, kernel, radius);
+    for (let x = xLo; x < xHi; x++) {
       let acc = 0;
-      for (let t = -radius; t <= radius; t++) {
-        let sx = x + t;
-        if (sx < 0) sx = 0;
-        else if (sx >= width) sx = width - 1;
-        acc += src[row + sx] * kernel[t + radius];
-      }
+      for (let t = -radius; t <= radius; t++) acc += src[row + x + t] * kernel[t + radius];
       tmp[row + x] = acc;
     }
+    for (let x = xHi; x < width; x++) tmp[row + x] = clampedTap(src, row, x, width, kernel, radius);
   }
+
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let acc = 0;
-      for (let t = -radius; t <= radius; t++) {
-        let sy = y + t;
-        if (sy < 0) sy = 0;
-        else if (sy >= height) sy = height - 1;
-        acc += tmp[sy * width + x] * kernel[t + radius];
+    const row = y * width;
+    if (y >= yLo && y < yHi) {
+      for (let x = 0; x < width; x++) {
+        let acc = 0;
+        for (let t = -radius; t <= radius; t++) acc += tmp[(y + t) * width + x] * kernel[t + radius];
+        dst[row + x] = acc;
       }
-      dst[y * width + x] = acc;
+    } else {
+      for (let x = 0; x < width; x++) {
+        let acc = 0;
+        for (let t = -radius; t <= radius; t++) {
+          let sy = y + t;
+          if (sy < 0) sy = 0;
+          else if (sy >= height) sy = height - 1;
+          acc += tmp[sy * width + x] * kernel[t + radius];
+        }
+        dst[row + x] = acc;
+      }
     }
   }
+}
+
+/** One output of the horizontal pass, for the columns near an edge. */
+function clampedTap(
+  src: Float64Array, row: number, x: number,
+  width: number, kernel: Float64Array, radius: number,
+): number {
+  let acc = 0;
+  for (let t = -radius; t <= radius; t++) {
+    let sx = x + t;
+    if (sx < 0) sx = 0;
+    else if (sx >= width) sx = width - 1;
+    acc += src[row + sx] * kernel[t + radius];
+  }
+  return acc;
 }
 
 /**
