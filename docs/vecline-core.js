@@ -2255,18 +2255,25 @@ function computeMaxError(x, y, first, last, bez, u) {
   return { maxError: Math.sqrt(maxError), splitPoint };
 }
 function reparameterize(x, y, first, last, u, bez) {
-  const out = new Float64Array(u.length);
   for (let i = first; i <= last; i++) {
-    out[i - first] = newtonRaphsonRootFind(bez, x[i], y[i], u[i - first]);
+    u[i - first] = newtonRaphsonRootFind(bez, x[i], y[i], u[i - first]);
   }
-  return out;
+  return u;
 }
 function newtonRaphsonRootFind(bez, px, py, u) {
-  const q = bezierAt(bez, u);
-  const d1 = derivativeAt(bez, u, 1);
-  const d2 = derivativeAt(bez, u, 2);
-  const numerator = (q.x - px) * d1.x + (q.y - py) * d1.y;
-  const denominator = d1.x * d1.x + d1.y * d1.y + (q.x - px) * d2.x + (q.y - py) * d2.y;
+  const b0 = B0(u), b1 = B1(u), b2 = B2(u), b3 = B3(u);
+  const qx = bez[0] * b0 + bez[2] * b1 + bez[4] * b2 + bez[6] * b3;
+  const qy = bez[1] * b0 + bez[3] * b1 + bez[5] * b2 + bez[7] * b3;
+  const h0x = (bez[2] - bez[0]) * 3, h0y = (bez[3] - bez[1]) * 3;
+  const h1x = (bez[4] - bez[2]) * 3, h1y = (bez[5] - bez[3]) * 3;
+  const h2x = (bez[6] - bez[4]) * 3, h2y = (bez[7] - bez[5]) * 3;
+  const mt = 1 - u;
+  const d1x = h0x * mt * mt + h1x * 2 * mt * u + h2x * u * u;
+  const d1y = h0y * mt * mt + h1y * 2 * mt * u + h2y * u * u;
+  const d2x = (h1x - h0x) * 2 * mt + (h2x - h1x) * 2 * u;
+  const d2y = (h1y - h0y) * 2 * mt + (h2y - h1y) * 2 * u;
+  const numerator = (qx - px) * d1x + (qy - py) * d1y;
+  const denominator = d1x * d1x + d1y * d1y + (qx - px) * d2x + (qy - py) * d2y;
   if (denominator === 0) return u;
   return u - numerator / denominator;
 }
@@ -2275,31 +2282,6 @@ function bezierAt(bez, t) {
   return {
     x: bez[0] * b0 + bez[2] * b1 + bez[4] * b2 + bez[6] * b3,
     y: bez[1] * b0 + bez[3] * b1 + bez[5] * b2 + bez[7] * b3
-  };
-}
-var DERIV_Q = new Float64Array(6);
-var DERIV_R = new Float64Array(4);
-function derivativeAt(bez, t, order) {
-  const q = DERIV_Q;
-  for (let i = 0; i < 3; i++) {
-    q[i * 2] = (bez[(i + 1) * 2] - bez[i * 2]) * 3;
-    q[i * 2 + 1] = (bez[(i + 1) * 2 + 1] - bez[i * 2 + 1]) * 3;
-  }
-  if (order === 1) {
-    const mt = 1 - t;
-    return {
-      x: q[0] * mt * mt + q[2] * 2 * mt * t + q[4] * t * t,
-      y: q[1] * mt * mt + q[3] * 2 * mt * t + q[5] * t * t
-    };
-  }
-  const r = DERIV_R;
-  for (let i = 0; i < 2; i++) {
-    r[i * 2] = (q[(i + 1) * 2] - q[i * 2]) * 2;
-    r[i * 2 + 1] = (q[(i + 1) * 2 + 1] - q[i * 2 + 1]) * 2;
-  }
-  return {
-    x: r[0] * (1 - t) + r[2] * t,
-    y: r[1] * (1 - t) + r[3] * t
   };
 }
 function B0(t) {
@@ -2724,8 +2706,11 @@ var NearestColor = class {
     __publicField(this, "cache");
     __publicField(this, "map");
     __publicField(this, "scratch", new Float64Array(3));
+    /** The table value meaning "not resolved yet" — depends on the element width. */
+    __publicField(this, "unset", -1);
     if (expectedPixels > 25e4) {
-      this.cache = new Int16Array(1 << 24).fill(-1);
+      this.unset = palette.count < 256 ? 255 : -1;
+      this.cache = palette.count < 256 ? new Uint8Array(1 << 24).fill(255) : new Int16Array(1 << 24).fill(-1);
       this.map = null;
     } else {
       this.cache = null;
@@ -2736,7 +2721,7 @@ var NearestColor = class {
     const key = r << 16 | g << 8 | b;
     if (this.cache) {
       const hit2 = this.cache[key];
-      if (hit2 >= 0) return hit2;
+      if (hit2 !== this.unset) return hit2;
       const found2 = this.search(r, g, b);
       this.cache[key] = found2;
       return found2;
