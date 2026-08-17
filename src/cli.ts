@@ -2371,11 +2371,12 @@ program
 
 program
   .command('animate')
-  .description('Trace an animated GIF or WebP into one CSS-animated SVG (shared palette, no JS)')
-  // APNG is deliberately not advertised: frames come from whatever libvips opens
-  // with `animated: true`, and the prebuilt sharp binary does not expose APNG
-  // pages, so an APNG silently yields a single-frame SVG.
-  .argument('<input>', 'animated GIF or WebP')
+  .description('Trace an animated GIF, APNG or WebP into one CSS-animated SVG (shared palette, no JS)')
+  // APNG is now advertised because it is now actually read. libvips reports no
+  // page count for one at all, so APNG frames are recovered and composited by
+  // `src/io/formats/apng.ts` instead; before that an APNG silently yielded a
+  // single-frame SVG with no indication the rest had been dropped.
+  .argument('<input>', 'animated GIF, APNG or WebP')
   .option('-o, --output <file>', 'output SVG path (default <input>.svg)')
   .option('-c, --colors <n>', 'palette size shared across frames', intArg('--colors', 2, 256), 16)
   .option('--max-frames <n>', 'cap frames (sampled evenly) to bound size', intArg('--max-frames', 1, 1000))

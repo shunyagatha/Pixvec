@@ -28,6 +28,11 @@ export function i16le(b: Uint8Array, o: number): number {
   return (u16le(b, o) << 16) >> 16;
 }
 
+/** Big-endian u32. PNG and every chunk length inside it are big-endian. */
+export function u32be(b: Uint8Array, o: number): number {
+  return (((b[o] ?? 0) << 24) | ((b[o + 1] ?? 0) << 16) | ((b[o + 2] ?? 0) << 8) | (b[o + 3] ?? 0)) >>> 0;
+}
+
 export function u32le(b: Uint8Array, o: number): number {
   // The final byte is added rather than shifted: `<< 24` would produce a signed
   // result, turning any value above 2^31 negative.
