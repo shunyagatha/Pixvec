@@ -847,6 +847,17 @@ async function runRasterConvert(input: string, output: string, o: SharedCliOptio
   });
   await writeOutput(output, encoded);
 
+  // Say so when frames were discarded.
+  //
+  // The whole raster pipeline is single-frame by architecture — `decodeRaster`
+  // returns one `RasterImage` and `encodeRaster` takes one — so an animated GIF,
+  // WebP or APNG converts to its first frame. That is a defensible limit; what was
+  // not defensible is that it happened in silence. A 36-frame GIF reported
+  // "✓ out.gif  gif → gif  480×360  300.9 KB → 72.9 KB (-76%)" and the -76% was
+  // 35 discarded frames. The decoder has known the true count all along
+  // (`meta.frames`), and `vecline animate` reads every one of them.
+  const droppedFrames = (meta.frames ?? 1) > 1 ? (meta.frames ?? 1) - 1 : 0;
+
   if (o.json) {
     emitJson({
       input,
@@ -857,6 +868,8 @@ async function runRasterConvert(input: string, output: string, o: SharedCliOptio
       height: image.height,
       inputBytes: bytes.length,
       outputBytes: encoded.length,
+      sourceFrames: meta.frames ?? 1,
+      framesWritten: 1,
     });
     return;
   }
@@ -867,6 +880,13 @@ async function runRasterConvert(input: string, output: string, o: SharedCliOptio
       `${formatBytes(bytes.length)} → ${formatBytes(encoded.length)} (${delta >= 0 ? '+' : ''}${delta}%)`,
     )}`,
   );
+  if (droppedFrames > 0) {
+    info(
+      `${yellow('note')} the source has ${meta.frames} frames and this wrote the first one; ` +
+        `${droppedFrames} ${droppedFrames === 1 ? 'frame was' : 'frames were'} not carried over. ` +
+        `Use \`vecline animate\` to keep the animation.`,
+    );
+  }
 }
 
 /** Raster → a non-SVG vector format (DXF/EPS/PDF) via structured trace geometry. */
@@ -1287,12 +1307,18 @@ async function runEdit(input: string, o: EditCliOptions): Promise<void> {
   const encoded = await encodeRaster(edited, { format, quality: o.quality });
   await writeOutput(outPath, encoded);
 
+  // Same single-frame limit as `convert`, and the same duty to say so: editing a
+  // 42-frame GIF wrote one frame and reported only the new dimensions.
+  const droppedFrames = (source.meta.frames ?? 1) > 1 ? (source.meta.frames ?? 1) - 1 : 0;
+
   if (o.json) {
     emitJson({
       input, output: outPath, format,
       from: { width: source.image.width, height: source.image.height },
       to: { width: edited.width, height: edited.height },
       outputBytes: encoded.length,
+      sourceFrames: source.meta.frames ?? 1,
+      framesWritten: 1,
     });
     return;
   }
@@ -1302,6 +1328,13 @@ async function runEdit(input: string, o: EditCliOptions): Promise<void> {
         `${format}  ${formatBytes(encoded.length)}`,
     )}`,
   );
+  if (droppedFrames > 0) {
+    info(
+      `${yellow('note')} the source has ${source.meta.frames} frames and this edited the ` +
+        `first one; ${droppedFrames} ${droppedFrames === 1 ? 'frame was' : 'frames were'} ` +
+        `not carried over.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

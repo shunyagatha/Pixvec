@@ -4987,7 +4987,7 @@ function decodePnm(bytes) {
     for (let i = 0; i < width * height; i++) {
       const o = i * 4;
       if (variant === 1) {
-        const v = ascii.nextInt() ? 0 : 255;
+        const v = ascii.nextBit() ? 0 : 255;
         image.data[o] = v;
         image.data[o + 1] = v;
         image.data[o + 2] = v;
@@ -5047,6 +5047,36 @@ var HeaderReader = class {
   constructor(bytes, offset) {
     this.bytes = bytes;
     this.offset = offset;
+  }
+  /**
+   * One sample of a plain (ASCII) bitmap — a single `0` or `1` character.
+   *
+   * P1 is the one Netpbm variant whose samples are *characters*, not numbers, and
+   * separating whitespace is optional. Real files exploit that: a 128-wide row is
+   * written as `1111111100000...` with nothing between the samples. Reading those
+   * with {@link nextInt} consumes the maximal digit run, so an entire row became
+   * one enormous integer, the payload ran out early, and the file was rejected as
+   * "Malformed Netpbm header: expected a number" — a valid image refused by a
+   * decoder that advertises PBM support.
+   *
+   * P2 and P3 genuinely are whitespace-separated multi-digit values and must keep
+   * using {@link nextInt}; only the bitmap is character-per-sample.
+   */
+  nextBit() {
+    this.skipSeparators();
+    while (this.offset < this.bytes.length) {
+      const c = this.bytes[this.offset];
+      if (c === 48 || c === 49) {
+        this.offset++;
+        return c - 48;
+      }
+      if (isSpace(c) || c === 35) {
+        this.skipSeparators();
+        continue;
+      }
+      throw new Error(`Malformed Netpbm bitmap: expected 0 or 1, got byte 0x${c.toString(16)}`);
+    }
+    throw new Error("Malformed Netpbm bitmap: payload ended before every pixel was read");
   }
   nextInt() {
     this.skipSeparators();
