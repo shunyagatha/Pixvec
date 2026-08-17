@@ -253,3 +253,85 @@ describe('MCP tool contracts', () => {
     }
   });
 });
+
+/**
+ * The tools an agent reaches for.
+ *
+ * The server exposed conversion and measurement but not the four commands that
+ * complete the loop: render an SVG back to pixels, recover an embedded bitmap,
+ * minify, and emit a component. `extract` is the sharpest omission — it is the
+ * byte-exact round-trip proof, so the project's strongest claim was reachable
+ * from the CLI and not from an agent.
+ */
+describe('MCP: the tools that complete the loop', () => {
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const r = await rpc('tools/call', { name, arguments: args });
+    return { isError: r.result.isError === true, text: r.result.content[0].text as string };
+  };
+
+  it('rasterize renders an SVG back to pixels', async () => {
+    const svg = join(outDir, 'r.svg');
+    const png = join(outDir, 'r.png');
+    await writeFile(svg, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 30"><rect width="40" height="30" fill="#d64541"/></svg>');
+    const r = await call('rasterize', { input: svg, output: png, width: 40 });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain('40×30');
+  });
+
+  it('rasterize refuses a raster input rather than guessing', async () => {
+    const r = await call('rasterize', { input: pngPath, output: join(outDir, 'nope.png') });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('expects an SVG');
+  });
+
+  it('extract recovers an embedded bitmap and proves it byte for byte', async () => {
+    // The whole point of the tool: the recovered file is hashed and checked
+    // against the digest recorded when the SVG was written, so an agent can
+    // demonstrate exactness rather than repeat our claim of it.
+    const svg = join(outDir, 'embed.svg');
+    await call('vectorize', { input: pngPath, mode: 'embed', output: svg });
+    const r = await call('extract', { input: svg, output: join(outDir, 'recovered.png') });
+    expect(r.isError).toBe(false);
+    const out = JSON.parse(r.text) as { digestVerified: boolean; sha256: string; recordedSha256: string | null };
+    expect(out.digestVerified).toBe(true);
+    expect(out.sha256).toBe(out.recordedSha256);
+  });
+
+  it('extract says plainly when an SVG carries no bitmap', async () => {
+    const plain = join(outDir, 'plain.svg');
+    await writeFile(plain, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>');
+    const r = await call('extract', { input: plain });
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/embed|lossless/i);
+  });
+
+  it('optimize shrinks an SVG and says by how much', async () => {
+    const svg = join(outDir, 'fat.svg');
+    await writeFile(svg, '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">\n  <path d="M 1.000000 1.000000 L 9.000000 9.000000" fill="#000000"/>\n</svg>\n');
+    const r = await call('optimize', { input: svg, output: join(outDir, 'thin.svg') });
+    expect(r.isError).toBe(false);
+    expect(r.text).toMatch(/smaller/);
+  });
+
+  it('component emits source for each framework', async () => {
+    const svg = join(outDir, 'icon.svg');
+    await writeFile(svg, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#333"/></svg>');
+    for (const framework of ['react', 'vue', 'svelte', 'solid']) {
+      const r = await call('component', { input: svg, output: join(outDir, `C-${framework}.out`), framework, name: 'Mark' });
+      expect(r.isError, `${framework} failed: ${r.text}`).toBe(false);
+      expect(r.text).toContain(framework);
+    }
+  });
+
+  it('describes every property on the new tools too', async () => {
+    const r = await rpc('tools/list');
+    const added = r.result.tools.filter((t: { name: string }) =>
+      ['rasterize', 'extract', 'optimize', 'component'].includes(t.name));
+    expect(added).toHaveLength(4);
+    for (const tool of added) {
+      for (const [key, schema] of Object.entries(tool.inputSchema.properties as Record<string, { description?: string }>)) {
+        expect(schema.description, `${tool.name}.${key} has no description`).toBeTruthy();
+      }
+    }
+  });
+});

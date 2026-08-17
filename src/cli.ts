@@ -9,7 +9,7 @@ import {
   PRESETS, VERSION, loadAnyAsRaster, loadRaster, measureFlatness, rasterize, suggestTitle, vectorize,
 } from './api.js';
 import { parseCssColor } from './color.js';
-import { decodeRaster, looksLikeSvg } from './io/decode.js';
+import { setDefaultMaxInputPixels, decodeRaster, looksLikeSvg } from './io/decode.js';
 import { encodeRaster, formatFromExtension } from './io/encode.js';
 import { baseDirFor, rasterizeSvg } from './io/rasterize.js';
 import { chooseConvertRoute } from './io/route.js';
@@ -1966,7 +1966,16 @@ program
       '  embed  bitmap in an SVG wrapper, bit-exact, not editable geometry\n\n' +
       'SVG to raster is exact at any resolution you ask for.',
   )
-  .version(VERSION, '-v, --version');
+  .version(VERSION, '-v, --version')
+  // Global rather than per-command: this decoder is reached from twenty call
+  // sites, and a cap wired through nineteen of them would be a limit that lies.
+  // The default already refuses a decompression bomb; this is for lowering it
+  // further when handling files from somewhere you do not trust.
+  .option(
+    '--max-pixels <n>',
+    'refuse images larger than this many pixels (default 268402689)',
+    intArg('--max-pixels', 1, 4_294_967_295),
+  );
 
 // Three exit codes, and the difference between the last two is the point of
 // having them. "I could not do this" and "I did it, and the answer is no" are
@@ -2528,8 +2537,11 @@ program
 // through two dozen action handlers this reads it once, before any of them run.
 // It has to happen here because `fail()` and the catch below both report errors
 // without ever seeing the command's own options object.
-program.hook('preAction', (_thisCommand, actionCommand) => {
+program.hook('preAction', (thisCommand, actionCommand) => {
   jsonRequested = Boolean((actionCommand.opts() as { json?: boolean }).json);
+  // Global options live on the program, not the subcommand.
+  const max = (thisCommand.opts() as { maxPixels?: number }).maxPixels;
+  if (max !== undefined) setDefaultMaxInputPixels(max);
 });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
