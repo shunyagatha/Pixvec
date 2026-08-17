@@ -29,6 +29,12 @@ export interface PixelVectorizeOptions {
   background?: boolean;
   /** Refuse to emit more than this many rectangles. */
   maxRects?: number;
+  /**
+   * Refuse once rectangles stop compressing, as a fraction of the pixel count.
+   * Defaults to {@link DEFAULT_MAX_RECTS_PER_PIXEL}. Pass `1` to allow the fully
+   * degenerate one-rectangle-per-pixel case.
+   */
+  maxRectsPerPixel?: number;
   /** Add `shape-rendering="crispEdges"`, belt-and-braces against sloppy renderers. */
   crispEdges?: boolean;
   title?: string;
@@ -45,6 +51,48 @@ export interface PixelVectorizeOutput {
 
 const DEFAULT_MAX_RECTS = 4_000_000;
 
+/**
+ * The share of an image's pixels that may become rectangles before this mode
+ * admits it is the wrong tool.
+ *
+ * `maxRects` alone does not protect anything, because it bounds the wrong
+ * quantity: a 2.56 MP photograph meshes into 1.47 M rectangles, comfortably
+ * under the 4 M ceiling, and then emits a **22.4 MB SVG with 105 058 `<path>`
+ * elements** at 622 MB peak RSS — exit code 0, and a file no browser will do
+ * anything useful with. The cap was set far above the point where the output
+ * stops being worth having.
+ *
+ * A ratio is the right *shape* test, because it is the failure this file
+ * already names: meshing "degenerates towards one rectangle per pixel" on a
+ * photograph. The corpus separates on it with room to spare — 14.6% for a logo,
+ * 23.8% for alpha-blended artwork, 32.8% for a small JPEG, against 57.5% to
+ * 98.0% for every photograph.
+ *
+ * A cap on distinct colours was tried first and is not usable: alpha-dice has
+ * *more* colours (85 732) than the parrots photograph (72 079) while being
+ * exactly the input this mode is for, so any threshold that refuses the photo
+ * also refuses legitimate artwork.
+ */
+export const DEFAULT_MAX_RECTS_PER_PIXEL = 0.5;
+
+/**
+ * The ratio alone is not sufficient, and shipping it alone would have been a
+ * regression.
+ *
+ * A 1 728-pixel patch of noise meshes at ~100% — perfectly degenerate — and
+ * produces a handful of kilobytes: bit-exact, small, and completely usable.
+ * Several tests encode exactly that, and one of them, "honours --prefer
+ * geometry even when the file gets large", is a deliberate promise that a
+ * caller who asks for geometry gets it.
+ *
+ * So the refusal needs both halves: the shape must be wrong *and* the result
+ * must be big enough to hurt. Below this many rectangles the degenerate case
+ * costs a few hundred kilobytes at worst and there is nothing to protect anyone
+ * from. Above it, and still meshing at photographic density, the output is the
+ * multi-megabyte path-soup described above.
+ */
+export const MIN_RECTS_BEFORE_REFUSING = 250_000;
+
 export function vectorizePixels(
   img: RasterImage,
   opts: PixelVectorizeOptions = {},
@@ -53,6 +101,11 @@ export function vectorizePixels(
   const maxRects = opts.maxRects ?? DEFAULT_MAX_RECTS;
 
   const n = width * height;
+  // Checked as the mesh is built, not after: `rectTotal` only grows, so once it
+  // passes the budget the answer cannot change, and refusing there skips both
+  // the rest of the walk and the megabytes of string building behind it.
+  const ratio = opts.maxRectsPerPixel ?? DEFAULT_MAX_RECTS_PER_PIXEL;
+  const rectBudget = Math.max(1, Math.ceil(n * ratio));
   const keys = new Uint32Array(n);
   let opaque = true;
 
@@ -108,9 +161,24 @@ export function vectorizePixels(
 
       if (++rectTotal > maxRects) {
         throw new Error(
-          `Pixel-exact vectorisation would need more than ${maxRects.toLocaleString()} ` +
+          `Pixel-exact vectorisation would need more than ${maxRects.toLocaleString('en-US')} ` +
             `rectangles. This input is photographic; use --mode embed for a lossless ` +
             `result or --mode trace for real curves.`,
+        );
+      }
+      if (rectTotal > rectBudget && rectTotal > MIN_RECTS_BEFORE_REFUSING) {
+        // 'en-US' pinned, as elsewhere: an unqualified toLocaleString follows
+        // the machine's locale, so this same message reads "360,000" on one box
+        // and "3,60,000" on another. Diagnostics should not depend on where
+        // they run.
+        throw new Error(
+          `Pixel-exact vectorisation has stopped compressing this image: ` +
+            `${rectTotal.toLocaleString('en-US')} rectangles for ${n.toLocaleString('en-US')} pixels ` +
+            `(${((rectTotal / n) * 100).toFixed(0)}%, over the ` +
+            `${(ratio * 100).toFixed(0)}% budget). Finishing would emit roughly one ` +
+            `<path> per distinct colour — megabytes of SVG that no renderer handles ` +
+            `well. Use --mode embed for a lossless result or --mode trace for real ` +
+            `curves; raise maxRectsPerPixel if you want the output regardless.`,
         );
       }
     }

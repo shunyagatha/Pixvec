@@ -1132,10 +1132,14 @@ function count(s, re) {
 
 // src/vectorize/pixel.ts
 var DEFAULT_MAX_RECTS = 4e6;
+var DEFAULT_MAX_RECTS_PER_PIXEL = 0.5;
+var MIN_RECTS_BEFORE_REFUSING = 25e4;
 function vectorizePixels(img, opts = {}) {
   const { width, height, data } = img;
   const maxRects = opts.maxRects ?? DEFAULT_MAX_RECTS;
   const n2 = width * height;
+  const ratio = opts.maxRectsPerPixel ?? DEFAULT_MAX_RECTS_PER_PIXEL;
+  const rectBudget = Math.max(1, Math.ceil(n2 * ratio));
   const keys = new Uint32Array(n2);
   let opaque = true;
   for (let i = 0; i < n2; i++) {
@@ -1183,7 +1187,12 @@ function vectorizePixels(img, opts = {}) {
       counts.set(key, (counts.get(key) ?? 0) + w * h);
       if (++rectTotal > maxRects) {
         throw new Error(
-          `Pixel-exact vectorisation would need more than ${maxRects.toLocaleString()} rectangles. This input is photographic; use --mode embed for a lossless result or --mode trace for real curves.`
+          `Pixel-exact vectorisation would need more than ${maxRects.toLocaleString("en-US")} rectangles. This input is photographic; use --mode embed for a lossless result or --mode trace for real curves.`
+        );
+      }
+      if (rectTotal > rectBudget && rectTotal > MIN_RECTS_BEFORE_REFUSING) {
+        throw new Error(
+          `Pixel-exact vectorisation has stopped compressing this image: ${rectTotal.toLocaleString("en-US")} rectangles for ${n2.toLocaleString("en-US")} pixels (${(rectTotal / n2 * 100).toFixed(0)}%, over the ${(ratio * 100).toFixed(0)}% budget). Finishing would emit roughly one <path> per distinct colour \u2014 megabytes of SVG that no renderer handles well. Use --mode embed for a lossless result or --mode trace for real curves; raise maxRectsPerPixel if you want the output regardless.`
         );
       }
     }
@@ -1717,11 +1726,13 @@ function vectorizeExactContours(img, opts = {}) {
   const classOf = /* @__PURE__ */ new Map();
   const classes = new Int32Array(n2);
   const colors = [];
+  let hasVoid = false;
   for (let i = 0; i < n2; i++) {
     const o = i * 4;
     const a = data[o + 3];
     if (a === 0) {
       classes[i] = -1;
+      hasVoid = true;
       continue;
     }
     const key = packRgba(data[o], data[o + 1], data[o + 2], a);
@@ -1736,7 +1747,7 @@ function vectorizeExactContours(img, opts = {}) {
   const comps = connectedComponents(classes, width, height, -1);
   if (comps.count > maxRegions) {
     throw new Error(
-      `Exact contours would need ${comps.count.toLocaleString()} regions, over the ${maxRegions.toLocaleString()} budget. This input is photographic.`
+      `Exact contours would need ${comps.count.toLocaleString("en-US")} regions, over the ${maxRegions.toLocaleString("en-US")} budget. This input is photographic.`
     );
   }
   const loops = traceComponents(comps.labels, width, height, comps.count);
@@ -1765,7 +1776,6 @@ function vectorizeExactContours(img, opts = {}) {
     // antialiasing removes any dependence on the renderer's edge rules.
     shapeRendering: opts.crispEdges === false ? "auto" : "crispEdges"
   });
-  const hasVoid = classes.includes(-1);
   const backgroundClass = opts.background !== false && !hasVoid && ordered.length > 1 ? ordered[0] : -1;
   if (backgroundClass >= 0) doc.addBackground(colors[backgroundClass]);
   for (const cls of ordered) {

@@ -113,12 +113,18 @@ export function vectorizeExactContours(img: RasterImage, opts: ExactOptions = {}
   const classOf = new Map<number, number>();
   const classes = new Int32Array(n);
   const colors: Rgba[] = [];
+  // Noted here rather than rediscovered later: whether anything is transparent
+  // decides the background shortcut below, and this loop is already the only
+  // place that knows. It used to be answered with `classes.includes(-1)`, a
+  // second full pass over a megapixel array to produce one bit.
+  let hasVoid = false;
 
   for (let i = 0; i < n; i++) {
     const o = i * 4;
     const a = data[o + 3];
     if (a === 0) {
       classes[i] = -1;
+      hasVoid = true;
       continue;
     }
     const key = packRgba(data[o], data[o + 1], data[o + 2], a);
@@ -134,8 +140,8 @@ export function vectorizeExactContours(img: RasterImage, opts: ExactOptions = {}
   const comps = connectedComponents(classes, width, height, -1);
   if (comps.count > maxRegions) {
     throw new Error(
-      `Exact contours would need ${comps.count.toLocaleString()} regions, over the ` +
-        `${maxRegions.toLocaleString()} budget. This input is photographic.`,
+      `Exact contours would need ${comps.count.toLocaleString('en-US')} regions, over the ` +
+        `${maxRegions.toLocaleString('en-US')} budget. This input is photographic.`,
     );
   }
 
@@ -167,7 +173,6 @@ export function vectorizeExactContours(img: RasterImage, opts: ExactOptions = {}
     shapeRendering: opts.crispEdges === false ? 'auto' : 'crispEdges',
   });
 
-  const hasVoid = classes.includes(-1);
   const backgroundClass =
     opts.background !== false && !hasVoid && ordered.length > 1 ? ordered[0] : -1;
   if (backgroundClass >= 0) doc.addBackground(colors[backgroundClass]);
