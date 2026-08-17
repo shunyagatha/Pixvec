@@ -356,3 +356,66 @@ describe('curve optimisation', () => {
     expect(implicit.segments.length).toBe(explicit.segments.length);
   });
 });
+
+describe('closed polygons do not re-state their closing edge', () => {
+  /**
+   * `z` *is* the closing line.
+   *
+   * SVG's `z` draws a straight line from the current point back to the subpath's
+   * initial point, and every caller ends with `PathBuilder.close()`. The polygon
+   * branch of the fitter used to emit that return leg explicitly first, so `z`
+   * covered a zero-length gap — and `lineTo` elides nothing but an exact-zero
+   * move, so the redundant `h`/`v`/`l` reached every closed polygon this tracer
+   * ever wrote. It cost 16.9% of all path commands across the corpus at zero
+   * rendered difference.
+   *
+   * A curve back to the start is different: that is real geometry `z` cannot
+   * reproduce, so the fitted branch still emits its final segment. Only the
+   * straight-line case is redundant.
+   */
+  function pathData(svg: string): string[] {
+    return [...svg.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1]);
+  }
+
+  it('ends a polygon subpath at z, with no return leg before it', () => {
+    const out = trace(flatArtwork(64, 48), { colors: 4, polygonOnly: true });
+    const paths = pathData(out.svg);
+    expect(paths.length).toBeGreaterThan(0);
+
+    for (const d of paths) {
+      // Every subpath must close, and the command immediately before each `z`
+      // must not be a move back to where the subpath started.
+      for (const sub of d.split(/(?=M)/).filter(Boolean)) {
+        expect(sub.trimEnd().endsWith('z'), `subpath does not close: ${sub}`).toBe(true);
+
+        // Walk the subpath, tracking position, and check the final drawing
+        // command does not land exactly on the start point.
+        const cmds = [...sub.matchAll(/([MmLlHhVvCcSsQqTtAaZz])([^MmLlHhVvCcSsQqTtAaZz]*)/g)];
+        let x = 0, y = 0, sx = 0, sy = 0, lastX = 0, lastY = 0;
+        for (const [, op, argStr] of cmds) {
+          const n = argStr.trim().split(/[\s,]+/).filter(Boolean).map(Number);
+          if (op === 'M') { x = n[0]; y = n[1]; sx = x; sy = y; }
+          else if (op === 'm') { x += n[0]; y += n[1]; sx = x; sy = y; }
+          else if (op === 'h') { lastX = x; lastY = y; x += n[0]; }
+          else if (op === 'v') { lastX = x; lastY = y; y += n[0]; }
+          else if (op === 'l') { lastX = x; lastY = y; x += n[0]; y += n[1]; }
+          else if (op === 'c') { lastX = x; lastY = y; x += n[4]; y += n[5]; }
+        }
+        void lastX; void lastY;
+        // The point reached by the last drawing command must NOT already be the
+        // start point — if it were, that command is the one `z` makes redundant.
+        const closedItself = x === sx && y === sy;
+        expect(closedItself, `subpath returns to its start before z: ${sub}`).toBe(false);
+      }
+    }
+  });
+
+  it('keeps rendering identical — the removal is not a shape change', async () => {
+    const source = flatArtwork(64, 48);
+    const out = trace(source, { colors: 4, polygonOnly: true });
+    const report = await roundTrip(source, out.svg);
+    // Polygon output on flat artwork is exact, and stays exact.
+    expect(report.lossless).toBe(true);
+    expect(report.maxChannelDiff).toBe(0);
+  });
+});

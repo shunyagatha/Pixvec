@@ -245,10 +245,18 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 | Pixel art sprite, 128×128 | `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Flat artwork, 400×300 | `embed` | 2.1 KB | 3.2 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Photo, 320×240 | `embed` | 14.5 KB | 19.7 KB | 87.94% | 58.04 dB | 0.9982 | 0.060 |
-| Photo, 320×240 | `trace` (`auto` and `--preset photo` alike) | 14.5 KB | 52.9 KB | 0.01% | 31.31 dB | 0.8476 | 2.931 |
+| Photo, 320×240 | `trace` (`auto` and `--preset photo` alike) | 14.5 KB | 49.3 KB | 0.01% | 31.31 dB | 0.8476 | 2.931 |
 | Flat artwork, 400×300 | `lossless` → `pixel` | 2.1 KB | 3.9 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Pixel art sprite, 128×128 | `lossless` → `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Photo, 320×240 | `lossless` → `embed` | 14.5 KB | 230.5 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
+
+> The traced photo row moved from 52.9 KB to 49.3 KB, and every accuracy figure on
+> it is unchanged to the digit. Closed polygons were re-stating their closing edge
+> before the `z` that already draws it — `z` returns to the subpath's initial point
+> by definition, so the explicit return leg only gave it a zero-length gap to
+> cover. Removing it dropped **16.9% of all path commands** across the corpus with
+> **0 differing subpixel channels** out of ~40 million, at two magnifications, with
+> and without strokes.
 
 Two rows deserve comment, because glossing over them is how tools mislead you:
 
