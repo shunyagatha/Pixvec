@@ -4,7 +4,7 @@
 
 **Measurable raster ⇄ SVG conversion — and a broad image + document toolkit.** Ten raster formats, every one convertible to every other, with the accuracy of every conversion actually measured rather than asserted; plus **PDF & Office** (docx/xlsx/pptx) rendering and conversion, **images → PDF**, **DXF at a real physical cut size** alongside EPS and G-code for makers, centerline tracing and content-aware crop — most of it in a **zero-dependency** core that is CI-proven to bundle for a browser.
 
-On flat artwork — logos, icons, UI, screenshots, pixel art — the output is **bit-exact**: `SSIM 1.0000`, `PSNR ∞`, zero differing pixels, in a smaller and faster file than potrace, imagetracerjs or vtracer. On real photographs it leads every one of them on SSIM by 0.05–0.18. Every number in this README is reproducible: `node scripts/fetch-corpus.mjs && npm run compare`. (The corpus is fetched rather than committed — the photographs are not ours to redistribute.)
+On flat artwork — logos, icons, UI, screenshots, pixel art — the output is **bit-exact**: `SSIM 1.0000`, `PSNR ∞`, zero differing pixels, and on a real logo **smaller than imagetracerjs or vtracer manage while still only approximating** — 24 KB against their 60 and 64. That comes from recognising the image is cheaper to encode exactly than to approximate, not from a better curve fit; ask for real curves (`--preset logo`) and you lead all three on accuracy, still under vtracer on size but above imagetracerjs on alpha-heavy art. potrace is smaller than everyone and much less accurate, which is a real trade and not one this README will hide. On real photographs it leads all three on SSIM by 0.05–0.18 *at their default settings*; one documented vtracer flag closes part of that. It is not the fastest — imagetracerjs is quicker on every fixture measured. Every number in this README is reproducible: `node scripts/fetch-corpus.mjs && npm run compare`. (The corpus is fetched rather than committed — the photographs are not ours to redistribute.)
 
 [![npm version](https://img.shields.io/npm/v/vecline.svg)](https://www.npmjs.com/package/vecline)
 [![npm downloads](https://img.shields.io/npm/dm/vecline.svg)](https://www.npmjs.com/package/vecline)
@@ -265,6 +265,21 @@ Two rows deserve comment, because glossing over them is how tools mislead you:
 
 ## Compared with other vectorizers
 
+> **On speed, and why this table has no Time column.** `scripts/compare.mjs` records a
+> per-tool `ms` and prints it; these tables drop it, and that omission flattered us. Measured
+> min-of-5 cold processes, PNG in to SVG on disk, vecline is **slower than imagetracerjs on
+> every fixture** — 1.10× to 1.55× — and **4.08× slower than vtracer** on a small logo
+> (280 ms against 69 ms), where ~83 ms of ours is Node loading the module graph before any
+> work starts. On the two heavier photographs vecline is faster in wall clock than vtracer
+> (portrait 1001 ms vs 1386, motorcycles 1160 vs 1970) while also scoring higher.
+>
+> The `ms` column is deliberately left out of the tables rather than published misleadingly:
+> the harness times `produce()`, but the work inside differs per entrant — vecline pays a
+> full PNG encode *and* decode inside the timed window, imagetracerjs is handed raw pixels
+> and pays no codec at all, and vtracer pays a process spawn. Fixing that methodology is
+> tracked; until then the numbers above are the honest summary and `npm run compare` will
+> print the raw column for anyone who wants it.
+
 Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **same** renderer and scored with the **same** metrics, on the same white ground, so nothing here depends on Vecline's own view of quality. The field is potrace, imagetracerjs, and — the strongest modern open-source rival — **vtracer** (VisionCortex, Rust). Point `VECLINE_VTRACER` at [vtracer's released binary](https://github.com/visioncortex/vtracer/releases) to score the tool its authors actually ship; failing that the harness falls back to the `@neplex/vectorizer` binding, and if neither is present the row is simply absent rather than guessed at.
 
 **Synthetic fixtures** — reproducible without licensing anyone's photographs:
@@ -300,11 +315,52 @@ Run it yourself with `npm run compare`. Every tool's SVG is rendered with the **
 
 **Bilevel** and **colour art** are bit-exact for vecline (SSIM 1.0000), against potrace's and imagetracerjs's approximations and, on colour art, vtracer's 0.9490 — in a smaller or comparable file.
 
+> **Both of those fixtures are synthetic**, and for a long time this section rested on them alone. Real flat artwork is added below because the story is genuinely different there, and worse for us in one direction.
+
+**Real flat artwork** — this project's own corpus images, now part of `npm run compare` so these rows are produced by the same harness, renderer and metrics as every other table here.
+
+| Fixture | Tool | Size | PSNR | SSIM | Mean ΔE₀₀ |
+|---|---|--:|--:|--:|--:|
+| **logo-tux** (real logo) | potrace posterize | **7.7 KB** | 14.41 dB | 0.7649 | 6.146 |
+| | imagetracerjs | 59.8 KB | 24.17 dB | 0.8861 | 1.975 |
+| | vtracer (cli) | 64.0 KB | 23.51 dB | 0.8907 | 1.517 |
+| | **vecline `--preset logo`** | 53.4 KB | **26.43 dB** | **0.9032** | **1.073** |
+| | **vecline (auto)** | 25.8 KB | **∞** | **1.0000** | **0.000** |
+| | **vecline lossless** | **24.0 KB** | **∞** | **1.0000** | **0.000** |
+| **alpha-dice** (real, alpha) | potrace posterize | **11.1 KB** | 11.69 dB | 0.6857 | 14.690 |
+| | imagetracerjs | 72.1 KB | 26.05 dB | 0.8685 | 2.108 |
+| | vtracer (cli) | 167.8 KB | 20.90 dB | 0.8577 | 3.213 |
+| | **vecline `--preset logo`** | 139.9 KB | 28.39 dB | 0.8823 | **1.682** |
+| | **vecline (auto)** | 189.1 KB | **35.85 dB** | **0.9537** | 0.862 |
+| | vecline lossless | 209.6 KB | **∞** | **1.0000** | **0.000** |
+
+Three honest readings, and they do not all point the same way.
+
+**On a real logo, bit-exact is also smallest.** `lossless` returns 24.0 KB at `SSIM 1.0000` — a third of what imagetracerjs and vtracer spend to be *approximate*. That is the flat-artwork headline, and it holds. But it holds because the image is cheaper to encode exactly than to approximate, and vecline recognises that and emits an exact copy — **not** because the curve fit is better. Ask for curves and you get the row above it.
+
+**`--preset logo` leads on quality, and the margin is narrower than a synthetic fixture suggests.** +2.9 dB and +0.013 SSIM over vtracer on logo-tux with a third less colour error, in a *smaller* file (53.4 KB against 64.0). On alpha-dice it leads on all three quality axes at 17% less than vtracer. Good, but not the 15–19 dB gap the synthetic fixtures imply — `logo` quantises to 16 colours, and on real artwork that costs more than it does on a four-colour test pattern.
+
+**potrace is far smaller than everyone, and that is a real trade.** 7.7 KB against our 24–53. It is bilevel by design and its colour numbers are poor (SSIM 0.7649, ΔE 6.1), but if a few kilobytes matter more than colour fidelity it wins on size and this table should say so.
+
 **The synthetic photo** — a pure gradient plus noise — is vtracer's best case, and it takes the SSIM with fine colour-precision tracing. vecline reaches 0.7750 at **under half the file size** (19 KB vs 42.7 KB) and comfortably beats imagetracerjs (0.7143). More colours would close the last gap; it is not worth 2.2× the bytes on a synthetic worst case.
 
 > This row moved in v1.33.1, and downwards, so it is worth saying why. The `photo` preset used to score 0.7923 here — but `npm run compare` showed the same preset scoring *below plain auto on every real photograph*, and taking up to 136 seconds to do it, because it forced a despeckle threshold that erases the fine detail photographs are made of. Fixing that cost ~0.017 SSIM on this one synthetic fixture and gained **+0.25 SSIM at ~75× the speed** on the Kodak set below. A gradient-plus-noise pattern is not a photograph, and where the two disagree the real photographs win. `photo` and `auto` now resolve to the same measured-best configuration, so they are reported as one row.
 
-**On real photographs vecline is ahead on every quality axis — out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.18**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7652 / 0.7624 / 0.7949 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR (34.8 / 36.3 / 31.2 dB against 25.9 / 24.3 / 23.2) and roughly half the colour error. The synthetic-worst-case story does not survive contact with actual photographs.
+**On real photographs vecline is ahead on every quality axis — out of the box, against every rival's out of the box.** Auto mode scales the palette to the content, so the zero-config default **leads SSIM on every photo by 0.05–0.18**: 0.9140 / 0.9453 / 0.8460 against vtracer's 0.7652 / 0.7624 / 0.7949 and imagetracerjs's 0.7093 / 0.7465 / 0.7615 — with far better PSNR (34.8 / 36.3 / 31.2 dB against 25.9 / 24.3 / 23.2) and roughly half the colour error. The synthetic-worst-case story does not survive contact with actual photographs.
+
+**The comparison above is defaults against defaults, and that flatters us.** vtracer takes flags, and one documented preset changes the verdict on part of the table — same binary, same harness, same renderer and metrics:
+
+| Fixture | vtracer setting | Size | PSNR | SSIM | Mean ΔE₀₀ |
+|---|---|--:|--:|--:|--:|
+| kodak-parrots | `--preset poster` | 534 KB | 29.86 dB | **0.8643** | 2.560 |
+| | *vecline (auto)* | *309 KB* | *31.18 dB* | *0.8460* | *3.686* |
+| synthetic photo | `--preset poster` | 58 KB | **36.57 dB** | **0.8620** | **1.935** |
+| | *vecline (auto)* | *19 KB* | *31.12 dB* | *0.7750* | *2.940* |
+| all four colour fixtures | `-p 8 -g 4 --filter-speckle 0` | 4–5× the bytes | — | — | **beats vecline on every one** |
+
+So: `--preset poster` **beats us on kodak-parrots SSIM** (0.8643 vs 0.8460) and sweeps the synthetic photo on all three quality axes. And `--color-precision 8 --gradient-step 4 --filter-speckle 0` beats our colour error on all four colour fixtures — at 4–5× the bytes and ~2.4× the time, which is the counter-trade. Our SSIM lead survives on the portrait and lighthouse and only barely against that last configuration (0.9140 vs 0.9099; 0.9453 vs 0.9074).
+
+None of that is tuning we could not also do; the point is that "leads every one of them" was measured against tools nobody had tuned, and a reader comparing honestly will tune them.
 
 **And the honest counterpart: vtracer's files are smaller on two of the three.** 987 KB against vecline's 1338 on the portrait, 1032 against 1743 on the lighthouse; vecline is smaller only on parrots (309 vs 344). Those bytes buy the quality above — ~10 dB of PSNR is not a rounding error — but if size is what you are optimising for and 0.76 SSIM is enough, vtracer wins that trade and this table should not pretend otherwise.
 

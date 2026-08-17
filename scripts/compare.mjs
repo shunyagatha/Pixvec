@@ -169,6 +169,24 @@ async function loadReal(name, maxWidth = 480) {
 }
 
 /** Score any SVG against the source, using one renderer and one metric set. */
+/** Composite an RGBA image over opaque white, so alpha cannot skew a comparison. */
+function flattenOnWhite(img) {
+  let needed = false;
+  for (let i = 3; i < img.data.length; i += 4) {
+    if (img.data[i] !== 255) { needed = true; break; }
+  }
+  if (!needed) return img;
+  const out = { width: img.width, height: img.height, data: new Uint8ClampedArray(img.data.length) };
+  for (let i = 0; i < img.data.length; i += 4) {
+    const a = img.data[i + 3] / 255;
+    out.data[i] = Math.round(img.data[i] * a + 255 * (1 - a));
+    out.data[i + 1] = Math.round(img.data[i + 1] * a + 255 * (1 - a));
+    out.data[i + 2] = Math.round(img.data[i + 2] * a + 255 * (1 - a));
+    out.data[i + 3] = 255;
+  }
+  return out;
+}
+
 async function score(source, svg) {
   // Every tool is rendered on the same white ground. potrace emits shapes on a
   // transparent background, so scoring it against an opaque source without this
@@ -180,7 +198,20 @@ async function score(source, svg) {
   if (rendered.width !== source.width || rendered.height !== source.height) {
     return { error: `size mismatch ${rendered.width}x${rendered.height}` };
   }
-  const q = compareImages(source, rendered);
+  // Flatten the SOURCE onto the same white ground before comparing.
+  //
+  // The rendered side is composited over white above; the source was not, so a
+  // transparent source pixel was (0,0,0,0) on one side and opaque white on the
+  // other. That is white-against-black in every transparent region, and it wrecks
+  // PSNR and SSIM while leaving deltaE untouched — which is exactly the
+  // self-contradiction that exposed it: adding real logos to this comparison
+  // produced `vecline lossless` at SSIM 0.4997 with mean deltaE 0.000, an
+  // impossible pair. Every fixture here used to be opaque, so the flaw sat
+  // unexercised.
+  //
+  // Opaque sources are unaffected: compositing an alpha-255 pixel over white
+  // returns the pixel.
+  const q = compareImages(flattenOnWhite(source), rendered);
   return {
     bytes: Buffer.byteLength(svg),
     psnr: q.psnr,
@@ -237,6 +268,23 @@ const tracerjs = async (_file, source) =>
 const veclinePhotoPreset = async (_file, source) => {
   const input = await loadRaster(await toPng(source));
   return (await vectorize(input, { mode: 'trace', preset: 'photo', trace: { gradients: true } })).svg;
+};
+/**
+ * `--preset logo`, which is what someone tracing a logo actually types.
+ *
+ * Worth its own row rather than folding into `vecline trace`, because a preset now
+ * overrides the mode decision. Until v2.1 it did not: naming any tracing preset
+ * produced output byte-identical to `auto`, so on a flat logo this row would have
+ * silently measured an exact copy rather than a trace.
+ */
+const veclineLogoPreset = async (_file, source) => {
+  const input = await loadRaster(await toPng(source));
+  return (await vectorize(input, { preset: 'logo' })).svg;
+};
+/** The true zero-config default: whatever `vecline convert in.png out.svg` picks. */
+const veclineAuto = async (_file, source) => {
+  const input = await loadRaster(await toPng(source));
+  return (await vectorize(input, {})).svg;
 };
 const vtracerRun = async (_file, source) => vtracer.vectorize(await toPng(source), vtracer.config);
 
@@ -361,6 +409,28 @@ try {
 
   await contend('colour art', colourArt(160, 120), colourPanel);
   await contend('photo (synthetic)', photoLike(120, 90), colourPanel);
+
+  // Real flat artwork, not only the two synthetic fixtures above.
+  //
+  // The flat-art claim in the README rested on `bilevel` and `colour art`, both
+  // generated here, for far too long. Real logos behave differently and worse for
+  // us in one direction — `--preset logo` is 15-19 dB more accurate than vtracer
+  // and imagetracerjs and 1.2-1.6x larger — and a comparison table that cannot
+  // show that is not doing its job. `logo` rather than `trace` because that is
+  // what someone tracing a logo would actually type.
+  const realArt = [
+    ['logo-tux (real logo)', 'logo-tux.png'],
+    ['alpha-dice (real, alpha)', 'alpha-dice.png'],
+  ];
+  for (const [label, file] of realArt) {
+    await contend(label, await loadReal(file), withExternal(withVtracer([
+      ['potrace posterize', (file) => runPotrace(file, { posterize: true })],
+      ['imagetracerjs', tracerjs],
+      ['vecline preset logo', veclineLogoPreset],
+      ['vecline (auto)', veclineAuto],
+      ['vecline lossless', veclineLossless],
+    ])));
+  }
 
   // The real test: actual photographs — skin tones and sky gradients — where
   // flat-fill tracing shows its worst and where gradients should earn their keep.
