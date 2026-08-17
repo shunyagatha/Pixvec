@@ -231,3 +231,20 @@ describe('refineLoop', () => {
     expect(onSubpixel).toBeGreaterThan(0);
   });
 });
+
+describe('subpixel + extendUnder', () => {
+  it('is refused rather than silently ignoring subpixel', async () => {
+    const { trace } = await import('../src/vectorize/trace.js');
+    const { flatArtwork } = await import('./fixtures.js');
+    // The two are genuinely incompatible: extendUnder traces a union of classes,
+    // and refinement needs to know which single class is inside. The code handled
+    // that by skipping refinement, so asking for both returned output identical to
+    // asking for neither — 1.36 dB worse on real artwork with every curve
+    // discarded, and nothing said so.
+    expect(() => trace(flatArtwork(48, 36), { subpixel: true, extendUnder: true }))
+      .toThrow(/cannot be combined/);
+    // Each alone still works.
+    expect(() => trace(flatArtwork(48, 36), { subpixel: true })).not.toThrow();
+    expect(() => trace(flatArtwork(48, 36), { extendUnder: true })).not.toThrow();
+  });
+});

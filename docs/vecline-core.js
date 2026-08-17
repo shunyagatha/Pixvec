@@ -4064,6 +4064,11 @@ function trace(source, opts = {}) {
     minArea: autoMinArea(source.width * source.height),
     ...clean
   };
+  if (o.subpixel && o.extendUnder) {
+    throw new Error(
+      "subpixel and extendUnder cannot be combined: extendUnder traces the union of several classes, and sub-pixel refinement needs to know which single class is inside a boundary to read its coverage. Pick one \u2014 subpixel is worth about +1.4 dB of edge accuracy and is what lets the curve fitter run at all, while extendUnder removes antialiasing seams at roughly 4x the anchors. Previously this combination silently ignored subpixel."
+    );
+  }
   const report = (stage, pct) => {
     if (o.signal?.aborted) throw new Error("Trace aborted.");
     o.onProgress?.(stage, pct);
