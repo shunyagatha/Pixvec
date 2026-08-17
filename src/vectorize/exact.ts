@@ -20,8 +20,36 @@ import { vectorizePixels, type PixelVectorizeOptions } from './pixel.js';
  *   smaller: roughly half the bytes on a typical logo.
  *
  * Since the winner flips depending on the picture, {@link vectorizeExact}
- * computes both and keeps the smaller. Both are bit-exact, so choosing on size
- * costs nothing.
+ * computes both and keeps the smaller. Choosing this way never costs quality —
+ * both candidates are bit-exact — but it is not free, and this file used to say
+ * it "costs nothing". Building the candidate that then loses is **51% of
+ * `vectorizeExact`**: 29.9%–68.6% depending on the image, measured as the
+ * minimum of 5 runs over alpha-dice, logo-tux, and vector-tiger/vector-source
+ * rasterised at 256, 512 and 1024.
+ *
+ * **Why that 51% is not reclaimed by predicting the sizes.** The obvious saving
+ * is to compute each candidate's length without building its string, then build
+ * only the winner. It was investigated and rejected, and the reason is the
+ * failure mode rather than the arithmetic.
+ *
+ * A predictor is a second implementation of the byte-formatting rules in
+ * `../svg/path.ts` and `../svg/build.ts`. When it is wrong, nothing detects it:
+ * both candidates are bit-exact, so a wrong choice still yields a correct SVG
+ * that is merely larger, every quality metric is unchanged, and the only trace
+ * is a permanently wrong number in {@link ExactOutput.sizes}. Of five prototype
+ * predictors written during that investigation, the two that were byte-correct
+ * on the first attempt cost 65–117% of simply building the string — they lost —
+ * and two of the three cheap enough to win were silently wrong, one by a
+ * systematic 4.7% from charging a separator after the `M` command letter. The
+ * margins here do not tolerate that: the winner on vector-tiger at 1024 is
+ * decided by 1.3%.
+ *
+ * Reopening it takes a measurement, not an argument — how often exact geometry
+ * is the output that actually ships rather than losing to the embedded bitmap,
+ * and what share of a real run `vectorizeExact` is. If those justify it, the one
+ * safe shape is a single emitter with two sinks, so that separators, `h`/`v`
+ * selection and elision are *executed* against a counter rather than modelled.
+ * Never a predictor that restates them.
  *
  * **Why contours are exact.** Crack following puts every vertex on an integer
  * lattice point of the pixel grid, so each polygon's boundary runs along pixel
@@ -45,7 +73,15 @@ export interface ExactOutput {
   colors: number;
   /** Which encoding won on size. */
   strategy: 'rectangles' | 'contours';
-  /** Bytes each candidate would have taken, for reporting. */
+  /**
+   * Size each candidate came to, for reporting.
+   *
+   * These are `String.length` — UTF-16 code units, not bytes. The two agree for
+   * the ASCII-only output this produces, and diverge only if a non-ASCII `title`
+   * is passed, where the CLI's own `Buffer.byteLength` figure for the delivered
+   * file will read higher. The choice above is unaffected either way: both
+   * candidates carry the same title, so any inflation is common to both.
+   */
   sizes: { rectangles: number; contours?: number };
 }
 
