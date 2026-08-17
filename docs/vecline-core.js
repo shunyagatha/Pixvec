@@ -4161,6 +4161,7 @@ function trace(source, opts = {}) {
   }
   report("Tracing contours", 55);
   const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
+  const EMPTY_LOOPS = [];
   const extendedLoops = (rank, rankOfClass2) => {
     const mask = new Int32Array(width * height).fill(-1);
     for (let p = 0; p < mask.length; p++) {
@@ -4234,6 +4235,7 @@ function trace(source, opts = {}) {
     const classLoops = [];
     const ownLoops = rankOfClass && cls < GRAD_BASE ? [extendedLoops(rank, rankOfClass)] : components.map((c) => loopsByComponent[c]);
     for (const group of ownLoops) for (const loop of group) classLoops.push(loop);
+    for (const c of components) loopsByComponent[c] = EMPTY_LOOPS;
     const eligible = o.primitives && classLoops.length > 0 && classLoops.every((l) => l.signedArea > 0);
     const prims = classLoops.map((l) => eligible ? detectPrimitive(l.pts, { maxError: o.primitiveError }) : null);
     const path = new PathBuilder(o.precision);
