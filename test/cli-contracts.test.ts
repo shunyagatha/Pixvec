@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { encode } from './fixtures.js';
@@ -348,5 +348,79 @@ describe.skipIf(!built)('CLI: exports reach the primitive-aware writers', () => 
     expect(r.code).toBe(0);
     const { readFile } = await import('node:fs/promises');
     expect(await readFile(out, 'utf8')).toContain('CIRCLE');
+  });
+});
+
+describe.skipIf(!built)('CLI: converting an animation says what it dropped', () => {
+  /**
+   * The raster pipeline is single-frame by architecture — `decodeRaster` returns
+   * one `RasterImage` and `encodeRaster` takes one — so `convert` writes the first
+   * frame of an animation. That is a defensible limit. Reporting
+   * "✓ out.gif  gif → gif  300.9 KB → 72.9 KB (-76%)" while 35 frames went in the
+   * bin was not: the -76% *was* the discarded frames, and the decoder had known the
+   * true count all along (`meta.frames`).
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'vecline-anim-'));
+
+  /**
+   * A tiny animated GIF, built the way test/animate.ts already does it: an array
+   * of encoded frames joined with `{ join: { animated: true } }`. A raw vertical
+   * filmstrip plus `pageHeight` does NOT work — sharp writes it as one tall still
+   * image, which is how the first version of this test passed against a
+   * single-frame fixture and proved nothing.
+   */
+  async function animatedGif(count: number): Promise<string> {
+    const sharpMod = (await import('sharp')).default;
+    const size = 8;
+    const frames = await Promise.all(
+      Array.from({ length: count }, (_, f) => {
+        const buf = Buffer.alloc(size * size * 4);
+        for (let i = 0; i < buf.length; i += 4) {
+          buf[i] = (f * 50) % 256; buf[i + 1] = 40; buf[i + 2] = 200; buf[i + 3] = 255;
+        }
+        return sharpMod(buf, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer();
+      }),
+    );
+    const out = join(dir, `anim-${count}.gif`);
+    await sharpMod(frames, { join: { animated: true } })
+      .gif({ delay: frames.map(() => 100), loop: 0 })
+      .toFile(out);
+    return out;
+  }
+
+  it('the fixture really is animated, or the rest of this proves nothing', async () => {
+    const sharpMod = (await import('sharp')).default;
+    const meta = await sharpMod(await animatedGif(5), { animated: true }).metadata();
+    expect(meta.pages).toBe(5);
+  });
+
+  it('names the frame count and points at the command that keeps them', async () => {
+    const src = await animatedGif(5);
+    const r = await cli(['convert', src, join(dir, 'first.gif')]);
+    expect(r.code).toBe(0);
+    const all = r.stdout + r.stderr;
+    expect(all).toMatch(/5 frames/);
+    expect(all).toMatch(/4 frames were not carried over/);
+    expect(all).toMatch(/vecline animate/);
+  });
+
+  it('reports both counts in --json, so a script can detect it', async () => {
+    const src = await animatedGif(3);
+    const r = await cli(['convert', src, join(dir, 'j.png'), '--json']);
+    expect(r.code).toBe(0);
+    const j = JSON.parse(r.stdout);
+    expect(j.sourceFrames).toBe(3);
+    expect(j.framesWritten).toBe(1);
+  });
+
+  it('stays quiet for a still image', async () => {
+    // The note must not fire on the overwhelmingly common case.
+    const src = join(dir, 'still.png');
+    const sharpMod = (await import('sharp')).default;
+    await sharpMod({ create: { width: 8, height: 8, channels: 4, background: { r: 1, g: 2, b: 3, alpha: 1 } } })
+      .png().toFile(src);
+    const r = await cli(['convert', src, join(dir, 'still-out.png')]);
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/not carried over/);
   });
 });
