@@ -801,9 +801,13 @@ Contact: [open an issue](https://github.com/shunyagatha/Vecline/issues)
 
 ## Supporting Vecline
 
-Vecline is free and stays that way. The library, the CLI, the MCP server and
-[Studio](https://vecline.xyz) are MIT, unlimited and signup-free — permanently,
-not as a trial of something else. Nothing here is withheld from anyone who does
+Vecline is free and stays that way. The library, the CLI and the MCP server are
+**MIT**. [Studio](https://vecline.xyz) is free to use, unlimited and signup-free —
+permanently, not as a trial of something else — and its source is published so
+anyone can verify it never uploads their images, but it is **source-available, not
+open source**: read it, build it and audit it freely, and check
+[its licence](https://github.com/shunyagatha/Vecline-Studio/blob/main/LICENSE)
+before redistributing or hosting it. Nothing here is withheld from anyone who does
 not pay, and there is no paid tier to be nudged towards.
 
 If it saved you an afternoon and you want to say so:
