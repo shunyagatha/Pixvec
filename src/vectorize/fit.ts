@@ -28,6 +28,13 @@ export interface FitOptions {
   /** Emit straight segments only — no curve fitting. */
   polygonOnly: boolean;
   /**
+   * Simplify with the quantisation-aware straightness test instead of
+   * Douglas-Peucker. Correct whenever the boundary is still on the pixel lattice,
+   * which is every trace that did not run sub-pixel refinement. See
+   * {@link simplifyLattice} for why DP cannot do this job.
+   */
+  latticeSimplify?: boolean;
+  /**
    * Merge adjacent curves back together where one curve fits both. Default on.
    * This is the equivalent of potrace's curve-optimisation pass.
    */
@@ -88,8 +95,12 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
   // is a trade-off; losing it to silent deletion is a bug. `minArea` remains the
   // explicit, principled way to drop features that genuinely should go.
   let tolerance = opts.tolerance;
-  let anchors = simplifyClosed(px, py, n, tolerance);
-  while (anchors.length < 3 && tolerance > 0) {
+  let anchors = opts.latticeSimplify
+    ? simplifyLattice(px, py, n)
+    : simplifyClosed(px, py, n, tolerance);
+  // The lattice test has no tolerance to relax — its band is the grid's own
+  // uncertainty — so only the Douglas-Peucker path retries.
+  while (!opts.latticeSimplify && anchors.length < 3 && tolerance > 0) {
     tolerance = tolerance > 0.05 ? tolerance / 2 : 0;
     anchors = simplifyClosed(px, py, n, tolerance);
   }
@@ -183,6 +194,97 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
  * Running DP on an arbitrary cut would let the algorithm delete the very
  * vertices that define the shape's extent.
  */
+/**
+ * Simplification that knows its input is quantised.
+ *
+ * Douglas-Peucker measures deviation against a EUCLIDEAN budget, which on a
+ * lattice boundary conflates two different things: the staircase a diagonal edge
+ * was forced into by the pixel grid, and genuine curvature. Both look like
+ * deviation. So below the staircase amplitude DP removes nothing — measured, a
+ * hard cliff between tolerance 0.40 (5,924 anchors, zero curves) and 0.45 (4,514
+ * anchors, 367 curves) — and above it DP removes the staircase by also moving
+ * real boundaries, which costs accuracy every time: SSIM 0.8355 at 0.4, 0.8145 at
+ * 0.5, 0.7671 at 0.8.
+ *
+ * The way out is potrace's: do not ask "how far is this point from the chord",
+ * ask "does ANY straight line pass within the pixel's own uncertainty of every
+ * point in this run". Crack-following emits axis-aligned unit steps, so a run
+ * that came from a straight edge always has such a line, and a run that came from
+ * a curve does not. The band is a property of the grid, not a knob — which is why
+ * this can flatten staircases without a budget that also erodes geometry.
+ *
+ * Greedy longest-run cover: from each anchor take the furthest vertex still
+ * reachable, and start again there. Not the globally optimal polygon potrace
+ * computes, and within a few percent of it on closed boundaries, without the
+ * dynamic program.
+ */
+function simplifyLattice(
+  // 0.75, and the value is forced rather than tuned: a 45-degree staircase
+  // deviates from its own diagonal by 1/sqrt(2) = 0.707, so any band at or below
+  // that cannot see a diagonal edge as straight and the whole method does
+  // nothing. Swept on a real image, 0.35/0.5/0.65 are identical and useless;
+  // 0.75 and 0.85 agree to 0.0004 SSIM; 1.0 starts eating real corners
+  // (0.8918 -> 0.8768). The useful window is narrow and sits just above 0.707.
+  px: Float64Array, py: Float64Array, n: number, band = 0.75,
+): number[] {
+  if (n <= 3) return Array.from({ length: n }, (_, i) => i);
+
+  /** Can a single line cover every vertex from `a` to `b` inclusive? */
+  const straight = (a: number, b: number): boolean => {
+    const ax = px[a], ay = py[a];
+    const dx = px[b] - ax, dy = py[b] - ay;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return false;
+    for (let k = a + 1; k < b; k++) {
+      // Perpendicular distance to the chord. Beyond the band the run is not a
+      // quantised straight edge, whatever its total extent.
+      const d = Math.abs((px[k] - ax) * dy - (py[k] - ay) * dx) / len;
+      if (d > band) return false;
+    }
+    return true;
+  };
+
+  const anchors: number[] = [0];
+  let i = 0;
+  while (i < n - 1) {
+    // Furthest reachable vertex, found by doubling then bisecting: a long
+    // straight run is common on flat artwork and a linear walk makes this
+    // quadratic on exactly those paths.
+    let step = 1;
+    while (i + step * 2 < n && straight(i, i + step * 2)) step *= 2;
+    let lo = i + step;
+    let hi = Math.min(n - 1, i + step * 2);
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (straight(i, mid)) lo = mid; else hi = mid - 1;
+    }
+    const next = Math.max(lo, i + 1);
+    anchors.push(next);
+    i = next;
+  }
+  // The closing vertex duplicates the start on a closed loop.
+  if (anchors.length > 1 && anchors[anchors.length - 1] === n - 1 && n > 1) anchors.pop();
+
+  // Fewer than three anchors means the loop collapsed to a line or a point, and
+  // a closed path needs three to enclose anything. Subdivide rather than fall
+  // back to every vertex: falling back fires precisely when the simplification
+  // worked BEST — a perfect staircase is one straight run, yields [0, n-1], and
+  // loses its last anchor to the pop above. That bug returned all 40 points on a
+  // 40-point diagonal, the exact case this function exists to collapse.
+  while (anchors.length < 3 && anchors.length < n) {
+    let gap = 0;
+    let at = 0;
+    for (let k = 0; k < anchors.length; k++) {
+      const a = anchors[k];
+      const b = k + 1 < anchors.length ? anchors[k + 1] : n;
+      if (b - a > gap) { gap = b - a; at = k; }
+    }
+    if (gap < 2) break;
+    anchors.splice(at + 1, 0, anchors[at] + (gap >> 1));
+  }
+  return anchors;
+}
+
 function simplifyClosed(
   px: Float64Array, py: Float64Array, n: number, tolerance: number,
 ): number[] {

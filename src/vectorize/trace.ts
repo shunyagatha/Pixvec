@@ -126,6 +126,18 @@ export interface TraceOptions {
   /** Regions smaller than this are absorbed after {@link segment}. Default 8. */
   segmentMinRegion?: number;
   /**
+   * Simplify boundaries with a quantisation-aware straightness test instead of
+   * Douglas–Peucker.
+   *
+   * Defaults to on wherever it is valid — that is, whenever the boundary is
+   * still on the pixel lattice (no sub-pixel refinement), the caller has not
+   * asked for the lattice verbatim (`tolerance: 0`), and `extendUnder` is off.
+   * Exposed because it changes what "the same trace" means: comparing two
+   * configurations is only meaningful if both use the same simplifier, and a
+   * caller isolating some *other* option needs to be able to pin this one.
+   */
+  latticeSimplify?: boolean;
+  /**
    * Reduce to two colours by a luminance cutoff before tracing — potrace's mode,
    * for scanned line art and black-on-white logos. A number is a fixed 0–255
    * cutoff; `'auto'` uses Otsu's method. Omitted skips it.
@@ -681,6 +693,25 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   }
 
   const fitOpts: FitOptions = {
+    // Sub-pixel refinement moves vertices off the grid; without it every
+    // boundary vertex is a lattice point and Douglas-Peucker is the wrong tool.
+    //
+    // Excluded at tolerance 0, which is a request for the lattice itself. This
+    // simplifier has no tolerance to honour — its band is the grid's own
+    // uncertainty — so it collapses staircases whatever the caller asked for,
+    // and `trace(src, { tolerance: 0, polygonOnly: true })` is documented
+    // bit-exact. Caught by the suite immediately, which is that test earning its
+    // keep for the second time this week.
+    //
+    // Also excluded under `extendUnder`, and for the structural reason rather
+    // than a measured one. That option's whole purpose is that a shared boundary
+    // is traced identically from both sides, so no seam can appear. Any
+    // simplification applied to each side independently breaks that — the union
+    // loop and the class loop beneath it collapse different staircases and stop
+    // meeting. Douglas-Peucker only preserved it by removing nothing at the
+    // shipped tolerance; the guarantee was resting on the fitter being dead.
+    // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
+    latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,

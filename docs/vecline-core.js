@@ -1938,8 +1938,8 @@ function fitLoop(pts, opts) {
     py[i] = pts[i * 2 + 1];
   }
   let tolerance = opts.tolerance;
-  let anchors = simplifyClosed(px, py, n2, tolerance);
-  while (anchors.length < 3 && tolerance > 0) {
+  let anchors = opts.latticeSimplify ? simplifyLattice(px, py, n2) : simplifyClosed(px, py, n2, tolerance);
+  while (!opts.latticeSimplify && anchors.length < 3 && tolerance > 0) {
     tolerance = tolerance > 0.05 ? tolerance / 2 : 0;
     anchors = simplifyClosed(px, py, n2, tolerance);
   }
@@ -1969,6 +1969,52 @@ function fitLoop(pts, opts) {
   }
   if (segments.length === 0) return null;
   return { start: { x: px[breaks[0].index], y: py[breaks[0].index] }, segments };
+}
+function simplifyLattice(px, py, n2, band = 0.75) {
+  if (n2 <= 3) return Array.from({ length: n2 }, (_, i2) => i2);
+  const straight = (a, b) => {
+    const ax = px[a], ay = py[a];
+    const dx = px[b] - ax, dy = py[b] - ay;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return false;
+    for (let k = a + 1; k < b; k++) {
+      const d = Math.abs((px[k] - ax) * dy - (py[k] - ay) * dx) / len;
+      if (d > band) return false;
+    }
+    return true;
+  };
+  const anchors = [0];
+  let i = 0;
+  while (i < n2 - 1) {
+    let step = 1;
+    while (i + step * 2 < n2 && straight(i, i + step * 2)) step *= 2;
+    let lo = i + step;
+    let hi = Math.min(n2 - 1, i + step * 2);
+    while (lo < hi) {
+      const mid = lo + hi + 1 >> 1;
+      if (straight(i, mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    const next = Math.max(lo, i + 1);
+    anchors.push(next);
+    i = next;
+  }
+  if (anchors.length > 1 && anchors[anchors.length - 1] === n2 - 1 && n2 > 1) anchors.pop();
+  while (anchors.length < 3 && anchors.length < n2) {
+    let gap = 0;
+    let at = 0;
+    for (let k = 0; k < anchors.length; k++) {
+      const a = anchors[k];
+      const b = k + 1 < anchors.length ? anchors[k + 1] : n2;
+      if (b - a > gap) {
+        gap = b - a;
+        at = k;
+      }
+    }
+    if (gap < 2) break;
+    anchors.splice(at + 1, 0, anchors[at] + (gap >> 1));
+  }
+  return anchors;
 }
 function simplifyClosed(px, py, n2, tolerance) {
   if (n2 <= 3 || tolerance <= 0) return Array.from({ length: n2 }, (_, i) => i);
@@ -4403,6 +4449,25 @@ function trace(source, opts = {}) {
     }
   }
   const fitOpts = {
+    // Sub-pixel refinement moves vertices off the grid; without it every
+    // boundary vertex is a lattice point and Douglas-Peucker is the wrong tool.
+    //
+    // Excluded at tolerance 0, which is a request for the lattice itself. This
+    // simplifier has no tolerance to honour — its band is the grid's own
+    // uncertainty — so it collapses staircases whatever the caller asked for,
+    // and `trace(src, { tolerance: 0, polygonOnly: true })` is documented
+    // bit-exact. Caught by the suite immediately, which is that test earning its
+    // keep for the second time this week.
+    //
+    // Also excluded under `extendUnder`, and for the structural reason rather
+    // than a measured one. That option's whole purpose is that a shared boundary
+    // is traced identically from both sides, so no seam can appear. Any
+    // simplification applied to each side independently breaks that — the union
+    // loop and the class loop beneath it collapse different staircases and stop
+    // meeting. Douglas-Peucker only preserved it by removing nothing at the
+    // shipped tolerance; the guarantee was resting on the fitter being dead.
+    // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
+    latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,

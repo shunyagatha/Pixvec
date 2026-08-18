@@ -29,11 +29,23 @@ async function render(svg: string, width: number) {
  * now the default. Comparing against a plain `trace()` would therefore compare
  * extendUnder against *the new default*, and report a difference that belongs
  * to subpixel rather than to the thing under test.
+ *
+ * `latticeSimplify: false` is pinned for the same reason, and it is the sharper
+ * case. That simplifier is on by default and off under `extendUnder`, because a
+ * union boundary and the class boundary beneath it collapse different staircases
+ * and stop meeting — so leaving it to default would compare two DIFFERENT
+ * simplifiers and blame extendUnder for the difference. Measured when it was:
+ * SSIM 0.9895 against a required 0.9999.
+ *
+ * Worth stating plainly, since it is the real lesson here: this render-identity
+ * guarantee only ever held because Douglas-Peucker removed nothing at the
+ * shipped tolerance. It was resting on the fitter being dead, not on extendUnder
+ * being safe under simplification.
  */
 describe('extend-under renders identically', () => {
   it('leaves flat artwork pixel-for-pixel unchanged', async () => {
     const source = flatArtwork(240, 180);
-    const plain = trace(source, { colors: 5, subpixel: false });
+    const plain = trace(source, { colors: 5, subpixel: false, latticeSimplify: false });
     const under = trace(source, { colors: 5, extendUnder: true });
 
     const a = await render(plain.svg, source.width);
@@ -48,7 +60,7 @@ describe('extend-under renders identically', () => {
 
   it('leaves a photograph unchanged too, where the geometry is far messier', async () => {
     const source = photoLike(160, 120);
-    const plain = trace(source, { colors: 12, subpixel: false });
+    const plain = trace(source, { colors: 12, subpixel: false, latticeSimplify: false });
     const under = trace(source, { colors: 12, extendUnder: true });
 
     const a = await render(plain.svg, source.width);
@@ -63,7 +75,7 @@ describe('extend-under renders identically', () => {
     // The stronger form: both outputs must sit the same distance from the
     // original. Two identically-wrong renders would pass the tests above.
     const source = flatArtwork(200, 150);
-    const plain = trace(source, { colors: 5, subpixel: false });
+    const plain = trace(source, { colors: 5, subpixel: false, latticeSimplify: false });
     const under = trace(source, { colors: 5, extendUnder: true });
 
     const qa = compareImages(source, await render(plain.svg, source.width));
@@ -75,8 +87,8 @@ describe('extend-under renders identically', () => {
 
   it('is off unless asked for', () => {
     const source = flatArtwork(120, 90);
-    expect(trace(source, { colors: 4, subpixel: false }).svg)
-      .toBe(trace(source, { colors: 4, subpixel: false, extendUnder: false }).svg);
+    expect(trace(source, { colors: 4, subpixel: false, latticeSimplify: false }).svg)
+      .toBe(trace(source, { colors: 4, subpixel: false, latticeSimplify: false, extendUnder: false }).svg);
   });
 
   it('does not disturb transparency', async () => {
@@ -98,7 +110,7 @@ describe('extend-under renders identically', () => {
 
     // The corner was transparent and must have stayed that way.
     expect(rendered.data[3]).toBe(255); // rendered onto white
-    const q = compareImages(await render(trace(source, { colors: 3, subpixel: false }).svg, w), rendered);
+    const q = compareImages(await render(trace(source, { colors: 3, subpixel: false, latticeSimplify: false }).svg, w), rendered);
     expect(q.ssim).toBeGreaterThan(0.999);
   }, 60_000);
 });

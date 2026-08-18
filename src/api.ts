@@ -959,10 +959,22 @@ function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
   const refine: TraceOptions = {};
   if (flat.interiorNoise > REFINE_NOISE_LIMIT) {
     refine.subpixel = false;
+    // The lattice straightness test fails on the same precondition, and it is
+    // worth being explicit that this is one condition rather than two.
+    //
+    // Both assume a boundary came from a real geometric edge that the pixel grid
+    // quantised. Sub-pixel refinement inverts the coverage ramp across such an
+    // edge; the straightness test asks whether a run of vertices could have come
+    // from one. Continuous tone has no such edges, so the first inverts noise and
+    // the second finds spurious straightness in it — measured on the published
+    // photo row, leaving it on took `trace auto` from 49.3 KB to 163.8 KB while
+    // SSIM fell 0.8476 -> 0.8311. Worse and 3.3x larger.
+    refine.latticeSimplify = false;
     notes.push(
-      `Sub-pixel refinement off: interior noise ${flat.interiorNoise.toFixed(2)} ` +
-        `exceeds ${REFINE_NOISE_LIMIT}, so the anti-aliasing cannot be read as ` +
-        `edge coverage. Force it with --subpixel if the source is cleaner than it measures.`,
+      `Sub-pixel refinement and lattice simplification off: interior noise ` +
+        `${flat.interiorNoise.toFixed(2)} exceeds ${REFINE_NOISE_LIMIT}, so there is no ` +
+        `quantised geometric edge for either to read. Force them with --subpixel if ` +
+        `the source is cleaner than it measures.`,
     );
   }
   // Only the palette is widened (plus gradient de-banding for photos). minArea
