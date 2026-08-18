@@ -373,6 +373,8 @@ interface VectorizeCliOptions {
   turnPolicy?: string;
   extendUnder?: boolean;
   subpixel?: boolean;
+  segment?: number;
+  latticeSimplify?: boolean;
   maxRectsPerPixel?: number;
   fillStrategy?: string;
   rightAngle?: boolean;
@@ -521,6 +523,8 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       turnPolicy: o.turnPolicy as never,
       extendUnder: o.extendUnder,
       subpixel: o.subpixel,
+      segment: o.segment,
+      latticeSimplify: o.latticeSimplify,
       fillStrategy: o.fillStrategy as never,
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
@@ -2149,6 +2153,24 @@ program
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
   .option('--no-subpixel', 'keep boundary vertices on the pixel lattice instead of where the antialiasing says the edge fell. Sub-pixel placement is on by default and is what lets the curve fitter engage at all; turning it off returns the older staircase output at roughly a third of the gzipped bytes. No effect on hard-edged art, where the lattice is already exact.')
+  .option(
+    '--segment <k>',
+    'find regions on the pixel grid and flatten each to its own colour BEFORE quantising, '
+      + 'instead of quantising first and labelling what falls out. On a compressed source the '
+      + 'usual order makes one region per pixel that landed in a different palette bin — 4,438 '
+      + 'regions with a median area of one pixel on a 100x100 JPEG — and no later merge recovers '
+      + 'a boundary the palette misplaced. The value is the merge tolerance in Oklab; useful '
+      + 'range is about 0.02 to 0.2, and 0.02 is the measured sweet spot. Off by default.',
+    floatArg('--segment', 0, 5),
+  )
+  .option(
+    '--lattice-simplify',
+    'simplify boundaries with a straightness test rather than a distance budget. '
+      + 'Douglas-Peucker cannot tell the staircase the pixel grid forced on a diagonal from real '
+      + 'curvature, so below tolerance 0.44 it removes nothing and above it removes both. On '
+      + 'quantised boundaries this emits about nine times the curves at equal accuracy. Applied '
+      + 'automatically when the input is clean enough to have quantised edges; this forces it.',
+  )
   .optionsGroup('Pixel mode:')
   .option(
     '--max-rects-per-pixel <ratio>',
