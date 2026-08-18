@@ -95,6 +95,25 @@ export function compareImages(
     for (let c = 0; c < 3; c++) {
       channelScores.push(ssimPlane(planesA.rgb[c], planesB.rgb[c], width, height));
     }
+
+    // Score alpha too, but only when it carries something.
+    //
+    // SSIM used to run over R, G and B alone. Under premultiplied compositing a
+    // dark shape on transparency has all-zero RGB, so alpha is the ONLY channel
+    // holding the artwork — and it was the one channel SSIM could not see. An
+    // EMPTY SVG scored SSIM 1.000000 against a black disc on transparency while
+    // 38% of pixels differed, PSNR was 10.18 dB and CIEDE2000 max was 100. Every
+    // other number in this same function already included alpha; only the one the
+    // `--fail-under` gate reads did not, so the gate could not fail.
+    //
+    // Conditional because unconditional would be its own quiet bug: on opaque
+    // artwork both alpha planes are a constant 255, `ssimPlane` returns 1 for
+    // identical constants, and averaging that in would lift every published score
+    // toward 1 without measuring anything. Alpha joins only when at least one side
+    // varies, or when the two are constant at different values.
+    if (!(isConstant(planesA.alpha) && isConstant(planesB.alpha) && planesA.alpha[0] === planesB.alpha[0])) {
+      channelScores.push(ssimPlane(planesA.alpha, planesB.alpha, width, height));
+    }
     ssim = channelScores.reduce((s, v) => s + v, 0) / channelScores.length;
     ssimLuma = ssimPlane(planesA.luma, planesB.luma, width, height);
   }
@@ -141,15 +160,23 @@ function extractPlanes(rgba: Uint8ClampedArray, pixels: number) {
   const r = new Float64Array(pixels);
   const g = new Float64Array(pixels);
   const b = new Float64Array(pixels);
+  const alpha = new Float64Array(pixels);
   const luma = new Float64Array(pixels);
   for (let i = 0; i < pixels; i++) {
     const o = i * 4;
     r[i] = rgba[o];
     g[i] = rgba[o + 1];
     b[i] = rgba[o + 2];
+    alpha[i] = rgba[o + 3];
     luma[i] = luma709(rgba[o], rgba[o + 1], rgba[o + 2]);
   }
-  return { rgb: [r, g, b] as const, luma };
+  return { rgb: [r, g, b] as const, alpha, luma };
+}
+
+/** True when every sample is the same value, so the plane carries no structure. */
+function isConstant(plane: Float64Array): boolean {
+  for (let i = 1; i < plane.length; i++) if (plane[i] !== plane[0]) return false;
+  return true;
 }
 
 /**

@@ -220,3 +220,57 @@ describe('ssimPlane border/interior split', () => {
     });
   }
 });
+
+describe('SSIM scores alpha when alpha is what carries the artwork', () => {
+  /**
+   * SSIM ran over R, G and B alone. Under premultiplied compositing a dark shape
+   * on transparency has all-zero RGB, so alpha is the only channel holding the
+   * picture — and the one channel SSIM could not see.
+   *
+   * An EMPTY SVG scored SSIM 1.000000 against a black disc on transparency, with
+   * 38% of pixels differing, PSNR 10.18 dB and CIEDE2000 max 100. `verify
+   * --fail-under 0.99` — the CI gate the README recommends — exited 0 on it.
+   */
+  const disc = (alphaInside: number) => {
+    const img = createImage(64, 64);
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const inside = (x - 32) ** 2 + (y - 32) ** 2 < 20 * 20;
+        setPixel(img, x, y, 0, 0, 0, inside ? alphaInside : 0);
+      }
+    }
+    return img;
+  };
+
+  it('does not score a blank frame as perfect against alpha-carried artwork', () => {
+    const blank = createImage(64, 64);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) setPixel(blank, x, y, 0, 0, 0, 0);
+    const r = compareImages(disc(255), blank);
+    expect(r.ssim).toBeLessThan(0.99);
+    // The other metrics always saw this; the point is that SSIM now agrees.
+    expect(r.exactRatio).toBeLessThan(1);
+  });
+
+  it('still returns 1 for a genuinely identical image', () => {
+    expect(compareImages(disc(255), disc(255)).ssim).toBeCloseTo(1, 12);
+  });
+
+  it('leaves fully opaque comparisons untouched, so published numbers do not move', () => {
+    // Both alpha planes are a constant 255. Averaging a free 1.0 into the score
+    // would lift every opaque result toward 1 while measuring nothing, so alpha
+    // is only included when at least one side varies.
+    const a = photoLike(48, 36, 5);
+    const b = photoLike(48, 36, 9);
+    const withAlpha = compareImages(a, b);
+    // Recompute over only the three colour planes and require an exact match.
+    const planes = (img: ReturnType<typeof photoLike>) => {
+      const n = img.width * img.height;
+      const out = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];
+      for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) out[c][i] = img.data[i * 4 + c];
+      return out;
+    };
+    const pa = planes(a), pb = planes(b);
+    const rgbOnly = pa.reduce((s, _, c) => s + ssimPlane(pa[c], pb[c], a.width, a.height), 0) / 3;
+    expect(withAlpha.ssim).toBeCloseTo(rgbOnly, 12);
+  });
+});
