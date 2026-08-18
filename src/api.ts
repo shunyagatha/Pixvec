@@ -99,7 +99,13 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // the original numbers suggested. But this is a trade, not a clean sweep: it
   // costs 2.4x to 3.1x the bytes. Any claim that it wins "on every axis at
   // once" is false and should not be restored.
-  photo: { colors: 48, gradients: true },
+  // `subpixel: false` for the same reason `autoTracePreset` switches it off on
+  // continuous tone: refinement recovers where an *edge* fell by reading the
+  // anti-aliasing across it, and a photograph has no anti-aliased vector edge,
+  // so it fits noise. Without this the preset diverges from `auto` on the
+  // published photo row — 93.8 KB / 30.82 dB / 0.8116 SSIM against 49.3 KB /
+  // 31.31 dB / 0.8476 — and the README says the two behave alike.
+  photo: { colors: 48, gradients: true, subpixel: false },
   detailed: { colors: 48, minArea: 2, tolerance: 0.3, fitError: 0.3, cornerAngle: 60 },
 };
 
@@ -477,6 +483,23 @@ async function findDominatingExact(
   opts: VectorizeOptions,
   notes: string[],
 ): Promise<VectorizeResult | null> {
+  // A trace that produced real curves is not comparable to a raster on size
+  // alone, so it is not "dominated" by one that happens to be smaller.
+  //
+  // This mattered the moment curves became the default. Refinement makes a trace
+  // roughly 2.35x larger gzipped, which pushed far more images over the line
+  // here — so switching curves on in the tracer produced *fewer* curves from
+  // `auto`, because this function then swapped them for a bitmap. Two tests
+  // caught it by expecting 'trace' and getting 'embed'.
+  //
+  // The original reasoning stands where it applies: when the trace emitted no
+  // curve commands at all it is already a bitmap in an SVG wrapper, and an exact
+  // copy that is smaller beats it on every axis with nothing to trade. That case
+  // still switches, and still says so.
+  const tracedCurves = [...traced.svg.matchAll(/\sd="([^"]*)"/g)]
+    .reduce((n, m) => n + (m[1].match(/[CcSsQqTtAa]/g) ?? []).length, 0);
+  if (tracedCurves > 0) return null;
+
   const tracedBytes = Buffer.byteLength(traced.svg);
   // `meta` is required by the type, but plain-JS callers reach here through the
   // CJS build with `vectorize({ image })` — which works for the pixel and embed
@@ -818,8 +841,22 @@ function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
   // minArea here despeckled fine detail — feathers, foliage — and cost more
   // accuracy than the extra colours bought back.
   if (flat.capped) {
-    notes.push('Auto-tuned trace for photographic content: 48-colour palette with gradient de-banding.');
-    return { colors: 48, gradients: true };
+    // Sub-pixel refinement is switched back off here, and the reason is not a
+    // tuning preference. It recovers where an *edge* fell by reading the
+    // anti-aliasing coverage across it. A photograph has no anti-aliased vector
+    // edges — it is continuous tone throughout — so there is no coverage ramp
+    // to invert and the refinement is fitting noise.
+    //
+    // Measured, on the published photo row: leaving it on cost 49.3 -> 93.8 KB,
+    // 31.31 -> 30.82 dB PSNR, 0.8476 -> 0.8116 SSIM and 2.931 -> 3.160 mean
+    // deltaE. Worse on every quality axis *and* nearly twice the size, which is
+    // the rare case where there is nothing to trade off at all.
+    notes.push(
+      'Auto-tuned trace for photographic content: 48-colour palette with ' +
+        'gradient de-banding, and sub-pixel refinement off — continuous tone has ' +
+        'no edge coverage for it to read.',
+    );
+    return { colors: 48, gradients: true, subpixel: false };
   }
   if (flat.distinctColors > FLAT_COLOR_COUNT) {
     notes.push(`Auto-tuned trace for rich colour (${flat.distinctColors} colours): 32-colour palette.`);

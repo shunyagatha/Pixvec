@@ -233,18 +233,29 @@ describe('refineLoop', () => {
 });
 
 describe('subpixel + extendUnder', () => {
-  it('is refused rather than silently ignoring subpixel', async () => {
+  it('lets extendUnder win instead of throwing, now that subpixel is a default', async () => {
     const { trace } = await import('../src/vectorize/trace.js');
     const { flatArtwork } = await import('./fixtures.js');
-    // The two are genuinely incompatible: extendUnder traces a union of classes,
-    // and refinement needs to know which single class is inside. The code handled
-    // that by skipping refinement, so asking for both returned output identical to
-    // asking for neither — 1.36 dB worse on real artwork with every curve
-    // discarded, and nothing said so.
-    expect(() => trace(flatArtwork(48, 36), { subpixel: true, extendUnder: true }))
-      .toThrow(/cannot be combined/);
-    // Each alone still works.
-    expect(() => trace(flatArtwork(48, 36), { subpixel: true })).not.toThrow();
-    expect(() => trace(flatArtwork(48, 36), { extendUnder: true })).not.toThrow();
+
+    // This used to throw, and that was right while both were opt-in: asking for
+    // two incompatible things deserved an explanation rather than a silent
+    // downgrade. Once `subpixel` became a default the error would have fired on
+    // `--extend-under` alone, blaming the user for a combination they never
+    // asked for. `extendUnder` is always explicit, so it is the one to honour.
+    const source = flatArtwork(48, 36);
+    expect(() => trace(source, { subpixel: true, extendUnder: true })).not.toThrow();
+
+    // And it really is extendUnder that ran: identical to asking for extendUnder
+    // with refinement explicitly off, not to a refined trace.
+    // And it really is extendUnder that ran: identical to asking for extendUnder
+    // with refinement explicitly off.
+    const both = trace(source, { subpixel: true, extendUnder: true }).svg;
+    expect(both).toBe(trace(source, { subpixel: false, extendUnder: true }).svg);
+
+    // Deliberately NOT asserting that it differs from a refined plain trace.
+    // `flatArtwork` is hard-edged, and refinement provably cannot move a vertex
+    // where there is no anti-aliasing to read — so the two are identical here
+    // for a reason that has nothing to do with the precedence being tested.
+    // Asserting a difference would only encode the fixture's flatness.
   });
 });
