@@ -254,18 +254,40 @@ describe('speckle scope', () => {
       const o = i * 4;
       base[i] = near.index(img.data[o], img.data[o + 1], img.data[o + 2]);
     }
-    const run = (scope: 'all' | 'isolated'): number => {
+    const run = (scope: 'all' | 'isolated') => {
       const cls = Int32Array.from(base);
       const comps = connectedComponents(cls, W, H, -1);
-      return despeckle(cls, comps, W, H, 6, -1, scope);
+      const removed = despeckle(cls, comps, W, H, 6, -1, scope);
+      return { cls, removed };
     };
     const all = run('all');
     const isolated = run('isolated');
-    // Both remove something, but `isolated` is strictly more conservative: it
-    // declines the fringe components sitting between the two fields.
-    expect(all).toBeGreaterThan(0);
-    expect(isolated).toBeGreaterThan(0);
-    expect(isolated).toBeLessThan(all);
+    const at = (cls: Int32Array, x: number, y: number) => cls[y * W + x];
+
+    // Counts alone were the whole of this assertion, and they are not enough:
+    // inverting the classification at components.ts so that `isolated` absorbs the
+    // FRINGE and spares the SPECKS — exactly backwards — still satisfies
+    // `isolated < all`, and the suite stayed green. What the rule decides is WHICH
+    // components go, so that is what has to be checked.
+    expect(all.removed).toBeGreaterThan(0);
+    expect(isolated.removed).toBeGreaterThan(0);
+    expect(isolated.removed).toBeLessThan(all.removed);
+
+    // A speck sits inside one field, so exactly one class borders it: grain, and
+    // free to absorb. Both scopes take it, into the field's own class.
+    const fieldClass = at(base, 10, 9);
+    expect(at(base, 12, 9)).not.toBe(fieldClass);          // it really is its own class first
+    expect(at(all.cls, 12, 9)).toBe(fieldClass);
+    expect(at(isolated.cls, 12, 9)).toBe(fieldClass);
+
+    // A fringe component on the seam borders TWO classes, so it carries the
+    // sub-pixel position of that edge. `all` absorbs it and drags the boundary;
+    // `isolated` must leave it exactly where it was.
+    const fringeClass = at(base, 45, 10);
+    expect(at(base, 44, 10)).not.toBe(fringeClass);
+    expect(at(base, 46, 10)).not.toBe(fringeClass);
+    expect(at(all.cls, 45, 10)).not.toBe(fringeClass);     // dragged
+    expect(at(isolated.cls, 45, 10)).toBe(fringeClass);    // spared
   });
 
   it('defaults to `all`, so existing output is unchanged', async () => {

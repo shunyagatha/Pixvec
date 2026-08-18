@@ -156,22 +156,59 @@ describe('refineLoop', () => {
   });
 
   it('refuses to move a boundary between two indistinguishable colours', () => {
-    // Contrast below the noise floor: coverage is unrecoverable, so the honest
-    // answer is to leave the lattice alone rather than amplify rounding.
+    // This test used to use a HARD edge one level apart, 128 | 129, and it passed
+    // with `MIN_CONTRAST_SQ` deleted. On a hard edge the estimator gives
+    // d = 1 + 0 - 1 = 0 exactly, so control leaves at `if (d === 0) continue`
+    // and never reaches the contrast floor at all. The rule that decides whether
+    // coverage is recoverable or is just 8-bit rounding had no effective test.
+    //
+    // Reaching it needs the opposite pair of conditions: anti-aliasing PRESENT, so
+    // d is non-zero and the estimator would otherwise act, with the two sides too
+    // close together to trust. The floor is 3*3*4 = 36 in summed squared RGBA
+    // distance, so a grey step of 3 sits at 27 and a step of 4 at 48.
+    //
+    // Verified to discriminate: with the floor removed, the delta-3 case moves 9
+    // vertices instead of 0.
+    const antialiasedStep = (delta: number) => {
+      const w = 16, h = 8, edgeX = 8.35;
+      const img: RasterImage = { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
+      const classes = new Int32Array(w * h);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const coverage = Math.max(0, Math.min(1, edgeX - x));
+          const v = Math.round(128 + delta * (1 - coverage));
+          const o = (y * w + x) * 4;
+          img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255;
+          classes[y * w + x] = v <= 128 + delta / 2 ? 1 : 0;
+        }
+      }
+      return { img, classes };
+    };
+
+    // 3*3*3 = 27, below the floor: leave the lattice alone.
+    const below = antialiasedStep(3);
+    expect(refineLoop(outerLoop(below.img, below.classes)!, below.img, below.classes, 1).moved).toBe(0);
+
+    // 3*4*4 = 48, above it: the same geometry, now worth reading.
+    const above = antialiasedStep(4);
+    expect(refineLoop(outerLoop(above.img, above.classes)!, above.img, above.classes, 1).moved).toBeGreaterThan(0);
+  });
+
+  it('leaves a hard edge alone because there is no coverage to read', () => {
+    // The original fixture, kept for what it actually tests: zero anti-aliasing
+    // means zero displacement, via `d === 0` rather than via the contrast floor.
     const w = 10, h = 6;
     const img: RasterImage = { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) };
     const classes = new Int32Array(w * h);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const o = (y * w + x) * 4;
-        const v = x < 4 ? 128 : 129; // one level apart
+        const v = x < 4 ? 128 : 129;
         img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255;
         classes[y * w + x] = x < 4 ? 1 : 0;
       }
     }
-    const loop = outerLoop(img, classes)!;
-    const refined = refineLoop(loop, img, classes, 1);
-    expect(refined.moved).toBe(0);
+    expect(refineLoop(outerLoop(img, classes)!, img, classes, 1).moved).toBe(0);
   });
 
   it('hands the fitter something it accepts', () => {
