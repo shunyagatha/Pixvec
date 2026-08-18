@@ -407,6 +407,20 @@ export function autoMinArea(pixels: number): number {
   // does the output still carry detail where the original does — minArea 2
   // holds 98%, against a 90% floor. It is 88% at 4 and 73% at 8, which is why
   // the floor is 2 and not higher.
+  //
+  // REACHABILITY, stated because the floor above is easy to over-read: this
+  // function only runs when `minArea` arrives `undefined`, and `api.ts` spreads
+  // `TRACE_DEFAULTS` — which pins `minArea: 0` — over every `vectorize()` call.
+  // So through the public API this adaptive rule never fires, and the floor
+  // added here changes nothing for CLI or library callers. It applies to direct
+  // `trace()` calls only. Pinning `minArea: 0` was a deliberate decision and is
+  // not overturned here.
+  //
+  // Worth measuring before that is revisited: the two known data points point
+  // in OPPOSITE directions to this rule. A 100x100 image wants 2 (regions
+  // 4,438 -> 1,019 at 98% detail) where the rule gives 0; a 24 MP photograph
+  // was measured to prefer 0 where the rule gives 16. If that holds across
+  // sizes, the scaling is inverted and the fix is not a floor.
   return Math.max(2, Math.min(16, Math.round(pixels / 50_000)));
 }
 
