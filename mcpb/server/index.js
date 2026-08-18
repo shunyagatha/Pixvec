@@ -22,7 +22,7 @@
 const { spawn, spawnSync } = require('node:child_process');
 
 // Pinned so a bundle always launches the version it was tested against.
-const VERSION = '2.1.0';
+const VERSION = '2.1.1';
 
 const isWindows = process.platform === 'win32';
 
