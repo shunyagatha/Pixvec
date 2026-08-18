@@ -70,6 +70,36 @@ function pixelArt(scale) {
   return img;
 }
 
+/**
+ * A stand-in for a photograph — with a known limit, stated because a published
+ * gate that quietly disagrees with reality is worse than no gate.
+ *
+ * This has structure at exactly two scales: whole-frame `sin`/`cos` gradients,
+ * and per-pixel grain. Nothing between. Real photographs carry edges, texture and
+ * objects at intermediate scales, and large coherent areas — sky, skin,
+ * background — that this has none of.
+ *
+ * That gap flips the verdict on anything that exploits mid-scale structure.
+ * Measured with `segment: 0.02`, a region-segmentation pass:
+ *
+ *   this fixture            -2.49 dB, 1.12x the bytes   (worse on both)
+ *   six real photographs    -0.65 dB, 0.84x the bytes   (mean; all six smaller)
+ *   cat -0.97/0.73x  parrots -0.39/0.83x  portrait -0.86/0.80x
+ *   lighthouse -0.91/0.84x  motorcycles -0.34/0.91x  jpeg-artifacts -0.42/0.94x
+ *
+ * Adding mid-scale blobs was tried and moved the accuracy axis most of the way
+ * (-2.49 -> -1.02 dB) while leaving the size axis pointing the wrong way (1.17x
+ * against a real 0.84x), because the missing ingredient is large coherent AREAS
+ * rather than more detail. It was reverted: a fixture change moves every
+ * published row, and half-closing the gap is not worth invalidating the table.
+ *
+ * So: trust this row for codec and mode comparisons, which is what it was built
+ * for. Do NOT trust it alone for a change that interacts with image structure —
+ * check `corpus/src` after `node scripts/fetch-corpus.mjs`, where the assets are
+ * real. The reason this is synthesised at all is at the top of the file and still
+ * holds: the table must be regenerable by anyone who clones, with no assets that
+ * can move or carry an unclear licence.
+ */
 function photoLike(width, height, seed = 11) {
   const img = image(width, height);
   const rand = mulberry32(seed);
