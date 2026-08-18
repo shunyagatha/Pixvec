@@ -306,6 +306,52 @@ async function conform(img, w, h, scale) {
   return upscale(img, w, h);
 }
 
+/**
+ * Fraction of the truth's detailed regions where the candidate still has detail.
+ *
+ * Every other number here can be improved by deleting the subject. Edge-PSNR is
+ * averaged over the edge band, so removing a feature removes the pixels that
+ * were scoring badly; anchors and bytes fall outright. Measured on a real image,
+ * `--preset logo` won on all three at once by dropping `minArea: 8` over a
+ * 100x100 sticker — which erased the dog's face. Nothing in this harness
+ * objected, because there was less picture left to be wrong about.
+ *
+ * So this asks a different question: where the original has structure, is there
+ * still structure? Grid the frame, mark the cells where the truth carries edges,
+ * and check the candidate carries some there too. A config that simplifies
+ * honestly keeps the cells and moves the edges slightly; a config that deletes
+ * features empties them.
+ *
+ * Deliberately generous — a cell survives on a quarter of the truth's edge
+ * energy. This is a tripwire for destruction, not a quality score, and it must
+ * not fire on legitimate simplification.
+ */
+function detailKept(truth, cand, cell = 16) {
+  const w = truth.width, h = truth.height;
+  // Undilated: dilation smears energy across cell borders and would let a
+  // neighbouring cell's edges stand in for a deleted feature.
+  const tm = edgeMask(truth, 40, 0);
+  const cm = edgeMask(cand, 40, 0);
+  let detailed = 0, survived = 0;
+  for (let cy = 0; cy < h; cy += cell) {
+    for (let cx = 0; cx < w; cx += cell) {
+      let t = 0, c = 0;
+      for (let y = cy; y < Math.min(cy + cell, h); y++) {
+        for (let x = cx; x < Math.min(cx + cell, w); x++) {
+          if (tm[y * w + x]) t++;
+          if (cm[y * w + x]) c++;
+        }
+      }
+      // Ignore near-empty cells: a couple of stray pixels is not "detail", and
+      // counting them would make the ratio noise.
+      if (t < 4) continue;
+      detailed++;
+      if (c >= t * 0.25) survived++;
+    }
+  }
+  return detailed === 0 ? 1 : survived / detailed;
+}
+
 function compare(truth, cand, mask) {
   if (truth.width !== cand.width || truth.height !== cand.height) {
     throw new Error(
@@ -332,6 +378,7 @@ function compare(truth, cand, mask) {
     edgePsnr: psnr(seEdge / Math.max(nEdge, 1)),
     edgeMae: aeEdge / Math.max(nEdge, 1),
     edgeFraction: nEdge / n,
+    detailKept: detailKept(truth, cand),
   };
 }
 
@@ -425,8 +472,8 @@ async function main() {
   function record(scale, shape, id, m, bytes, mode) {
     report.push({ scale, shape, id, mode, bytes, ...m });
     const per = totals.get(scale);
-    const t = per.get(id) ?? { edge: 0, full: 0, anchors: 0, elements: 0, primitives: 0, curveOps: 0, bytes: 0, n: 0 };
-    t.edge += m.edgePsnr; t.full += m.fullPsnr;
+    const t = per.get(id) ?? { edge: 0, full: 0, detail: 0, anchors: 0, elements: 0, primitives: 0, curveOps: 0, bytes: 0, n: 0 };
+    t.edge += m.edgePsnr; t.full += m.fullPsnr; t.detail += m.detailKept ?? 1;
     t.anchors += m.anchors ?? 0; t.elements += m.elements ?? 0;
     t.primitives += m.primitives ?? 0; t.curveOps += m.curveOps ?? 0;
     t.bytes += bytes; t.n++;
@@ -484,6 +531,7 @@ async function main() {
       .map(([id, t]) => ({
         id,
         edge: t.edge / t.n,
+        detail: t.detail / t.n,
         full: t.full / t.n,
         anchors: Math.round(t.anchors / t.n),
         elements: Math.round(t.elements / t.n),
@@ -502,15 +550,39 @@ async function main() {
     console.log(`\n=== scored at ${Math.round(BASE * scale)}px (${scale}x)${note} ===`);
     console.log(
       'candidate'.padEnd(24) + h('edgePSNR', 10) + h('fullPSNR', 10) +
-      h('anchors', 9) + h('curves', 8) + h('elems', 7) + h('prims', 7) + h('bytes', 9),
+      h('detail', 8) + h('anchors', 9) + h('curves', 8) + h('elems', 7) + h('prims', 7) + h('bytes', 9),
     );
     for (const r of rows) {
       console.log(
         r.id.padEnd(24) + h(r.edge.toFixed(2), 10) + h(r.full.toFixed(2), 10) +
+        // Flagged, not just printed. A row that kept under 90% of the truth's
+        // detailed cells improved its other numbers by deleting the subject, and
+        // that must not read as a win in a table skimmed for the best figures.
+        h(`${(r.detail * 100).toFixed(0)}%${r.detail < 0.9 ? '!' : ''}`, 8) +
         h(r.anchors || '-', 9) + h(r.curveOps || '-', 8) +
         h(r.elements || '-', 7) + h(r.primitives || '-', 7) + h(r.bytes, 9),
       );
     }
+  }
+
+  // Named, after the table, so it cannot be skimmed past.
+  const wrecked = [...new Set(
+    [...totals.values()]
+      .flatMap((per) => [...per.entries()])
+      .filter(([, t]) => t.n > 0 && t.detail / t.n < 0.9)
+      .map(([id, t]) => `${id} (${((t.detail / t.n) * 100).toFixed(0)}%)`),
+  )];
+  if (wrecked.length > 0) {
+    console.log(
+      `\n!! DETAIL LOST: ${wrecked.join(', ')}` +
+      `\n   These kept under 90% of the cells where the original has structure.` +
+      `\n   Every other column here can be improved by deleting the subject: edge` +
+      `\n   PSNR averages over the edge band, so removing a feature removes the` +
+      `\n   pixels that were scoring badly, and anchors and bytes fall outright.` +
+      `\n   Measured: --preset logo won on all three at once by erasing a dog's` +
+      `\n   face, minArea 8 over a 100x100 sticker. Read a good score with a low` +
+      `\n   detail figure as a destroyed image until you have looked at it.`,
+    );
   }
 
   console.log(
