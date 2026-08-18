@@ -266,9 +266,10 @@ export function mergeRegions(graph: RegionGraph, opts: MergeOptions = {}): Merge
  *   k=0.1    0.9686 /  82,329         0.9167 / 32,316
  *   k=0.2    0.9541 /  69,471         0.8414 / 24,240
  *
- * (Unsegmented: 0.9815 / 110,407 B and 0.9620 / 64,934 B.) Note k=0.005 beats the
- * unsegmented trace on BOTH images — very light segmentation is a small free win,
- * and everything past k=0.05 is a deliberate purchase of size with accuracy.
+ * (Unsegmented: 0.9815 / 110,407 B and 0.9620 / 64,934 B.) k=0.005 raises SSIM on
+ * both, but it is only a strict improvement on the sticker (+0.0001 at -0.6% bytes);
+ * on logo-tux it buys +0.0017 for 2.7% MORE bytes, which is a trade and not a free
+ * win. Everything past k=0.05 is a deliberate purchase of size with accuracy.
  *
  * So: to compact, turn `k` up. `minRegion` is grain cleanup and nothing else, and
  * anyone reaching for it expecting compaction is reaching for the wrong one.
@@ -288,19 +289,32 @@ export function segmentPixels(img: RasterImage, k = 300, minRegion = 0): Int32Ar
   const { width: w, height: h, data } = img;
   const n = w * h;
 
-  // Oklab once per pixel; every edge weight below is a difference of these.
-  const lab = new Float64Array(n * 3);
+  // Oklab plus alpha, once per pixel; every edge weight below is a difference of
+  // these. Alpha is the fourth component and not an afterthought: without it two
+  // pixels identical in RGB and opposite in transparency are zero distance apart,
+  // so a hard alpha edge merges into one region and `flattenToSegments` averages
+  // its alpha. Measured on a half-opaque/half-transparent field of ONE rgb colour:
+  // 1 region, and both halves came back at alpha 128 — the opaque half turned
+  // translucent and the invisible half became visible. That is the whole image
+  // destroyed, and it is why alpha-dice was the one corpus subject that got worse
+  // on accuracy AND size at every k.
+  //
+  // Scaled to 0-1 so a full transparency flip weighs the same as black-to-white in
+  // L, which is the least it can be worth: an alpha edge is a shape boundary.
+  const lab = new Float64Array(n * 4);
   const px = new Float64Array(3);
   for (let i = 0; i < n; i++) {
     const o = i * 4;
     srgbToOklab(data[o], data[o + 1], data[o + 2], px);
-    lab[i * 3] = px[0]; lab[i * 3 + 1] = px[1]; lab[i * 3 + 2] = px[2];
+    lab[i * 4] = px[0]; lab[i * 4 + 1] = px[1]; lab[i * 4 + 2] = px[2];
+    lab[i * 4 + 3] = data[o + 3] / 255;
   }
   const dist = (a: number, b: number): number => {
-    const dl = lab[a * 3] - lab[b * 3];
-    const da = lab[a * 3 + 1] - lab[b * 3 + 1];
-    const db = lab[a * 3 + 2] - lab[b * 3 + 2];
-    return Math.sqrt(dl * dl + da * da + db * db);
+    const dl = lab[a * 4] - lab[b * 4];
+    const da = lab[a * 4 + 1] - lab[b * 4 + 1];
+    const db = lab[a * 4 + 2] - lab[b * 4 + 2];
+    const dt = lab[a * 4 + 3] - lab[b * 4 + 3];
+    return Math.sqrt(dl * dl + da * da + db * db + dt * dt);
   };
 
   // Right, down, and both diagonals: each undirected edge visited once.

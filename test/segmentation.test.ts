@@ -89,6 +89,66 @@ describe('segmentPixels', () => {
   });
 });
 
+describe('alpha is part of the segmentation, not an afterthought', () => {
+  /** Half opaque, half transparent, ONE rgb colour — so alpha is the only signal. */
+  const alphaEdge = (): RasterImage => {
+    const data = new Uint8ClampedArray(40 * 40 * 4);
+    for (let y = 0; y < 40; y++) {
+      for (let x = 0; x < 40; x++) {
+        const o = (y * 40 + x) * 4;
+        data[o] = 180; data[o + 1] = 60; data[o + 2] = 40;
+        data[o + 3] = x < 20 ? 255 : 0;
+      }
+    }
+    return { width: 40, height: 40, data };
+  };
+
+  it('keeps a transparency edge apart when the colours either side are identical', () => {
+    expect(regionCount(segmentPixels(alphaEdge(), 0.02, 0))).toBe(2);
+  });
+
+  it('does not average a hard alpha edge into a uniform wash', () => {
+    // The failure this guards: with alpha outside the edge weight the two halves
+    // are zero distance apart, merge into one region, and come back at alpha 128
+    // each — the opaque half turned translucent and the invisible half visible.
+    const out = flattenToSegments(alphaEdge(), 0.02, 0);
+    const alphaAt = (x: number, y: number) => out.data[(y * 40 + x) * 4 + 3];
+    expect(alphaAt(2, 20)).toBe(255);
+    expect(alphaAt(37, 20)).toBe(0);
+  });
+
+  it('weighs a transparency step the same as a lightness step of equal size', () => {
+    // Presence is not enough: the two tests above still pass with alpha weighted at
+    // a ten-thousandth, because on regions this size the k/size threshold decides
+    // everything and any non-zero weight separates them. This pins the WEIGHT.
+    //
+    // Two pixels and one edge, so the merge threshold is exactly k and a bisection
+    // on k reads the edge weight directly off the algorithm.
+    const pair = (a: number[], b: number[]): RasterImage =>
+      ({ width: 2, height: 1, data: new Uint8ClampedArray([...a, ...b]) });
+    const mergeThreshold = (img: RasterImage) => {
+      let lo = 0, hi = 2;
+      for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        const labels = segmentPixels(img, mid, 0);
+        if (labels[0] === labels[1]) hi = mid; else lo = mid;
+      }
+      return lo;
+    };
+
+    // Half transparency against the lightness step that measures the same in Oklab.
+    const byAlpha = mergeThreshold(pair([180, 60, 40, 255], [180, 60, 40, 128]));
+    const byLightness = mergeThreshold(pair([255, 255, 255, 255], [100, 100, 100, 255]));
+    expect(byAlpha).toBeGreaterThan(0.4);
+    expect(Math.abs(byAlpha - byLightness)).toBeLessThan(0.02);
+  });
+
+  it('leaves a fully opaque image alone, so the alpha term costs opaque art nothing', () => {
+    const opaque = image(40, 40, (x) => (x < 20 ? [200, 40, 40] : [40, 40, 200]));
+    expect(regionCount(segmentPixels(opaque, 0.02, 0))).toBe(2);
+  });
+});
+
 describe('flattenToSegments', () => {
   it('keeps the frame and paints each region one colour', () => {
     const img = image(24, 24, (x) => (x < 12 ? [200, 30, 30] : [30, 30, 200]));
