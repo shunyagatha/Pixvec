@@ -2702,6 +2702,20 @@ function isCommanderExit(err: unknown): err is CommanderExit {
     && (err as CommanderExit).code.startsWith('commander.');
 }
 
+// Reject arguments no command asked for, rather than dropping them on the floor.
+//
+// commander 12 accepts excess positionals silently. `vectorize` takes ONE
+// positional and writes to `-o`, while `convert` takes TWO — so the natural
+// `vectorize in.jpg out.svg` was parsed as an input plus one ignored word, and
+// the SVG went to the DEFAULT path, `<input>.svg`, next to the source. Exit 0,
+// no warning, and a file written somewhere the user did not name. That is how a
+// reference file next to the input got overwritten.
+//
+// Commands taking `<inputs...>` are variadic and absorb their own arguments, so
+// this only fires on genuinely unwanted words.
+for (const command of program.commands) command.allowExcessArguments(false);
+program.allowExcessArguments(false);
+
 program.parseAsync(process.argv).catch((err: unknown) => {
   if (isCommanderExit(err)) {
     // Commander has already written the help text or the parse error itself.

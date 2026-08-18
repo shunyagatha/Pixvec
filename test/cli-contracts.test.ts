@@ -457,3 +457,57 @@ describe.skipIf(!built)('CLI: vectorize refuses a non-SVG output name', () => {
     expect(existsSync(join(dir, 'out.svg'))).toBe(true);
   });
 });
+
+describe.skipIf(!built)('CLI: an argument no command asked for is an error, not a shrug', () => {
+  /**
+   * `vectorize` takes ONE positional and writes to `-o`; `convert` takes TWO. So
+   * the natural-looking `vectorize in.jpg out.svg` parsed as an input plus one
+   * ignored word, and the SVG went to the DEFAULT path — `<input>.svg`, beside
+   * the source — at exit 0 with nothing printed about it.
+   *
+   * That is silent data loss dressed as success: the file lands somewhere the
+   * user did not name, and overwrites whatever was already there. It cost a
+   * reference file sitting next to the input.
+   */
+  let dir: string;
+  let src: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vecline-excess-'));
+    src = join(dir, 'in.png');
+    await writeFile(src, await encode(flatArtwork(64, 48), 'png'));
+  });
+
+  it('rejects a second positional on a single-input command', async () => {
+    const r = await cli(['vectorize', src, join(dir, 'out.svg'), '--mode', 'trace']);
+    expect(r.code).not.toBe(0);
+    expect(`${r.stderr}${r.stdout}`).toMatch(/too many arguments/i);
+  });
+
+  it('does not write the default-path file when it rejects', async () => {
+    // The whole point: the rejected form must not have already written somewhere.
+    await cli(['vectorize', src, join(dir, 'ignored.svg'), '--mode', 'trace']);
+    expect(existsSync(join(dir, 'in.svg'))).toBe(false);
+    expect(existsSync(join(dir, 'in.png.svg'))).toBe(false);
+  });
+
+  it('still accepts the correct single-input form', async () => {
+    const out = join(dir, 'ok.svg');
+    const r = await cli(['vectorize', src, '-o', out, '--mode', 'trace']);
+    expect(r.code).toBe(0);
+    expect(existsSync(out)).toBe(true);
+  });
+
+  it('still accepts two positionals where the command declares two', async () => {
+    const out = join(dir, 'converted.svg');
+    const r = await cli(['convert', src, out]);
+    expect(r.code).toBe(0);
+    expect(existsSync(out)).toBe(true);
+  });
+
+  it('still accepts many positionals where the command is variadic', async () => {
+    const out = join(dir, 'sheet.svg');
+    const r = await cli(['sprite', src, src, '-o', out]);
+    expect(r.code).toBe(0);
+    expect(existsSync(out)).toBe(true);
+  });
+});
