@@ -4092,12 +4092,27 @@ var TRACE_DEFAULTS = {
   primitives: false,
   primitiveError: 1,
   optimize: true,
-  precision: 2,
+  // 1, not 2. Sub-pixel refinement moves coordinates off the integer lattice,
+  // and it is the lattice that compresses — measured on 25 real logos, turning
+  // subpixel on drops integer coordinates from 100% to 18% and the gzip ratio
+  // from 5.69x to 3.55x. Halving the digits attacks exactly that cost: 3.29x
+  // gzipped becomes 2.35x. Nothing is lost at this precision that the eye or
+  // the edge metric can find, because the refinement's own accuracy is ~0.1px.
+  //
+  // Only `trace` reads this. `pixel` and `exact` build with `new PathBuilder(0)`
+  // and are unaffected, so bit-exact output stays bit-exact.
+  precision: 1,
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
   extendUnder: false,
-  subpixel: false,
+  // On by default as of the curves change. Everything about why this is
+  // affordable — and why it is NOT affordable alone — is on the `subpixel`
+  // option above. Short version: with `precision: 1` beside it the gzipped cost
+  // is 2.35x, against 3.29x on its own, and it is the only thing that makes the
+  // curve fitter run. Without it the default emits zero curve commands on real
+  // artwork, which is a bitmap in an SVG wrapper.
+  subpixel: true,
   groupByColor: false,
   turnPolicy: "left",
   gradients: false,
@@ -4118,10 +4133,9 @@ function trace(source, opts = {}) {
     minArea: autoMinArea(source.width * source.height),
     ...clean
   };
+  if (o.tolerance === 0) o.subpixel = false;
   if (o.subpixel && o.extendUnder) {
-    throw new Error(
-      "subpixel and extendUnder cannot be combined: extendUnder traces the union of several classes, and sub-pixel refinement needs to know which single class is inside a boundary to read its coverage. Pick one \u2014 subpixel is worth about +1.4 dB of edge accuracy and is what lets the curve fitter run at all, while extendUnder removes antialiasing seams at roughly 4x the anchors. Previously this combination silently ignored subpixel."
-    );
+    o.subpixel = false;
   }
   const report = (stage, pct) => {
     if (o.signal?.aborted) throw new Error("Trace aborted.");
