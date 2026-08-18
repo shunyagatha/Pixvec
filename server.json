@@ -6,7 +6,7 @@
     "url": "https://github.com/shunyagatha/Vecline",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "websiteUrl": "https://vecline.xyz",
   "icons": [
     {
@@ -21,7 +21,7 @@
     {
       "registryType": "npm",
       "identifier": "vecline",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "transport": {
         "type": "stdio"
       },
