@@ -393,7 +393,21 @@ export const TRACE_DEFAULTS = {
  * Values of 1 or below disable the pass, which is what small images want.
  */
 export function autoMinArea(pixels: number): number {
-  return Math.min(16, Math.round(pixels / 50_000));
+  // Floored at 2, which is the smallest value `despeckle` acts on at all — it
+  // early-returns at `minArea <= 1`. Without the floor this returns 0 for
+  // anything under ~158x158 and 1 up to ~256x256, so small images got no
+  // cleanup whatsoever, and small images are exactly where stray pixels
+  // dominate. Measured on a 100x100 JPEG: 4,438 disjoint regions at 0 against
+  // 1,019 at 2, with gzipped size halved (11.1 -> 5.9 KB).
+  //
+  // The note above records "172x178 JPEG -> 0 (despeckling here costs 0.087
+  // SSIM; skip it)". That figure is real and it is the wrong instrument: 1x
+  // SSIM against the source rewards reproducing the source's noise, which is
+  // precisely what these one-pixel islands are. On the structural measure —
+  // does the output still carry detail where the original does — minArea 2
+  // holds 98%, against a 90% floor. It is 88% at 4 and 73% at 8, which is why
+  // the floor is 2 and not higher.
+  return Math.max(2, Math.min(16, Math.round(pixels / 50_000)));
 }
 
 export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput {
