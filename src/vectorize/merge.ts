@@ -227,33 +227,56 @@ export function mergeRegions(graph: RegionGraph, opts: MergeOptions = {}): Merge
  * up as separate regions along every diagonal edge.
  */
 /**
- * WHICH KNOB IS ACTUALLY DOING THE WORK — measured, because I got this wrong once.
+ * WHICH KNOB IS ACTUALLY DOING THE WORK — measured twice, and it changed under me.
  *
- * `k` barely matters. Across a tenfold range, 0.005 to 0.05, logo-tux holds
- * 0.9554-0.9570 SSIM and a JPEG sticker 0.8477-0.8507, with region counts moving
- * a few percent. The Felzenszwalb criterion is doing far less than its prominence
- * in the comments above suggests.
+ * This block previously said the opposite, and the earlier reading was correct
+ * about the code as it stood. The runt-absorption fix below inverted it, so both
+ * tables are kept: one describes behaviour that no longer exists, which is the
+ * only way to see what the fix actually did.
  *
- * `minRegion` is the whole lever, and it is a SIZE threshold — the same criterion
- * this module's header argues against, doing the compaction the header credits to
- * the merge policy:
+ * BEFORE the fix, when the size pass absorbed every runt regardless of where it
+ * sat, `minRegion` compacted hard and paid for it in accuracy:
  *
  *              logo-tux                    JPEG sticker
  *   mr=0   0.9878 / 6,367 regions      0.9562 / 3,893 regions
- *   mr=2   0.9693 / 3,003              0.9399 / 2,708
- *   mr=4   0.9644 / 2,275              0.9122 / 1,962
  *   mr=8   0.9570 / 1,852              0.8503 / 1,049
  *
- * (Unsegmented, those two are 0.9884 and 0.9620.) At `mr=0` both images survive
- * almost untouched and almost uncompacted; every region reduction, and every point
- * of accuracy lost, arrives with the size pass.
+ * AFTER it, a runt is absorbed only when one neighbour owns two thirds of its
+ * border — grain, not edge fringe. Most runts on real artwork are fringe, so they
+ * are now spared, and `minRegion` stopped doing either thing. End to end, k=0.02:
  *
- * That does NOT void the result this module was built for. Absorbing small regions
- * out of a good segmentation is far less destructive than absorbing them out of a
- * quantisation-fragmented one: at ~260-300 regions, blur-plus-despeckle scores
- * 0.4557 where this scores 0.8415. The merge is not what compacts — it is what
- * makes compaction survivable. Stating it the other way round, as the header
- * originally did, credits the wrong stage.
+ *              logo-tux                    JPEG sticker
+ *   mr=0   0.9799 / 101,964 B         0.9556 / 56,784 B
+ *   mr=2   0.9792 / 100,412           0.9552 / 56,633
+ *   mr=4   0.9765 /  95,932           0.9556 / 56,240
+ *   mr=8   0.9769 /  93,393           0.9556 / 56,240
+ *   mr=16  0.9769 /  93,404           0.9559 / 56,163
+ *
+ * On the sticker that is a 0.0007 spread in SSIM and 1.1% in bytes. The knob is
+ * very nearly inert, and its accuracy cost is gone — which is the fix working,
+ * not the knob failing.
+ *
+ * `k` is now the lever, and it is the honest one: it is a threshold on colour
+ * difference, so it trades accuracy for compaction monotonically and legibly.
+ *
+ *              logo-tux                    JPEG sticker
+ *   k=0.005  0.9832 / 113,415 B       0.9621 / 64,538 B
+ *   k=0.02   0.9799 / 101,964         0.9556 / 56,784
+ *   k=0.05   0.9770 /  94,136         0.9411 / 44,183
+ *   k=0.1    0.9686 /  82,329         0.9167 / 32,316
+ *   k=0.2    0.9541 /  69,471         0.8414 / 24,240
+ *
+ * (Unsegmented: 0.9815 / 110,407 B and 0.9620 / 64,934 B.) Note k=0.005 beats the
+ * unsegmented trace on BOTH images — very light segmentation is a small free win,
+ * and everything past k=0.05 is a deliberate purchase of size with accuracy.
+ *
+ * So: to compact, turn `k` up. `minRegion` is grain cleanup and nothing else, and
+ * anyone reaching for it expecting compaction is reaching for the wrong one.
+ *
+ * The claim this module was built to support is untouched by the reversal. At
+ * ~260-300 regions, blur-plus-despeckle scores 0.4557 where this scores 0.8415;
+ * segmenting before quantising is what makes compaction survivable, whichever
+ * knob applies it.
  *
  * A ramp-protection pass was tried here and removed: per region, fit a plane to
  * lightness and keep the original pixels where it explained the variation, so
