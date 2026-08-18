@@ -183,17 +183,46 @@ describe('every format converts to every other', () => {
 
       for (const to of all) {
         try {
+          // Dimensions are the weakest thing a cell can be asked for: a writer
+          // that emitted a correctly-sized blank would satisfy them, and this
+          // package has shipped exactly that — a TGA whose SVG came out empty
+          // and was labelled "bit-exact by construction". So every cell is
+          // checked against the pixels that went in, not just their shape.
+          //
+          // The reference is `pixels` rather than `source`: `pixels` is what
+          // this cell was actually handed, already carrying whatever the `from`
+          // format cost. Comparing against `source` would blame each `to` for
+          // its input's losses and force the thresholds down until they stopped
+          // meaning anything.
+          let back: RasterImage;
           if (to === 'svg') {
             const loaded = await loadRaster(pngInput);
             const result = await vectorize({ ...loaded, image: pixels }, { mode: 'lossless' });
-            const back = await rasterizeSvg(result.svg, { width: source.width });
-            if (back.image.width !== source.width) throw new Error('size mismatch');
+            back = (await rasterizeSvg(result.svg, { width: source.width })).image;
           } else {
             const encoded = await encodeRaster(pixels, { format: to, lossless: true, quality: 100 });
-            const back = await decodeRaster(encoded);
-            if (back.image.width !== source.width || back.image.height !== source.height) {
-              throw new Error(`size ${back.image.width}x${back.image.height}`);
+            back = (await decodeRaster(encoded)).image;
+          }
+
+          if (back.width !== source.width || back.height !== source.height) {
+            throw new Error(`size ${back.width}x${back.height}`);
+          }
+
+          const q = compareImages(pixels, back);
+          if (LOSSLESS_FORMATS.has(to as RasterFormat)) {
+            // Declared lossless, so anything short of identical is a defect.
+            if (!q.lossless) {
+              throw new Error(
+                `declared lossless but ${q.pixels - q.exactPixels} of ${q.pixels} pixels differ ` +
+                  `(max channel delta ${q.maxChannelDiff})`,
+              );
             }
+          } else if (q.ssim < 0.95) {
+            // JPEG, AVIF, GIF and the SVG round trip are allowed to lose
+            // something. They are not allowed to lose the picture: a blank or
+            // scrambled result lands far below this, while genuine codec loss
+            // on a four-colour fixture sits at essentially 1.
+            throw new Error(`content lost: SSIM ${q.ssim.toFixed(4)}, PSNR ${q.psnr.toFixed(1)} dB`);
           }
         } catch (err) {
           failures.push(`${from} -> ${to}: ${(err as Error).message}`);
