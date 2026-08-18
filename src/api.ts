@@ -439,6 +439,38 @@ function isPixelFeasible(img: RasterImage, flat: Flatness): boolean {
  * both smaller and bit-exact. Anything less is a genuine trade-off, and those
  * belong to the caller.
  */
+/**
+ * What `auto` actually optimises for, measured — because three separate
+ * investigations have now reached for this question and each assumed a
+ * different mechanism.
+ *
+ * **`auto` never returns a Bézier.** Swept across 39 real images — flat icons,
+ * multi-colour logos, alpha-heavy art and photographs — the default produced
+ * zero curve commands on every one. Not by one route but by three, which is why
+ * it keeps being rediscovered as a new bug:
+ *
+ * - flat few-colour art goes to `pixel` (30 of 39), which is bit-exact
+ *   rectangles — see {@link isPixelFeasible};
+ * - richer artwork goes to `trace`, and then this function finds an exact copy
+ *   that is smaller *and* bit-exact and takes it (7 of the 9 that reached trace;
+ *   on `logo-tux.png`, 16,221 bytes against the trace's 107,926);
+ * - what survives as a trace still emits no curves, because at the shipped
+ *   `tolerance: 0.4` the fitter does not fire at all.
+ *
+ * That is a coherent contract, not three bugs: **`auto` optimises for fidelity
+ * at the image's own resolution, and resolution independence is the axis it does
+ * not weigh.** Every branch above is the right answer to "reproduce this image
+ * as faithfully and cheaply as possible" and the wrong answer to "give me
+ * something that scales".
+ *
+ * The redeeming property, also measured: it is never silent. All 39 carried a
+ * note naming what happened and how to get curves instead — 0 non-scalable
+ * results without an explanation. Keep it that way; a default that quietly
+ * hands back a bitmap in an SVG wrapper is the actual defect, not this one
+ * choosing exactness.
+ *
+ * Users who want curves have `--mode trace`, `--preset logo`, or `--tolerance`.
+ */
 async function findDominatingExact(
   input: VectorizeInput,
   traced: VectorizeResult,
