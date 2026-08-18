@@ -477,6 +477,23 @@ async function findDominatingExact(
   opts: VectorizeOptions,
   notes: string[],
 ): Promise<VectorizeResult | null> {
+  // A trace that produced real curves is not comparable to a raster on size
+  // alone, so it is not "dominated" by one that happens to be smaller.
+  //
+  // This mattered the moment curves became the default. Refinement makes a trace
+  // roughly 2.35x larger gzipped, which pushed far more images over the line
+  // here — so switching curves on in the tracer produced *fewer* curves from
+  // `auto`, because this function then swapped them for a bitmap. Two tests
+  // caught it by expecting 'trace' and getting 'embed'.
+  //
+  // The original reasoning stands where it applies: when the trace emitted no
+  // curve commands at all it is already a bitmap in an SVG wrapper, and an exact
+  // copy that is smaller beats it on every axis with nothing to trade. That case
+  // still switches, and still says so.
+  const tracedCurves = [...traced.svg.matchAll(/\sd="([^"]*)"/g)]
+    .reduce((n, m) => n + (m[1].match(/[CcSsQqTtAa]/g) ?? []).length, 0);
+  if (tracedCurves > 0) return null;
+
   const tracedBytes = Buffer.byteLength(traced.svg);
   // `meta` is required by the type, but plain-JS callers reach here through the
   // CJS build with `vectorize({ image })` — which works for the pixel and embed

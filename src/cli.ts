@@ -2148,7 +2148,7 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
-  .option('--subpixel', 'place boundary vertices where the antialiasing says the edge actually fell, instead of on the pixel lattice — this is what lets the curve fitter engage at all (no effect on hard-edged art, where the lattice is already exact)')
+  .option('--no-subpixel', 'keep boundary vertices on the pixel lattice instead of where the antialiasing says the edge fell. Sub-pixel placement is on by default and is what lets the curve fitter engage at all; turning it off returns the older staircase output at roughly a third of the gzipped bytes. No effect on hard-edged art, where the lattice is already exact.')
   .optionsGroup('Pixel mode:')
   .option(
     '--max-rects-per-pixel <ratio>',
