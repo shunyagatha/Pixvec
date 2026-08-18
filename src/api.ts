@@ -343,9 +343,25 @@ export function measureFlatness(img: RasterImage, colorCap = 4096): Flatness {
   // Second pass, off the edges: how much does a pixel differ from its own
   // neighbourhood where there is no boundary to explain it? Cheap, and the only
   // thing that predicts whether refinement will help or hurt.
+  //
+  // Weighted by alpha, because an invisible pixel's RGB is whatever the encoder
+  // happened to leave behind and must not vote. The first pass above already
+  // decided this — `a === 0 ? 0 : packRgba(...)` — and this pass did not, so the
+  // inconsistency sat inside one function.
+  //
+  // Measured on corpus/src/alpha-dice.png against a copy with the RGB under every
+  // alpha-0 pixel zeroed, verified render-identical by compositing both over three
+  // backgrounds: interiorNoise 1.1284 as shipped against 0.2474 cleaned, with
+  // REFINE_NOISE_LIMIT at 0.3 sitting between them. Two files that draw the same
+  // picture were getting different tracer configurations, decided by 323,179
+  // pixels nobody can see — and the note printed to the user named a noise figure
+  // that was mostly invisible pixels.
+  //
+  // Opaque artwork is untouched: at a = 255 the weight is exactly 1, so every
+  // number this gate was calibrated against still holds.
   const lum = (x: number, y: number): number => {
     const o = ((y * img.width) + x) * 4;
-    return (d[o] + d[o + 1] + d[o + 2]) / 3;
+    return ((d[o] + d[o + 1] + d[o + 2]) / 3) * (d[o + 3] / 255);
   };
   let noiseSum = 0;
   let noiseN = 0;

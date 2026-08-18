@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compareImages, ssimPlane } from '../src/metrics/index.js';
+import { measureFlatness } from '../src/api.js';
 import { premultiply } from '../src/image.js';
 import { createImage, mulberry32, photoLike, setPixel } from './fixtures.js';
 
@@ -272,5 +273,57 @@ describe('SSIM scores alpha when alpha is what carries the artwork', () => {
     const pa = planes(a), pb = planes(b);
     const rgbOnly = pa.reduce((s, _, c) => s + ssimPlane(pa[c], pb[c], a.width, a.height), 0) / 3;
     expect(withAlpha.ssim).toBeCloseTo(rgbOnly, 12);
+  });
+});
+
+describe('interiorNoise ignores pixels nobody can see', () => {
+  /**
+   * `measureFlatness`'s second pass read RGB only, so the colour left behind under
+   * fully transparent pixels — whatever the encoder happened to write — voted on
+   * `interiorNoise`, which is the only gate on sub-pixel refinement and lattice
+   * simplification. The FIRST pass of the same function already neutralised them
+   * (`a === 0 ? 0 : packRgba(...)`), so the two halves disagreed with each other.
+   *
+   * On corpus/src/alpha-dice.png the shipped file and a render-identical copy with
+   * that hidden colour zeroed measured 1.1284 against 0.2474, with the 0.3 limit
+   * between them: two files drawing the same picture, traced differently, decided
+   * by 323,179 invisible pixels.
+   */
+  const withHidden = (hidden: [number, number, number]) => {
+    const img = createImage(48, 48);
+    const rand = mulberry32(11);
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        const inside = x >= 12 && x < 36 && y >= 12 && y < 36;
+        if (inside) setPixel(img, x, y, 120, 120, 120, 255);
+        // Outside is invisible; its RGB varies wildly between the two variants.
+        else setPixel(img, x, y,
+          hidden[0] === -1 ? Math.floor(rand() * 256) : hidden[0],
+          hidden[1] === -1 ? Math.floor(rand() * 256) : hidden[1],
+          hidden[2] === -1 ? Math.floor(rand() * 256) : hidden[2], 0);
+      }
+    }
+    return img;
+  };
+
+  it('measures the same noise for two images that render the same', () => {
+    const noisyHidden = measureFlatness(withHidden([-1, -1, -1]));
+    const cleanHidden = measureFlatness(withHidden([0, 0, 0]));
+    expect(noisyHidden.interiorNoise).toBeCloseTo(cleanHidden.interiorNoise, 10);
+  });
+
+  it('still reports real noise in the VISIBLE part of the image', () => {
+    const flat = createImage(48, 48);
+    const grainy = createImage(48, 48);
+    const rand = mulberry32(4);
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        setPixel(flat, x, y, 120, 120, 120, 255);
+        const n = Math.floor(rand() * 60) - 30;
+        setPixel(grainy, x, y, 120 + n, 120 + n, 120 + n, 255);
+      }
+    }
+    expect(measureFlatness(flat).interiorNoise).toBeLessThan(0.01);
+    expect(measureFlatness(grainy).interiorNoise).toBeGreaterThan(1);
   });
 });
