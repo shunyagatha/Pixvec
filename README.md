@@ -587,7 +587,7 @@ vecline convert logo.png out.dxf --units mm --physical-width 80   # cuts at exac
 vecline convert logo.png out.dxf    # CAD/CNC/laser vector export (also .eps, .pdf --cmyk)
 vecline optimize icon.svg -o icon.min.svg   # render-preserving SVG minify
 vecline sprite icons/*.svg -o sprite.svg    # pack many icons into one <symbol> sheet
-vecline animate loading.gif -o loading.svg  # animated GIF/WebP → one CSS-animated SVG
+vecline animate loading.gif -o loading.svg  # animated GIF/APNG/WebP → one CSS-animated SVG
 vecline verify a.png b.svg          # measure any two images
 vecline diff before.png after.png -o diff.png  # perceptual visual-regression heatmap
 vecline batch 'src/**/*.png' -o out/ --to svg --summary "$GITHUB_STEP_SUMMARY"
@@ -696,7 +696,11 @@ The **asset pipelines** close the loop to what web devs deploy: `vecline favicon
 
 **Animated raster → animated SVG** — `vecline animate loading.gif` traces every frame and stacks them into **one self-contained CSS-animated SVG** (a negative-`animation-delay` flipbook — no JavaScript). All frames share a single palette, so colours never flicker frame to frame, and the result scales without the blur or banding a GIF shows when enlarged. Frame 0 is the static poster a non-animating renderer or `prefers-reduced-motion` falls back to. `framesToAnimatedSvg()` is pure (`vecline/core`); `traceAnimation()` reads the frames (Node). Few JS tools go raster-animation → animated vector at all.
 
-**Animated GIF and animated WebP are the verified inputs.** Frames come from whatever libvips opens with `animated: true`, and the prebuilt `sharp` binary **does not expose APNG frames** — an APNG loads as a single still, so you get a one-frame SVG rather than an error. (Measured, not assumed: this build raises `vips_image_get: field "n-pages" not found` on the APNG path.) Earlier versions of this README listed APNG without that qualifier; if your libvips is built with APNG page support it will work, but do not count on the default install.
+**Animated GIF, APNG and animated WebP all work.** GIF and WebP frames come from libvips. APNG does not, and still cannot: the prebuilt `sharp` binary reports no page count for one at all — `metadata().pages` is `undefined`, not `20` — so an APNG used to load as a single still and `animate` returned a one-frame SVG with nothing to say the other frames had been dropped.
+
+APNG is therefore read here rather than delegated. An APNG frame is ordinary PNG image data split across `fdAT` chunks with its header removed, so `src/io/formats/apng.ts` puts the header back and hands a real codec a real PNG, and `src/io/apng-compose.ts` composites the frames — painting each at its offset under SOURCE/OVER, then disposing by NONE/BACKGROUND/PREVIOUS.
+
+Verified frame-for-frame against Pillow on nine conformance files covering every dispose and blend operator, palette, greyscale+alpha, 16-bit and a real 20-frame animation. Seven match with **zero differing subpixels**. The two that differ do so only in alpha, and the difference is Pillow's: compositing 50%-alpha blue over an opaque canvas must be opaque, since `a = aₛ + a_d(1 − aₛ)` is 1 whenever `a_d` is 1. Pillow returns 191, which is `aₛ + aₛ(1 − aₛ)` — it blends against the source's own alpha instead of the canvas it just produced.
 
 **Documents to images** — `vecline doc report.pdf -o pages/ --dpi 150` renders a **PDF**, an **SVG**, or an **Office document** (`.docx`/`.xlsx`/`.pptx`/ODF — via your LibreOffice) to one raster per page, at any DPI or scale, in any output format (`--format png|jpeg|webp|avif`, `--pages "1,3-5"`). Pass `--format svg` to **vectorise each page** — turning a scanned or raster page into real, scalable SVG in one step. So `vecline doc slides.pptx -o thumbs/ -f webp` gives you a WebP thumbnail per slide. SVG rendering uses the bundled resvg; **PDF** rendering follows vecline's bring-your-own-codec rule — it dynamically loads the optional, pure-WASM [`mupdf`](https://www.npmjs.com/package/mupdf) package (no native binary to compile) and prints a one-line install hint if it is not present, so the base install stays lean. `renderPdfPages()` / `isPdf()` are exported for programmatic use.
 
