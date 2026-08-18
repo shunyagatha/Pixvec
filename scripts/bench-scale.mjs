@@ -119,6 +119,21 @@ const CANDIDATES = [
   // these rows existed: default 0.8458 SSIM at 1x against logo's 0.7757, and at
   // 3.902x that reverses to 0.7615 against 0.7833. A gate that cannot see the
   // presets cannot see that reversal.
+  //
+  // AND THEN THE CORPUS REVERSED IT AGAIN, which is worth recording here because
+  // the first run of these rows produced a confident wrong answer. On the
+  // built-in synthetic set at 3.902x, preset-lineart reads 19.05 dB on 259
+  // anchors against auto's 18.38 dB on 3,939 -- strict domination on every axis.
+  // Point the same harness at corpus/src, four REAL vector originals, and it
+  // inverts: auto 17.17 dB on 2,897 anchors, preset-lineart 15.34 dB on 2,126.
+  // auto goes from dominated to the best point on the frontier.
+  //
+  // The cause is in the fixtures below: they were built to have the features
+  // vectorizers get wrong -- long straight diagonals, tight corners -- and those
+  // reward a preset that simplifies hard (tolerance 0.6 + subpixel). Real artwork
+  // is mostly texture and small regions, where the same simplification loses.
+  // Run `npm run bench:scale -- corpus/src` before believing any ranking these
+  // built-in shapes produce.
   { id: 'preset-logo', opts: { mode: 'trace', preset: 'logo' } },
   { id: 'preset-lineart', opts: { mode: 'trace', preset: 'lineart' } },
   { id: 'preset-poster', opts: { mode: 'trace', preset: 'poster' } },
