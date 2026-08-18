@@ -969,12 +969,33 @@ function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
     // the second finds spurious straightness in it — measured on the published
     // photo row, leaving it on took `trace auto` from 49.3 KB to 163.8 KB while
     // SSIM fell 0.8476 -> 0.8311. Worse and 3.3x larger.
+    // Both stay off, and the second one is a conclusion I reached twice and had to
+    // measure twice.
+    //
+    // The argument for re-enabling boundary simplification here is that `segment`
+    // does not merely tolerate noise, it removes it — so the precondition is
+    // established downstream rather than absent. That argument is wrong, because
+    // the precondition is not "no noise", it is "this boundary came from a
+    // straight geometric edge that the grid quantised". Segmentation removes grain;
+    // it does not make a photograph's region boundaries straight. They are organic,
+    // and a straightness test run over them manufactures a curve at every bend.
+    //
+    // Measured with segmentation on, against leaving simplification off:
+    //
+    //   sticker   0.9556 ->  0.8849 SSIM,   9.9 ->  15 KB,  3,894 curves
+    //   logo-tux  0.9731 ->  0.9319 SSIM,  14.4 ->  25 KB,  4,724 curves
+    //   parrots   ~0.81   ->  0.8174 SSIM,   72 -> 196 KB, 24,065 curves
+    //
+    // Worse on accuracy AND size on all three. Widening the band does not rescue
+    // it either — 0.75 through 6.0 costs more accuracy and more bytes at every
+    // step, up to 314 KB on the photograph. Curves are available on demand and are
+    // not worth this by default.
     refine.latticeSimplify = false;
     notes.push(
       `Sub-pixel refinement and lattice simplification off: interior noise ` +
         `${flat.interiorNoise.toFixed(2)} exceeds ${REFINE_NOISE_LIMIT}, so there is no ` +
-        `quantised geometric edge for either to read. Force them with --subpixel if ` +
-        `the source is cleaner than it measures.`,
+        `quantised geometric edge for either to read. Force them with --subpixel and ` +
+        `--lattice-simplify if the source is cleaner than it measures.`,
     );
   }
   // Only the palette is widened (plus gradient de-banding for photos). minArea

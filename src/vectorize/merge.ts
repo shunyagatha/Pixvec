@@ -328,19 +328,54 @@ export function segmentPixels(img: RasterImage, k = 300, minRegion = 0): Int32Ar
     internal[big] = wgt;
   }
 
-  // Optional cleanup pass: absorb runt regions into whatever they border, in
-  // edge-weight order so the cheapest join wins. FH leaves these behind by
-  // construction and they are the one thing it is genuinely bad at.
+  // Cleanup pass: absorb runt regions, but only the ones that are grain.
+  //
+  // FH leaves runts behind by construction and they are the one thing it is
+  // genuinely bad at. Absorbing all of them is what this pass used to do, and it
+  // was measured to be the dominant cost in the whole module — logo-tux fell
+  // 0.9878 -> 0.9570 SSIM as `minRegion` went 0 -> 8, with a visibly eroded
+  // silhouette, while `k` across a tenfold range moved nothing.
+  //
+  // The reason is that "small" bundles two unrelated things. A runt sitting
+  // INSIDE one region is grain, and absorbing it is free. A runt sitting BETWEEN
+  // two regions is anti-aliasing fringe carrying the sub-pixel position of an
+  // edge, and absorbing it drags the boundary — which is exactly the silhouette
+  // erosion. So a runt is only absorbed when one neighbour dominates what it
+  // borders; a runt on a real edge borders two substantial regions roughly
+  // equally and is left alone.
+  //
+  // `despeckle` reached the same conclusion for the same reason and calls it
+  // `speckleScope: 'isolated'`. The difference is that there it is opt-in, and
+  // here it is the only behaviour, because the measurement says the other one
+  // costs more than it buys.
   if (minRegion > 0) {
+    // Border length per (runt, neighbour) pair, so "dominated by one neighbour"
+    // is a measurement rather than a guess about topology.
+    const borders = new Map<number, Map<number, number>>();
     for (let e = 0; e < m; e++) {
       const i = idx[e];
-      const a = find(ea[i]);
-      const b = find(eb[i]);
+      const a = find(ea[i]), b = find(eb[i]);
       if (a === b) continue;
       if (size[a] >= minRegion && size[b] >= minRegion) continue;
-      const [big, small] = size[a] >= size[b] ? [a, b] : [b, a];
-      parent[small] = big;
-      size[big] += size[small];
+      for (const [runt, other] of [[a, b], [b, a]] as const) {
+        if (size[runt] >= minRegion) continue;
+        let mm = borders.get(runt);
+        if (!mm) borders.set(runt, mm = new Map());
+        mm.set(other, (mm.get(other) ?? 0) + 1);
+      }
+    }
+    for (const [runt, neigh] of borders) {
+      if (find(runt) !== runt || size[runt] >= minRegion) continue;
+      let best = -1, bestLen = 0, total = 0;
+      for (const [other, len] of neigh) { total += len; if (len > bestLen) { bestLen = len; best = other; } }
+      // Two thirds of the border against one neighbour means the runt is inside
+      // that region rather than on a boundary between two. Below that it is
+      // fringe, and moving it moves an edge.
+      if (best < 0 || total === 0 || bestLen / total < 0.67) continue;
+      const target = find(best);
+      if (target === runt) continue;
+      parent[runt] = target;
+      size[target] += size[runt];
     }
   }
 

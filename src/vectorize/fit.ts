@@ -35,6 +35,12 @@ export interface FitOptions {
    */
   latticeSimplify?: boolean;
   /**
+   * Half-width of the band a run of vertices must fit inside to count as one
+   * straight edge, in pixels. Must exceed 0.707 — the deviation of a 45-degree
+   * staircase — or no diagonal is ever recognised. Default 0.75.
+   */
+  latticeBand?: number;
+  /**
    * Merge adjacent curves back together where one curve fits both. Default on.
    * This is the equivalent of potrace's curve-optimisation pass.
    */
@@ -96,7 +102,7 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
   // explicit, principled way to drop features that genuinely should go.
   let tolerance = opts.tolerance;
   let anchors = opts.latticeSimplify
-    ? simplifyLattice(px, py, n)
+    ? simplifyLattice(px, py, n, opts.latticeBand ?? 0.75)
     : simplifyClosed(px, py, n, tolerance);
   // The lattice test has no tolerance to relax — its band is the grid's own
   // uncertainty — so only the Douglas-Peucker path retries.

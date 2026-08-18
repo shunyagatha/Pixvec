@@ -137,6 +137,8 @@ export interface TraceOptions {
    * caller isolating some *other* option needs to be able to pin this one.
    */
   latticeSimplify?: boolean;
+  /** Straightness band for {@link latticeSimplify}, in pixels. Default 0.75. */
+  latticeBand?: number;
   /**
    * Reduce to two colours by a luminance cutoff before tracing — potrace's mode,
    * for scanned line art and black-on-white logos. A number is a fixed 0–255
@@ -393,12 +395,54 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
-  // Off by default. It measurably transforms noisy input — SSIM 0.4557 -> 0.8329
-  // at a matched region count on a JPEG sticker — but it changes the output of
-  // every image it touches, and nothing here becomes a default before the whole
-  // corpus and the published table have been re-measured against it.
+  // On by default at 0.02, which is the value the two failure modes agree on.
+  //
+  // It was off while the runt-absorption pass absorbed every small region, which
+  // cost logo-tux 0.9884 -> 0.9570 SSIM and visibly eroded its silhouette. Once
+  // absorption was restricted to runts that are INSIDE a region rather than on a
+  // boundary between two — grain, not anti-aliasing fringe — the cost collapsed:
+  //
+  //   logo-tux   0.9884 -> 0.9731   17.6 KB -> 14.4 KB
+  //   sticker    0.9620 -> 0.9556   11.1 KB -> 9.9 KB
+  //
+  // 0.015 and 0.006 of SSIM for 18% and 11% of the bytes, and the segmentation is
+  // what lets the lattice simplifier run at all on a noisy source, because it
+  // establishes the precondition rather than merely passing a test for it.
+  // OFF by default, tried twice and rejected twice on measurement.
+  //
+  // It is a genuine win on some content and a loss on other content, and the
+  // published photo row is the case that decides it. On a REAL photograph
+  // (photo-cat) it takes 27% off the bytes for 0.97 dB. On the synthetic
+  // `photoLike` fixture the published table uses, it is worse on BOTH axes —
+  // 49.3 -> 52.6 KB and 31.31 -> 28.82 dB — so it cannot be a default without
+  // regressing a published number in the wrong direction.
+  //
+  // Worth keeping the disagreement rather than picking the flattering half: a
+  // synthetic photograph and a real one rank this differently, which is the same
+  // trap `bench-scale.mjs` records for preset ranking. The real-photograph result
+  // is the more trustworthy one; the published table is the one users read.
+  //
+  // What it does when asked for, against no segmentation:
+  //
+  //   logo-tux    41.83 dB / 17.7 KB   (base 42.05 / 17.6)  — free
+  //   photo-cat   33.89 dB /  462 KB   (base 34.86 /  636)  — 27% smaller
+  //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
   segment: 0,
-  segmentMinRegion: 8,
+  // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
+  // in this module says size is the wrong criterion — it was the dominant cost
+  // here, not the merge policy it sits beside.
+  //
+  // Swept on three sources, against no segmentation at all:
+  //
+  //              mr=0                     mr=8
+  //   logo-tux   41.83 dB / 17.7 KB       41.01 dB / 14.4 KB   (base 42.05 / 17.6)
+  //   photo-cat  33.89 dB / 462 KB        33.86 dB / 444 KB    (base 34.86 / 636)
+  //   sticker     30.41 dB / 10.0 KB       30.37 dB / 9.9 KB   (base 30.57 / 11.1)
+  //
+  // At 0 the merge alone still takes 27% off a photograph and leaves logo-tux
+  // essentially untouched. Raising it buys a further 3-4% of bytes and costs
+  // logo-tux 0.8 dB, which is the whole silhouette-erosion failure in one line.
+  segmentMinRegion: 0,
   extendUnder: false,
   // On by default as of the curves change. Everything about why this is
   // affordable — and why it is NOT affordable alone — is on the `subpixel`
@@ -712,6 +756,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // shipped tolerance; the guarantee was resting on the fitter being dead.
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
+    latticeBand: opts.latticeBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,
