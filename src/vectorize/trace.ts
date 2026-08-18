@@ -217,10 +217,31 @@ export interface TraceOptions {
    * says where the edge really was — see `subpixel.ts` — and recovers it to
    * ~0.002px on a synthetic ramp.
    *
-   * Off by default while it is measured on the scale-fidelity frontier
-   * (`npm run bench:scale`). It cannot change hard-edged output at all: with no
-   * anti-aliasing the displacement is exactly zero, so pixel art and sprites are
-   * byte-identical either way.
+   * Off by default, and measurement says it must stay that way **on its own**.
+   * On 25 real logos, turning it on and changing nothing else costs **3.29x the
+   * gzipped bytes** — worse than its 2.05x raw cost, because it is the integer
+   * lattice that compresses: integer coordinates fall from 100% to 18% and the
+   * gzip ratio with them, 5.69x to 3.55x. It buys +3.01 dB of edge accuracy and
+   * the first curves the default path has ever emitted, but 3.3x the bandwidth
+   * for every user is not a default.
+   *
+   * **It is affordable in company, and that is the part worth knowing.** The
+   * `logo` preset runs it and comes out *smaller* than the plain default —
+   * 0.68x gzipped, with real curves, at -0.13 dB — because it pairs subpixel
+   * with `precision: 1` and `minArea: 8`. Halving the digits attacks exactly the
+   * cost subpixel creates, and dropping specks cuts the anchors that carry it.
+   * A tolerance sweep alone does not do it: at `minArea: 0, precision: 2`,
+   * raising tolerance to 0.6/0.8/1.2 alongside subpixel makes gzipped size
+   * *worse* (211 -> 249 -> 258 -> 257 KB) while accuracy falls (10.92 -> 10.55
+   * -> 10.24 -> 10.21 dB). Tolerance was the obvious lever and it is the wrong
+   * one.
+   *
+   * So: never enable this by itself expecting a win. Enable it with the
+   * precision and speckle settings that pay for it, which is what the presets do.
+   *
+   * It cannot change hard-edged output at all: with no anti-aliasing the
+   * displacement is exactly zero, so pixel art and sprites are byte-identical
+   * either way.
    *
    * Cannot be combined with `extendUnder`, and the combination is now an error
    * rather than a silent downgrade: those loops bound a *union* of classes rather
