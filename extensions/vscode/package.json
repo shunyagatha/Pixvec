@@ -2,7 +2,7 @@
   "name": "vecline-vscode",
   "displayName": "Vecline — image to SVG, measured",
   "description": "Right-click a PNG or JPEG and get an SVG, or a React/Vue/Svelte component — with the SSIM and PSNR of the conversion, measured by rendering the result back to pixels.",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "publisher": "shunyagatha",
   "license": "MIT",
   "engines": {
@@ -110,7 +110,7 @@
     "package": "vsce package"
   },
   "dependencies": {
-    "vecline": "^2.1.0"
+    "vecline": "^2.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
