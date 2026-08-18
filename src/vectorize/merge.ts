@@ -226,6 +226,41 @@ export function mergeRegions(graph: RegionGraph, opts: MergeOptions = {}): Merge
  * 8-connected, because 4-connectivity leaves diagonal hairlines that later show
  * up as separate regions along every diagonal edge.
  */
+/**
+ * WHICH KNOB IS ACTUALLY DOING THE WORK — measured, because I got this wrong once.
+ *
+ * `k` barely matters. Across a tenfold range, 0.005 to 0.05, logo-tux holds
+ * 0.9554-0.9570 SSIM and a JPEG sticker 0.8477-0.8507, with region counts moving
+ * a few percent. The Felzenszwalb criterion is doing far less than its prominence
+ * in the comments above suggests.
+ *
+ * `minRegion` is the whole lever, and it is a SIZE threshold — the same criterion
+ * this module's header argues against, doing the compaction the header credits to
+ * the merge policy:
+ *
+ *              logo-tux                    JPEG sticker
+ *   mr=0   0.9878 / 6,367 regions      0.9562 / 3,893 regions
+ *   mr=2   0.9693 / 3,003              0.9399 / 2,708
+ *   mr=4   0.9644 / 2,275              0.9122 / 1,962
+ *   mr=8   0.9570 / 1,852              0.8503 / 1,049
+ *
+ * (Unsegmented, those two are 0.9884 and 0.9620.) At `mr=0` both images survive
+ * almost untouched and almost uncompacted; every region reduction, and every point
+ * of accuracy lost, arrives with the size pass.
+ *
+ * That does NOT void the result this module was built for. Absorbing small regions
+ * out of a good segmentation is far less destructive than absorbing them out of a
+ * quantisation-fragmented one: at ~260-300 regions, blur-plus-despeckle scores
+ * 0.4557 where this scores 0.8415. The merge is not what compacts — it is what
+ * makes compaction survivable. Stating it the other way round, as the header
+ * originally did, credits the wrong stage.
+ *
+ * A ramp-protection pass was tried here and removed: per region, fit a plane to
+ * lightness and keep the original pixels where it explained the variation, so
+ * shading would survive. It moved SSIM +0.006 to +0.016 while raising region
+ * counts 40-80%, and it did not fix the case that motivated it — logo-tux stayed
+ * at 0.9561 against an unsegmented 0.9884. Marginal gain, real cost, wrong target.
+ */
 export function segmentPixels(img: RasterImage, k = 300, minRegion = 0): Int32Array {
   const { width: w, height: h, data } = img;
   const n = w * h;
