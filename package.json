@@ -195,6 +195,7 @@
     "corpus": "node scripts/fetch-corpus.mjs",
     "corpus:report": "node scripts/corpus-report.mjs",
     "bench:scale": "node scripts/bench-scale.mjs",
+    "format:sweep": "node scripts/format-sweep.mjs",
     "diagnose": "node scripts/diagnose-photo.mjs",
     "playground": "node scripts/build-playground.mjs",
     "figma:art": "node scripts/build-figma-art-trace.mjs && node scripts/build-figma-art-sweep.mjs && node scripts/build-figma-art.mjs && node scripts/build-figma-carousel.mjs",
