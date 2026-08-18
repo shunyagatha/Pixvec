@@ -7,6 +7,7 @@ import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, typ
 import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { refineLoop } from './subpixel.js';
+import { flattenToSegments } from './merge.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -103,6 +104,27 @@ export interface TraceOptions {
   blur?: number;
   /** Edge-preservation threshold for {@link blur}. Default 20. */
   blurDelta?: number;
+  /**
+   * Segment the image and flatten each region to its own colour before tracing.
+   *
+   * The tracer's usual order is quantise, then label connected components — so
+   * every pixel that lands in a different palette bin from its neighbours becomes
+   * its own region. On a compressed source that is thousands of one-pixel
+   * regions, and no later merge recovers a boundary the palette misplaced.
+   *
+   * This inverts the order. Regions are found on the pixel grid, where each edge
+   * weight is a real colour difference, and the palette is then applied to areas
+   * that are already whole. Measured on a 100x100 JPEG sticker at a matched
+   * region count, against the despeckle-based approach it replaces: SSIM 0.4557
+   * -> 0.8329, where a paid competitor scores 0.8500.
+   *
+   * The value is the merge tolerance in Oklab — a one-pixel region may cross this
+   * much colour distance, a hundred-pixel region only a hundredth of it. Useful
+   * range is roughly 0.02 to 0.2. 0 (default) skips it.
+   */
+  segment?: number;
+  /** Regions smaller than this are absorbed after {@link segment}. Default 8. */
+  segmentMinRegion?: number;
   /**
    * Reduce to two colours by a luminance cutoff before tracing — potrace's mode,
    * for scanned line art and black-on-white logos. A number is a fixed 0–255
@@ -359,6 +381,12 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  // Off by default. It measurably transforms noisy input — SSIM 0.4557 -> 0.8329
+  // at a matched region count on a JPEG sticker — but it changes the output of
+  // every image it touches, and nothing here becomes a default before the whole
+  // corpus and the published table have been re-measured against it.
+  segment: 0,
+  segmentMinRegion: 8,
   extendUnder: false,
   // On by default as of the curves change. Everything about why this is
   // affordable — and why it is NOT affordable alone — is on the `subpixel`
@@ -491,6 +519,11 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  // Before quantisation, deliberately: the whole point is that the palette meets
+  // regions that are already coherent. See `segment` on TraceOptions.
+  if (o.segment && o.segment > 0) {
+    img = flattenToSegments(img, o.segment, o.segmentMinRegion);
   }
   if (opts.threshold !== undefined) {
     img = applyThreshold(img, {

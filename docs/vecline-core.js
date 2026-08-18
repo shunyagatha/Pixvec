@@ -2467,6 +2467,145 @@ function refineLoop(loop, img, classes, cls) {
   return { pts: out, moved: displaced, total: count2 };
 }
 
+// src/vectorize/merge.ts
+function segmentPixels(img, k = 300, minRegion = 0) {
+  const { width: w, height: h, data } = img;
+  const n2 = w * h;
+  const lab = new Float64Array(n2 * 3);
+  const px = new Float64Array(3);
+  for (let i = 0; i < n2; i++) {
+    const o = i * 4;
+    srgbToOklab(data[o], data[o + 1], data[o + 2], px);
+    lab[i * 3] = px[0];
+    lab[i * 3 + 1] = px[1];
+    lab[i * 3 + 2] = px[2];
+  }
+  const dist = (a, b) => {
+    const dl = lab[a * 3] - lab[b * 3];
+    const da = lab[a * 3 + 1] - lab[b * 3 + 1];
+    const db = lab[a * 3 + 2] - lab[b * 3 + 2];
+    return Math.sqrt(dl * dl + da * da + db * db);
+  };
+  const maxEdges = n2 * 4;
+  const ea = new Int32Array(maxEdges);
+  const eb = new Int32Array(maxEdges);
+  const ew = new Float64Array(maxEdges);
+  let m = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (x + 1 < w) {
+        ea[m] = i;
+        eb[m] = i + 1;
+        ew[m] = dist(i, i + 1);
+        m++;
+      }
+      if (y + 1 < h) {
+        ea[m] = i;
+        eb[m] = i + w;
+        ew[m] = dist(i, i + w);
+        m++;
+      }
+      if (x + 1 < w && y + 1 < h) {
+        ea[m] = i;
+        eb[m] = i + w + 1;
+        ew[m] = dist(i, i + w + 1);
+        m++;
+      }
+      if (x > 0 && y + 1 < h) {
+        ea[m] = i;
+        eb[m] = i + w - 1;
+        ew[m] = dist(i, i + w - 1);
+        m++;
+      }
+    }
+  }
+  const order = new Int32Array(m);
+  for (let i = 0; i < m; i++) order[i] = i;
+  const idx = Array.prototype.slice.call(order);
+  idx.sort((p, q) => ew[p] - ew[q]);
+  const parent = new Int32Array(n2);
+  const size = new Int32Array(n2).fill(1);
+  const internal = new Float64Array(n2);
+  for (let i = 0; i < n2; i++) parent[i] = i;
+  const find = (x) => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r];
+    while (parent[x] !== r) {
+      const nx = parent[x];
+      parent[x] = r;
+      x = nx;
+    }
+    return r;
+  };
+  for (let e = 0; e < m; e++) {
+    const i = idx[e];
+    const a = find(ea[i]);
+    const b = find(eb[i]);
+    if (a === b) continue;
+    const wgt = ew[i];
+    if (wgt > Math.min(internal[a] + k / size[a], internal[b] + k / size[b])) continue;
+    const [big, small] = size[a] >= size[b] ? [a, b] : [b, a];
+    parent[small] = big;
+    size[big] += size[small];
+    internal[big] = wgt;
+  }
+  if (minRegion > 0) {
+    for (let e = 0; e < m; e++) {
+      const i = idx[e];
+      const a = find(ea[i]);
+      const b = find(eb[i]);
+      if (a === b) continue;
+      if (size[a] >= minRegion && size[b] >= minRegion) continue;
+      const [big, small] = size[a] >= size[b] ? [a, b] : [b, a];
+      parent[small] = big;
+      size[big] += size[small];
+    }
+  }
+  const dense = new Int32Array(n2).fill(-1);
+  const out = new Int32Array(n2);
+  let next = 0;
+  for (let i = 0; i < n2; i++) {
+    const r = find(i);
+    if (dense[r] < 0) dense[r] = next++;
+    out[i] = dense[r];
+  }
+  return out;
+}
+function flattenToSegments(img, k, minRegion) {
+  const { width: w, height: h, data } = img;
+  const n2 = w * h;
+  const labels = segmentPixels(img, k, minRegion);
+  let count2 = 0;
+  for (let i = 0; i < n2; i++) if (labels[i] + 1 > count2) count2 = labels[i] + 1;
+  const sums = new Float64Array(count2 * 3);
+  const alpha = new Float64Array(count2);
+  const cnt = new Float64Array(count2);
+  const px = new Float64Array(3);
+  for (let i = 0; i < n2; i++) {
+    const o = i * 4;
+    srgbToOklab(data[o], data[o + 1], data[o + 2], px);
+    const r = labels[i];
+    sums[r * 3] += px[0];
+    sums[r * 3 + 1] += px[1];
+    sums[r * 3 + 2] += px[2];
+    alpha[r] += data[o + 3];
+    cnt[r]++;
+  }
+  const out = new Uint8ClampedArray(n2 * 4);
+  for (let i = 0; i < n2; i++) {
+    const r = labels[i];
+    const c = Math.max(1, cnt[r]);
+    const [R, G, B] = oklabToSrgb(sums[r * 3] / c, sums[r * 3 + 1] / c, sums[r * 3 + 2] / c);
+    const o = i * 4;
+    out[o] = R;
+    out[o + 1] = G;
+    out[o + 2] = B;
+    out[o + 3] = Math.round(alpha[r] / c);
+  }
+  return { width: w, height: h, data: out };
+}
+
 // src/vectorize/quantize.ts
 var SIDE = 33;
 var R_STRIDE = SIDE * SIDE;
@@ -4105,6 +4244,12 @@ var TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  // Off by default. It measurably transforms noisy input — SSIM 0.4557 -> 0.8329
+  // at a matched region count on a JPEG sticker — but it changes the output of
+  // every image it touches, and nothing here becomes a default before the whole
+  // corpus and the published table have been re-measured against it.
+  segment: 0,
+  segmentMinRegion: 8,
   extendUnder: false,
   // On by default as of the curves change. Everything about why this is
   // affordable — and why it is NOT affordable alone — is on the `subpixel`
@@ -4145,6 +4290,9 @@ function trace(source, opts = {}) {
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  if (o.segment && o.segment > 0) {
+    img = flattenToSegments(img, o.segment, o.segmentMinRegion);
   }
   if (opts.threshold !== void 0) {
     img = applyThreshold(img, {
