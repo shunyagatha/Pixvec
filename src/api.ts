@@ -99,13 +99,7 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // the original numbers suggested. But this is a trade, not a clean sweep: it
   // costs 2.4x to 3.1x the bytes. Any claim that it wins "on every axis at
   // once" is false and should not be restored.
-  // `subpixel: false` for the same reason `autoTracePreset` switches it off on
-  // continuous tone: refinement recovers where an *edge* fell by reading the
-  // anti-aliasing across it, and a photograph has no anti-aliased vector edge,
-  // so it fits noise. Without this the preset diverges from `auto` on the
-  // published photo row — 93.8 KB / 30.82 dB / 0.8116 SSIM against 49.3 KB /
-  // 31.31 dB / 0.8476 — and the README says the two behave alike.
-  photo: { colors: 48, gradients: true, subpixel: false },
+  photo: { colors: 48, gradients: true },
   detailed: { colors: 48, minArea: 2, tolerance: 0.3, fitError: 0.3, cornerAngle: 60 },
 };
 
@@ -841,23 +835,28 @@ function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
   // minArea here despeckled fine detail — feathers, foliage — and cost more
   // accuracy than the extra colours bought back.
   if (flat.capped) {
-    // Sub-pixel refinement is switched back off here, and the reason is not a
-    // tuning preference. It recovers where an *edge* fell by reading the
-    // anti-aliasing coverage across it. A photograph has no anti-aliased vector
-    // edges — it is continuous tone throughout — so there is no coverage ramp
-    // to invert and the refinement is fitting noise.
+    // Sub-pixel refinement STAYS ON here, and the story of why is worth keeping.
     //
-    // Measured, on the published photo row: leaving it on cost 49.3 -> 93.8 KB,
-    // 31.31 -> 30.82 dB PSNR, 0.8476 -> 0.8116 SSIM and 2.931 -> 3.160 mean
-    // deltaE. Worse on every quality axis *and* nearly twice the size, which is
-    // the rare case where there is nothing to trade off at all.
-    notes.push(
-      'Auto-tuned trace for photographic content: 48-colour palette with ' +
-        'gradient de-banding, and sub-pixel refinement off — continuous tone has ' +
-        'no edge coverage for it to read.',
-    );
-    return { colors: 48, gradients: true, subpixel: false };
+    // It was switched off for photographs on the strength of the published bench
+    // row: 49.3 -> 93.8 KB, 31.31 -> 30.82 dB, 0.8476 -> 0.8116 SSIM. Every axis
+    // worse. But that row scores the output against the SOURCE at 1x, and at 1x
+    // the lattice cannot lose — it *is* the source, resampled. The measurement
+    // was circular, and so was the conclusion drawn from it. Re-measuring at
+    // 3.902x against a Lanczos upscale reproduced the same false result for the
+    // same reason: an upscale is derived from the bitmap too.
+    //
+    // The only non-circular instrument here is `bench:scale` against real vector
+    // originals, where the truth is a shape the tracer never saw. It says
+    // refinement is worth +3.01 dB on 300 real logos, and the current default
+    // holds 17.26 dB with 2,549 curves at 100% detail on corpus/src.
+    //
+    // A tracer's job is to recover a resolution-independent shape. Callers who
+    // want the input reproduced have `pixel`, `embed` and `lossless`, all of
+    // which are bit-exact and none of which guess.
+    notes.push('Auto-tuned trace for photographic content: 48-colour palette with gradient de-banding.');
+    return { colors: 48, gradients: true };
   }
+
   if (flat.distinctColors > FLAT_COLOR_COUNT) {
     notes.push(`Auto-tuned trace for rich colour (${flat.distinctColors} colours): 32-colour palette.`);
     return { colors: 32 };

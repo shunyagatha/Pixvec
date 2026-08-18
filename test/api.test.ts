@@ -257,8 +257,18 @@ describe('auto mode never returns a dominated result', () => {
 });
 
 describe('autoMinArea', () => {
-  it('disables despeckling on small images and scales up on large ones', () => {
-    expect(autoMinArea(172 * 178)).toBeLessThanOrEqual(1);   // no despeckle
+  it('keeps a floor small images can act on, and scales up on large ones', () => {
+    // The floor used to be 0, on the strength of a 1x SSIM measurement: a
+    // 172x178 JPEG lost 0.087 SSIM to despeckling, so it was switched off. That
+    // figure is real and it is the wrong instrument — 1x SSIM against the source
+    // rewards reproducing the source's noise, and one-pixel islands are exactly
+    // that noise. Measured across 23 real images on the structural measure
+    // instead: regions 7,167 -> 2,684 and gzip 124.4 -> 101.2 KB, for 96.4% ->
+    // 96.1% detail, with 0 of 23 losing more than five points.
+    //
+    // 2 rather than 1 because `despeckle` early-returns at `minArea <= 1`, so a
+    // floor of 1 would be a floor that does nothing.
+    expect(autoMinArea(172 * 178)).toBe(2);
     expect(autoMinArea(265 * 314)).toBe(2);
     expect(autoMinArea(768 * 512)).toBe(8);
     expect(autoMinArea(4000 * 3000)).toBe(16);               // capped

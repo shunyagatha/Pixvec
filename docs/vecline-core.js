@@ -4123,7 +4123,7 @@ var TRACE_DEFAULTS = {
   gradientStops: 16
 };
 function autoMinArea(pixels) {
-  return Math.min(16, Math.round(pixels / 5e4));
+  return Math.max(2, Math.min(16, Math.round(pixels / 5e4)));
 }
 function trace(source, opts = {}) {
   assertRasterImage(source, "trace");

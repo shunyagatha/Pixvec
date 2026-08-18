@@ -245,10 +245,30 @@ Every number below is produced by `--verify`: the generated SVG is rendered back
 | Pixel art sprite, 128×128 | `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Flat artwork, 400×300 | `embed` | 2.1 KB | 3.2 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Photo, 320×240 | `embed` | 14.5 KB | 19.7 KB | 87.94% | 58.04 dB | 0.9982 | 0.060 |
-| Photo, 320×240 | `trace` (`auto` and `--preset photo` alike) | 14.5 KB | 49.3 KB | 0.01% | 31.31 dB | 0.8476 | 2.931 |
+| Photo, 320×240 | `trace` (`auto` and `--preset photo` alike) | 14.5 KB | 93.8 KB | 0.01% | 30.82 dB | 0.8116 | 3.160 |
 | Flat artwork, 400×300 | `lossless` → `pixel` | 2.1 KB | 3.9 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Pixel art sprite, 128×128 | `lossless` → `pixel` | 0.5 KB | 0.6 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
 | Photo, 320×240 | `lossless` → `embed` | 14.5 KB | 230.5 KB | **100.00%** | **∞** | **1.0000** | **0.000** |
+
+> **The traced photo row moved again — 49.3 KB to 93.8 KB, 31.31 to 30.82 dB,
+> 0.8476 to 0.8116 SSIM — and it is worth being exact about what that means.**
+> Sub-pixel edge placement is now on by default, which is what lets the curve
+> fitter run at all; without it the traced output carries zero curve commands and
+> is a bitmap in an SVG wrapper.
+>
+> This column scores the SVG against the source **at the source's own size**, and
+> at 1x the pixel lattice cannot lose: it *is* the source, resampled. So this row
+> gets worse whenever the output becomes more of a vector and less of a copy. That
+> is not a hidden cost being explained away — it is the wrong question for a
+> tracer, and the right one for the three modes above it, which are bit-exact and
+> stay so.
+>
+> Judged on the instrument that is not circular — `npm run bench:scale`, which
+> scores against **real vector originals the tracer never sees**, at a
+> magnification the input never contained — refinement is worth **+3.01 dB across
+> 300 real logos**. If you want the input reproduced rather than recovered as a
+> shape, `pixel`, `embed` and `lossless` do that exactly, and `--no-subpixel`
+> returns the older lattice trace at roughly a third of the gzipped bytes.
 
 > The traced photo row moved from 52.9 KB to 49.3 KB, and every accuracy figure on
 > it is unchanged to the digit. Closed polygons were re-stating their closing edge

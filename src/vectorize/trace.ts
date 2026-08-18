@@ -393,7 +393,35 @@ export const TRACE_DEFAULTS = {
  * Values of 1 or below disable the pass, which is what small images want.
  */
 export function autoMinArea(pixels: number): number {
-  return Math.min(16, Math.round(pixels / 50_000));
+  // Floored at 2, which is the smallest value `despeckle` acts on at all — it
+  // early-returns at `minArea <= 1`. Without the floor this returns 0 for
+  // anything under ~158x158 and 1 up to ~256x256, so small images got no
+  // cleanup whatsoever, and small images are exactly where stray pixels
+  // dominate. Measured on a 100x100 JPEG: 4,438 disjoint regions at 0 against
+  // 1,019 at 2, with gzipped size halved (11.1 -> 5.9 KB).
+  //
+  // The note above records "172x178 JPEG -> 0 (despeckling here costs 0.087
+  // SSIM; skip it)". That figure is real and it is the wrong instrument: 1x
+  // SSIM against the source rewards reproducing the source's noise, which is
+  // precisely what these one-pixel islands are. On the structural measure —
+  // does the output still carry detail where the original does — minArea 2
+  // holds 98%, against a 90% floor. It is 88% at 4 and 73% at 8, which is why
+  // the floor is 2 and not higher.
+  //
+  // REACHABILITY, stated because the floor above is easy to over-read: this
+  // function only runs when `minArea` arrives `undefined`, and `api.ts` spreads
+  // `TRACE_DEFAULTS` — which pins `minArea: 0` — over every `vectorize()` call.
+  // So through the public API this adaptive rule never fires, and the floor
+  // added here changes nothing for CLI or library callers. It applies to direct
+  // `trace()` calls only. Pinning `minArea: 0` was a deliberate decision and is
+  // not overturned here.
+  //
+  // Worth measuring before that is revisited: the two known data points point
+  // in OPPOSITE directions to this rule. A 100x100 image wants 2 (regions
+  // 4,438 -> 1,019 at 98% detail) where the rule gives 0; a 24 MP photograph
+  // was measured to prefer 0 where the rule gives 16. If that holds across
+  // sizes, the scaling is inverted and the fix is not a floor.
+  return Math.max(2, Math.min(16, Math.round(pixels / 50_000)));
 }
 
 export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput {
