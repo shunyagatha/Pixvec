@@ -284,6 +284,16 @@ interface Flatness {
   capped: boolean;
   /** Horizontal runs per pixel. Near 0 is flat artwork, near 1 is noise. */
   runRatio: number;
+  /**
+   * Mean absolute deviation from the local mean, measured only AWAY from edges.
+   *
+   * This is the precondition for sub-pixel refinement, not a content guess.
+   * Refinement recovers where an edge fell by inverting the anti-aliasing
+   * coverage across it; that inversion assumes the only variation near a
+   * boundary IS coverage. Interior noise is variation that is not, and it gets
+   * read as edge displacement.
+   */
+  interiorNoise: number;
 }
 
 /**
@@ -313,12 +323,60 @@ export function measureFlatness(img: RasterImage, colorCap = 4096): Flatness {
     }
   }
 
+  // Second pass, off the edges: how much does a pixel differ from its own
+  // neighbourhood where there is no boundary to explain it? Cheap, and the only
+  // thing that predicts whether refinement will help or hurt.
+  const lum = (x: number, y: number): number => {
+    const o = ((y * img.width) + x) * 4;
+    return (d[o] + d[o + 1] + d[o + 2]) / 3;
+  };
+  let noiseSum = 0;
+  let noiseN = 0;
+  for (let y = 1; y < img.height - 1; y++) {
+    for (let x = 1; x < img.width - 1; x++) {
+      const gx = lum(x + 1, y) - lum(x - 1, y);
+      const gy = lum(x, y + 1) - lum(x, y - 1);
+      if (Math.hypot(gx, gy) > 24) continue;   // a real boundary, not interior
+      let mean = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mean += lum(x + dx, y + dy);
+      noiseSum += Math.abs(lum(x, y) - mean / 9);
+      noiseN++;
+    }
+  }
+
   return {
     distinctColors: seen.size,
     capped,
     runRatio: runs / (img.width * img.height),
+    interiorNoise: noiseN > 0 ? noiseSum / noiseN : 0,
   };
 }
+
+/**
+ * Interior noise above which sub-pixel refinement is switched off.
+ *
+ * Measured, with the same images clean and re-encoded, so the split is not a
+ * content guess:
+ *
+ *   PNG rendered from vector   0.014 - 0.219   refinement worth +3.01 dB at scale
+ *   the same at JPEG q40       0.577 - 1.079   refinement costs 0.03-0.10 SSIM
+ *   logo-tux.png               0.799           costs 0.058 SSIM
+ *   photo-parrots.png          1.583
+ *   a 100x100 JPEG sticker     5.061           costs 0.095 SSIM and 3.6x bytes
+ *
+ * No overlap: the clean set tops out at 0.219 and the noisy set starts at 0.577.
+ * 0.3 sits inside that gap and is deliberately nearer the clean end, because the
+ * two mistakes are not symmetric — refining clean input that did not need it
+ * costs a little size, while refining noisy input costs accuracy AND 3x the
+ * bytes.
+ *
+ * This replaces a genuinely bad rule. Refinement was previously switched off by
+ * `flat.capped`, a >4096 colour count, which JPEG noise trips on a cartoon — so
+ * the reported image that motivated curves-by-default went back to zero curves.
+ * A colour count is a proxy for content; this is the mechanism's own
+ * precondition.
+ */
+const REFINE_NOISE_LIMIT = 0.3;
 
 function resolveMode(
   input: VectorizeInput,
@@ -490,6 +548,25 @@ async function findDominatingExact(
   // curve commands at all it is already a bitmap in an SVG wrapper, and an exact
   // copy that is smaller beats it on every axis with nothing to trade. That case
   // still switches, and still says so.
+  // TWO THINGS MEASURED HERE AND NOT ACTED ON, so the next reader does not
+  // re-derive them.
+  //
+  // 1. This compares RAW bytes, and raw systematically favours the embed: base64
+  //    is incompressible while path data gzips about 5x. On alpha-dice the two
+  //    disagree by 3.9x in opposite directions — raw picks embed (318.0 vs 292.7
+  //    KB), gzip picks trace (56.3 vs 219.2 KB). Measured across 13 images the
+  //    decision changes on 1 of them, so this is real but rare, and "what ships"
+  //    is genuinely ambiguous — raw is the file on disk, gzip is the bytes on the
+  //    wire. Not changed on a 1-in-13 effect with no clearly right answer.
+  //
+  // 2. The deeper issue is the objective, not the units. This function weighs
+  //    size and exactness. A vector's value is that it SCALES, and that is not in
+  //    the comparison at all — so a bit-exact raster will always look like it
+  //    dominates a trace of similar size, for a tool whose purpose is to produce
+  //    geometry. On the reported 100x100 sticker the embed really is smaller
+  //    (10.7 vs 11.1 KB gzipped) and really is bit-exact, and returning it is
+  //    still arguably the wrong answer to "vectorise this".
+  //
   const tracedCurves = [...traced.svg.matchAll(/\sd="([^"]*)"/g)]
     .reduce((n, m) => n + (m[1].match(/[CcSsQqTtAa]/g) ?? []).length, 0);
   if (tracedCurves > 0) return null;
@@ -830,6 +907,30 @@ function runPixel(
  */
 function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
   const flat = measureFlatness(img, 4096);
+
+  // Sub-pixel refinement runs only where its own precondition holds.
+  //
+  // It recovers where an edge fell by inverting the anti-aliasing coverage
+  // across it, which assumes the variation near a boundary IS coverage. Feed it
+  // a noisy source and it inverts the noise, displacing vertices to where no
+  // edge was. That is not a small effect: on the same images clean and at JPEG
+  // q40, the accuracy it costs grows 10-25x (-0.003 SSIM clean, -0.032 to
+  // -0.095 noisy) while it keeps charging 2.3-3.7x the bytes.
+  //
+  // Deliberately NOT a content-type guess. Two of those were tried and both
+  // failed: a >4096 colour count put a JPEG cartoon in the same bucket as a
+  // photograph, and a flat-neighbourhood share ranked that cartoon (11.3%)
+  // below a genuine photograph (12.5%). `interiorNoise` measures the thing the
+  // algorithm actually needs, and separates cleanly — see REFINE_NOISE_LIMIT.
+  const refine: TraceOptions = {};
+  if (flat.interiorNoise > REFINE_NOISE_LIMIT) {
+    refine.subpixel = false;
+    notes.push(
+      `Sub-pixel refinement off: interior noise ${flat.interiorNoise.toFixed(2)} ` +
+        `exceeds ${REFINE_NOISE_LIMIT}, so the anti-aliasing cannot be read as ` +
+        `edge coverage. Force it with --subpixel if the source is cleaner than it measures.`,
+    );
+  }
   // Only the palette is widened (plus gradient de-banding for photos). minArea
   // and the fit tolerances are deliberately left to auto-scale: forcing a larger
   // minArea here despeckled fine detail — feathers, foliage — and cost more
@@ -854,14 +955,14 @@ function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
     // want the input reproduced have `pixel`, `embed` and `lossless`, all of
     // which are bit-exact and none of which guess.
     notes.push('Auto-tuned trace for photographic content: 48-colour palette with gradient de-banding.');
-    return { colors: 48, gradients: true };
+    return { colors: 48, gradients: true, ...refine };
   }
 
   if (flat.distinctColors > FLAT_COLOR_COUNT) {
     notes.push(`Auto-tuned trace for rich colour (${flat.distinctColors} colours): 32-colour palette.`);
-    return { colors: 32 };
+    return { colors: 32, ...refine };
   }
-  return {};
+  return { ...refine };
 }
 
 async function runTrace(
