@@ -138,7 +138,7 @@ const { svg } = vectorizeExact({ width, height, data });   // bit-exact, no code
 
 Install without the optional native packages (`npm install vecline --omit=optional`) and core still works, at **2 MB instead of ~100 MB**. Reading image files, rendering SVG back to pixels, and the verified lossless guarantee all need real codecs, so those live in the main entry point.
 
-The BMP, ICO, PNM and TGA codecs are written from scratch in this package, so they work in core too — no libvips required to read or write any of them.
+The BMP, ICO, PNM and TGA codecs are written from scratch in this package, so they work with the native packages omitted — no libvips required to read or write any of them. One caveat worth stating rather than discovering: an ICO entry may hold a complete PNG instead of raw pixels (most 256×256 icons do), and decoding that still needs a real PNG codec. The ICO container is parsed here either way; it is the payload inside that has to go somewhere. Entries storing a raw DIB — which is what smaller icons normally use — read with nothing installed.
 
 ## Formats
 
