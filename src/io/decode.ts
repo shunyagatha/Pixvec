@@ -135,7 +135,20 @@ export async function decodeRaster(
   // `unlimited` is deliberately left at its default (false): it switches off
   // libvips' own safety limits, which is the opposite of what a decoder handed
   // untrusted bytes should do.
-  const sharp = await loadSharp();
+  let sharp: Awaited<ReturnType<typeof loadSharp>>;
+  try {
+    sharp = await loadSharp();
+  } catch (err) {
+    // TGA waits for a real codec to decline before it gets a turn. When there is
+    // no real codec installed at all, that turn has come and gone — so try it
+    // here rather than reporting a missing dependency for a format this package
+    // decodes itself. Without this, `--omit=optional` could never read a TGA:
+    // the throw above lands before the `metadata()` catch below, which is the
+    // only other place the fallback is reached.
+    const tga = decodeTgaFallback(bytes);
+    if (tga) return finishFallback(tga, bytes, opts);
+    throw err;
+  }
   const base = () => sharp(asBuffer(bytes), { limitInputPixels, animated: false });
 
   let raw: Metadata;
