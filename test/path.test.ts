@@ -190,3 +190,86 @@ describe('PathBuilder.rect', () => {
     expect(pts.slice(8)).toEqual([5, 5, 8, 5, 8, 6, 5, 6]);
   });
 });
+
+/**
+ * `z` already draws a straight line from the current point back to the subpath's
+ * start, so a final `lineTo` that lands there is the same line written twice.
+ * The builder holds each line back one command so `close()` can drop it — which
+ * means these tests also guard the case where nothing comes to flush it.
+ */
+describe('PathBuilder closing-line elision', () => {
+  it('drops a final line that returns to the start, keeping the shape', () => {
+    const pb = new PathBuilder(0);
+    pb.moveTo(0, 0); pb.lineTo(10, 0); pb.lineTo(10, 10); pb.lineTo(0, 0); pb.close();
+    const d = pb.toString();
+    // The triangle is unchanged: `z` supplies the leg that is no longer written.
+    expect(replay(tokenize(d))).toEqual([0, 0, 10, 0, 10, 10]);
+    expect(d.endsWith('z')).toBe(true);
+    // One line command for each of the two legs that are not the closing one.
+    expect(d.match(/[hvl]/g)).toHaveLength(2);
+  });
+
+  it('keeps a final line that does not return to the start', () => {
+    const pb = new PathBuilder(0);
+    pb.moveTo(0, 0); pb.lineTo(10, 0); pb.lineTo(10, 10); pb.close();
+    expect(replay(tokenize(pb.toString()))).toEqual([0, 0, 10, 0, 10, 10]);
+    expect(pb.toString().match(/[hvl]/g)).toHaveLength(2);
+  });
+
+  it('compares endpoints after snapping, not in user space', () => {
+    const pb = new PathBuilder(1);
+    pb.moveTo(0, 0); pb.lineTo(10, 0); pb.lineTo(10, 10);
+    // Misses the start by less than the output precision can express, so the
+    // emitted line would have gone to 0,0 regardless — `z` draws exactly that.
+    pb.lineTo(0.01, 0); pb.close();
+    expect(pb.toString().match(/[hvl]/g)).toHaveLength(2);
+  });
+
+  it('keeps a closing curve, which `z` cannot reproduce', () => {
+    const pb = new PathBuilder(0);
+    pb.moveTo(0, 0); pb.lineTo(10, 0); pb.curveTo(8, 4, 4, 8, 0, 0); pb.close();
+    expect(pb.toString()).toContain('c');
+    // `replay` records a curve's two controls as well as its endpoint.
+    expect(replay(tokenize(pb.toString()))).toEqual([0, 0, 10, 0, 8, 4, 4, 8, 0, 0]);
+  });
+
+  it('keeps the last segment of an open path, which never calls close()', () => {
+    // The centerline tracer builds polylines exactly this way. A held-back line
+    // with no closing command to flush it would vanish without any error.
+    const pb = new PathBuilder(0);
+    pb.moveTo(0, 0); pb.lineTo(5, 0); pb.lineTo(5, 9);
+    expect(replay(tokenize(pb.toString()))).toEqual([0, 0, 5, 0, 5, 9]);
+  });
+
+  // Each of the next two uses its own builder: `isEmpty` flushes too, so calling
+  // it first would hide whether `length` does.
+  it('counts a held-back line in length', () => {
+    const pb = new PathBuilder(0);
+    pb.moveTo(0, 0); pb.lineTo(5, 0);
+    expect(pb.length).toBe('M0 0h5'.length);
+  });
+
+  it('counts a held-back line in isEmpty', () => {
+    const pb = new PathBuilder(0);
+    pb.lineTo(5, 0);
+    expect(pb.isEmpty()).toBe(false);
+  });
+
+  it('keeps an unclosed subpath whole when the next one begins', () => {
+    const pb = new PathBuilder(0);
+    // No close(), so the pending line is still held when moveTo arrives.
+    pb.moveTo(0, 0); pb.lineTo(5, 0);
+    pb.moveTo(20, 20); pb.lineTo(25, 20);
+    expect(replay(tokenize(pb.toString()))).toEqual([0, 0, 5, 0, 20, 20, 25, 20]);
+  });
+
+  it('starts each subpath from its own start point', () => {
+    const pb = new PathBuilder(0);
+    pb.moveTo(0, 0); pb.lineTo(4, 0); pb.lineTo(0, 0); pb.close();
+    // The second subpath's relative `m` is measured from where `z` left the pen.
+    pb.moveTo(20, 20); pb.lineTo(24, 20); pb.lineTo(20, 20); pb.close();
+    const pts = replay(tokenize(pb.toString()));
+    expect(pts.slice(0, 4)).toEqual([0, 0, 4, 0]);
+    expect(pts.slice(4)).toEqual([20, 20, 24, 20]);
+  });
+});
