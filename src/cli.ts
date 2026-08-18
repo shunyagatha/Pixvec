@@ -506,8 +506,12 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       polygonOnly: o.polygon,
       primitives: o.primitives,
       primitiveError: o.primitiveError,
-      // commander stores --no-optimize as optimize:false; leave undefined when
-      // the flag was never passed so the default stays in force.
+      // NOT undefined when the flag is absent, as this comment used to claim:
+      // commander gives a lone --no-x a default of `true`. That is harmless here
+      // only because `autoTracePreset` never computes `optimize`, so there is no
+      // auto value for the explicit true to override. `subpixel` was not so lucky
+      // and is declared as an explicit --subpixel/--no-subpixel pair for that
+      // reason.
       optimize: o.optimize,
       optimizeError: o.optTolerance,
       refineIterations: o.refineIterations,
@@ -2152,6 +2156,10 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
+  .option(
+    '--subpixel',
+    'force sub-pixel boundary placement even when the source measures too noisy for it. Declared as a pair with --no-subpixel so that passing NEITHER leaves the value undefined: commander gives a lone --no-x a default of true, and that explicit true overrode the measured auto-off, so `vectorize` refined every photograph while printing a note saying it had not.',
+  )
   .option('--no-subpixel', 'keep boundary vertices on the pixel lattice instead of where the antialiasing says the edge fell. Sub-pixel placement is on by default and is what lets the curve fitter engage at all; turning it off returns the older staircase output at roughly a third of the gzipped bytes. No effect on hard-edged art, where the lattice is already exact.')
   .option(
     '--segment <k>',

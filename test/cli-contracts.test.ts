@@ -511,3 +511,60 @@ describe.skipIf(!built)('CLI: an argument no command asked for is an error, not 
     expect(existsSync(out)).toBe(true);
   });
 });
+
+describe.skipIf(!built)('CLI: the measured sub-pixel auto-off reaches the flagship command', () => {
+  /**
+   * `--no-subpixel` was declared alone, and commander gives a lone `--no-x` a
+   * DEFAULT of `true`. `subpixel: o.subpixel` therefore forwarded an explicit
+   * `true` on every run, `stripUndefined` kept it because it is not undefined,
+   * and it overrode `autoTracePreset`'s measured `subpixel = false`.
+   *
+   * So `vectorize` refined every noisy photograph while printing a note saying it
+   * had not: photo-cat came out 7.50 MB against `convert`'s 3.04 MB from the same
+   * input and the same message on screen. The library, `convert`, `batch` and the
+   * MCP server all took the auto-off; the flagship command was the one arm that
+   * did not, and it is the arm the README's numbers are not measured on.
+   *
+   * Declaring the pair makes "neither flag" mean undefined again, and gives the
+   * printed note a `--subpixel` to name that actually exists.
+   */
+  let dir: string;
+  let noisy: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vecline-subpixel-'));
+    noisy = join(dir, 'noisy.png');
+    const { photoLike } = await import('./fixtures.js');
+    await writeFile(noisy, await encode(photoLike(96, 72), 'png'));
+  });
+
+  const bytes = async (p: string) => (await import('node:fs/promises')).readFile(p);
+
+  it('agrees with convert when neither flag is passed', async () => {
+    const a = join(dir, 'a.svg');
+    const b = join(dir, 'b.svg');
+    expect((await cli(['vectorize', noisy, '-o', a, '--mode', 'trace'])).code).toBe(0);
+    expect((await cli(['convert', noisy, b])).code).toBe(0);
+    expect((await bytes(a)).equals(await bytes(b))).toBe(true);
+  });
+
+  it('offers the --subpixel the note tells the user to pass', async () => {
+    const help = await cli(['vectorize', '--help']);
+    expect(help.stdout).toMatch(/--subpixel\b/);
+  });
+
+  it('--subpixel overrides the auto-off, which is the point of having it', async () => {
+    const auto = join(dir, 'auto.svg');
+    const forced = join(dir, 'forced.svg');
+    await cli(['vectorize', noisy, '-o', auto, '--mode', 'trace']);
+    expect((await cli(['vectorize', noisy, '-o', forced, '--mode', 'trace', '--subpixel'])).code).toBe(0);
+    // Refinement produces materially more geometry; equal bytes would mean the
+    // flag did nothing.
+    expect((await bytes(forced)).length).toBeGreaterThan((await bytes(auto)).length);
+  });
+
+  it('--no-subpixel is still honoured', async () => {
+    const off = join(dir, 'off.svg');
+    expect((await cli(['vectorize', noisy, '-o', off, '--mode', 'trace', '--no-subpixel'])).code).toBe(0);
+    expect(existsSync(off)).toBe(true);
+  });
+});
