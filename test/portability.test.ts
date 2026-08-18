@@ -152,6 +152,8 @@ describe('vecline/core portability', () => {
       // definition — it is the one file whose whole purpose is the thing the
       // portable core must not reach.
       'io/native.ts',
+      // Asks node:v8 for the real heap ceiling, which is its entire purpose.
+      'io/loop-budget.ts',
       'io/decode.ts', 'io/encode.ts', 'io/rasterize.ts', 'io/batch-summary.ts', 'io/pdf.ts', 'io/office.ts', 'io/images-pdf.ts',
       // Opens a socket and spawns LibreOffice — node:http, node:fs, node:crypto.
       'io/bridge.ts',

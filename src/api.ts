@@ -12,6 +12,7 @@ import { vectorizeEmbed, type EmbedOptions } from './vectorize/embed.js';
 import { vectorizeExact, type ExactOptions } from './vectorize/exact.js';
 import { vectorizePixels, type PixelVectorizeOptions } from './vectorize/pixel.js';
 import { trace, TRACE_DEFAULTS, type TraceOptions } from './vectorize/trace.js';
+import { heapLoopBudget } from './io/loop-budget.js';
 
 export const VERSION = '2.0.0';
 
@@ -807,6 +808,10 @@ async function runTrace(
 
   const base: TraceOptions = {
     ...TRACE_DEFAULTS,
+    // Ahead of the spreads so a caller can still pass its own, or null to opt
+    // out. Without it an oversized image ends the process with a V8 heap dump
+    // instead of a sentence naming three ways forward.
+    loopBudget: heapLoopBudget(),
     ...preset,
     ...stripUndefined(opts.trace ?? {}),
     generator,

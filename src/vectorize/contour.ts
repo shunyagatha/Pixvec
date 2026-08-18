@@ -37,6 +37,32 @@ export interface Loop {
 export type TurnPolicy = 'black' | 'white' | 'left' | 'right' | 'minority' | 'majority';
 
 /**
+ * Asked once, before the boundary loops are built, whether there is room.
+ *
+ * Return a message to abort with, or null to proceed. `projectedBytes` is what
+ * the loops are about to cost, which is knowable here and nowhere earlier: the
+ * edge count is exact by this point and the loops themselves have not been
+ * allocated yet.
+ *
+ * Deliberately a callback rather than a limit in this module. The binding
+ * constraint is the host's heap, not anything about the image, and a fixed cap
+ * would refuse on a small machine what a large one finishes comfortably. This
+ * file stays portable and unaware of any runtime; the node build supplies a
+ * guard that asks V8 for the real ceiling.
+ */
+export type LoopBudgetGuard = (projectedBytes: number) => string | null;
+
+/**
+ * Retained heap per boundary edge, measured rather than assumed.
+ *
+ * 70.8 B/edge on a 24.1 MP photograph (47,487,010 edges, 3,363,940,440 bytes)
+ * and 73.5 B/edge on a 0.4 MP one (832,522 edges, 61,217,072 bytes) — stable to
+ * a few percent across a 57x range, because the cost is dominated by the two
+ * coordinate arrays per loop and those scale with edges, not with image size.
+ */
+export const BYTES_PER_EDGE = 72;
+
+/**
  * Trace every boundary loop of every component.
  *
  * @param turnPolicy How to resolve diagonal self-touches. Defaults to `left`,
@@ -51,6 +77,7 @@ export function traceComponents(
   height: number,
   componentCount: number,
   turnPolicy: TurnPolicy = 'left',
+  budget?: LoopBudgetGuard,
 ): Loop[][] {
   const VW = width + 1; // vertices per row
   const vertexCount = VW * (height + 1);
@@ -102,6 +129,15 @@ export function traceComponents(
       if (y === height - 1 || labels[row + x + width] !== c) emit(br, bl, c);  // bottom, ←
       if (x === 0 || labels[row + x - 1] !== c) emit(bl, tl, c);               // left, ↑
     }
+  }
+
+  // Last point at which refusing is still cheap. The edge count is exact, the
+  // typed arrays above are a fraction of what follows, and the loops — the
+  // largest allocation in a trace — are still ahead. Past here the only
+  // remaining outcome for an image too big for the machine is a V8 heap dump.
+  if (budget) {
+    const stop = budget(edgeCount * BYTES_PER_EDGE);
+    if (stop) throw new Error(stop);
   }
 
   const result: Loop[][] = Array.from({ length: componentCount }, () => []);

@@ -1494,7 +1494,8 @@ function tally(out, comps, classes, idx, inBounds, self, isSmall, voidClass) {
 }
 
 // src/vectorize/contour.ts
-function traceComponents(labels, width, height, componentCount, turnPolicy = "left") {
+var BYTES_PER_EDGE = 72;
+function traceComponents(labels, width, height, componentCount, turnPolicy = "left", budget) {
   const VW = width + 1;
   const vertexCount = VW * (height + 1);
   let edgeCount = 0;
@@ -1538,6 +1539,10 @@ function traceComponents(labels, width, height, componentCount, turnPolicy = "le
       if (y === height - 1 || labels[row + x + width] !== c) emit2(br, bl, c);
       if (x === 0 || labels[row + x - 1] !== c) emit2(bl, tl, c);
     }
+  }
+  if (budget) {
+    const stop = budget(edgeCount * BYTES_PER_EDGE);
+    if (stop) throw new Error(stop);
   }
   const result = Array.from({ length: componentCount }, () => []);
   for (let start = 0; start < edgeCount; start++) {
@@ -4160,7 +4165,7 @@ function trace(source, opts = {}) {
     }
   }
   report("Tracing contours", 55);
-  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
+  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget);
   const EMPTY_LOOPS = [];
   const extendedLoops = (rank, rankOfClass2) => {
     const mask = new Int32Array(width * height).fill(-1);

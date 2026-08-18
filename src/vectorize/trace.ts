@@ -4,7 +4,7 @@ import { PathBuilder } from '../svg/path.js';
 import { selectiveBlur } from '../preprocess.js';
 import { assertRasterImage, type RasterImage, type Rgba } from '../types.js';
 import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, type SpeckleScope } from './components.js';
-import { traceComponents, type TurnPolicy, type Loop } from './contour.js';
+import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { refineLoop } from './subpixel.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
@@ -250,6 +250,16 @@ export interface TraceOptions {
    */
   onProgress?: (stage: string, pct: number) => void;
   /**
+   * Asked once, before the boundary loops are built, whether the host can
+   * afford them — see {@link LoopBudgetGuard}.
+   *
+   * Without one, an image too large for the machine ends the process with a raw
+   * V8 heap dump and exit 134, discarding everything and saying nothing. The
+   * node build supplies a guard by default; a caller can pass its own or `null`
+   * to opt out.
+   */
+  loopBudget?: LoopBudgetGuard;
+  /**
    * Abandon the trace at the next stage boundary.
    *
    * Checked between stages rather than inside them, for the same reason: the
@@ -480,7 +490,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   }
 
   report('Tracing contours', 55);
-  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy);
+  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget);
   /** Shared empty stand-in, so releasing a consumed entry allocates nothing. */
   const EMPTY_LOOPS: Loop[] = [];
 
