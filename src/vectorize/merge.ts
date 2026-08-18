@@ -337,6 +337,26 @@ export function segmentPixels(img: RasterImage, k = 300, minRegion = 0): Int32Ar
  * where an edge is, and measured on a 100x100 JPEG it removed 18% of the spurious
  * regions where this removes 93%.
  */
+/**
+ * WHERE THIS IS WRONG, measured, so it does not become a default by accident.
+ *
+ * It is right for compression-artefact noise and wrong for smooth shading, and
+ * nothing in the current option surface distinguishes them.
+ *
+ * On a 100x100 JPEG sticker it is a clear win: 4,438 regions -> 561, gzip 11.1 KB
+ * -> 4.9 KB, and the render goes from speckle to flat coherent areas. On
+ * `logo-tux.png` — an airbrushed logo with soft shading rather than grain — the
+ * same settings collapse the shading into bands and visibly erode the silhouette:
+ * SSIM 0.9884 -> 0.9506 for `segment` alone, 0.9236 with the lattice simplifier,
+ * with a jagged head outline and ragged feet in the render.
+ *
+ * `interiorNoise` cannot separate those two cases: JPEG ringing and a smooth
+ * gradient both raise it, and logo-tux measures 0.799 against the sticker's
+ * 5.061 — same side of any threshold that catches the sticker. So this stays
+ * opt-in until something can tell grain from shading, and the `gradients` option
+ * is the obvious place to look, since a region it accepts as a ramp is exactly a
+ * region this must not flatten.
+ */
 export function flattenToSegments(img: RasterImage, k: number, minRegion: number): RasterImage {
   const { width: w, height: h, data } = img;
   const n = w * h;
