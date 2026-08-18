@@ -134,6 +134,32 @@ const CANDIDATES = [
   // is mostly texture and small regions, where the same simplification loses.
   // Run `npm run bench:scale -- corpus/src` before believing any ranking these
   // built-in shapes produce.
+  //
+  // AND THEN IT REVERSED A THIRD TIME. Four shapes is not a sample either. On
+  // 300 real logos (simple-icons, CC0, each framed as a dark mark on an opaque
+  // ground) at 3.902x, auto falls from "the best point on the frontier" to
+  // 14.94 dB on 6,336 anchors -- below trace-default's 15.29 dB on 5,923, so it
+  // is beaten on both axes at once by the thing it is choosing between. At 4x
+  // the two are tied at 15.40, which is the tell: the gap exists only off the
+  // pixel lattice, the signature of a decision routing artwork to pixel mode.
+  //
+  // Read that as a property of corpus size, not of any one corpus. The same
+  // question -- is auto dominated? -- answered no, then yes, then no again as
+  // the sample went 8 synthetic -> 4 real -> 300 real. Nothing below is a
+  // ranking until it has been re-run on a corpus large enough to have a middle.
+  //
+  // The finding that survived all three: on 300 real logos, `trace-default` and
+  // `auto` emit ZERO curve commands. Verified exactly rather than from these
+  // rounded per-shape averages -- 0 curve commands across 40 of 40 logos, while
+  // preset-logo emits 5,350 in the same 40 using 13.8x fewer anchors (17,047
+  // against 234,766). The plan these phases came from opens by saying the
+  // default path emits no curves on a normal logo. It still does not.
+  //
+  // Note what this corpus CANNOT see: simple-icons are two-colour, so shared
+  // boundaries, seams, extendUnder, palette selection and gradients are all
+  // untested by it, and it is potrace's ideal case -- which is why potrace leads
+  // the frontier here at 61.6 dB per thousand anchors against sub-default's 3.1.
+  // No row enables `primitives`, so these numbers say nothing about Phase 5.
   { id: 'preset-logo', opts: { mode: 'trace', preset: 'logo' } },
   { id: 'preset-lineart', opts: { mode: 'trace', preset: 'lineart' } },
   { id: 'preset-poster', opts: { mode: 'trace', preset: 'poster' } },
