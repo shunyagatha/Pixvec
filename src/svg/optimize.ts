@@ -2,10 +2,25 @@
  * SVG optimisation — a small, conservative minifier.
  *
  * Not a full SVGO clone: a focused pass that shrinks vecline's own output (and
- * any SVG handed in) without changing what it renders — strip comments and the
- * XML prologue, collapse inter-tag whitespace, round coordinates, and drop
- * default attributes. Everything here is render-preserving by construction, so
- * it is safe to run by default. Pure string transformation.
+ * any SVG handed in) — strip comments and the XML prologue, collapse inter-tag
+ * whitespace, round coordinates, and drop default attributes. Pure string
+ * transformation.
+ *
+ * "Render-preserving by construction" is what this header used to claim, and it
+ * was not true. Measured, rendered at 512px and compared channel by channel:
+ *
+ *   our own traced output   logo-tux, sticker: IDENTICAL. alpha-dice differs on
+ *                           29,163 channels at max 3/255 — coordinate rounding,
+ *                           below visibility.
+ *   third-party SVGs        vector-tiger, vector-source, vector-comparison all
+ *                           differ, max 48/255, because their artwork sits under
+ *                           a scaling transform that amplifies the 0.005 user-unit
+ *                           rounding error.
+ *
+ * So: safe on our own output, and lossy at the anti-aliasing level on scaled
+ * third-party artwork. Raise `precision` when that matters. What it must never be
+ * again is STRUCTURALLY destructive — see the transform note below for the defect
+ * that made this worth measuring.
  */
 
 export interface OptimizeOptions {
@@ -52,6 +67,33 @@ function roundStandalone(chunk: string, scale: number): string {
  * the source text: a delimiter is needed unless the next token starts with `-`
  * (always self-delimiting) or starts with `.` while the previous number still
  * has its decimal point to end on.
+ */
+/**
+ * WHY `transform` IS COPIED THROUGH UNTOUCHED.
+ *
+ * Two separate defects lived here, and only the first one looked like a defect.
+ *
+ * 1. `roundNumericList` rebuilds its output from the token matches alone, so every
+ *    character that is not a letter or a number was discarded — including the
+ *    parentheses that ARE the transform grammar. `matrix(1.77,0,0,1.77,324.9,255)`
+ *    came back as `matrix1.77 0 0 1.77 324.9 255`, and `translate(20,30) rotate(45)`
+ *    as `translate20 30rotate45`. Renderers drop an unparseable transform, so the
+ *    element draws untransformed.
+ *
+ * 2. Fixing that and rounding the numbers in place was still wrong, which is the
+ *    part worth recording. A transform's numbers are MULTIPLIERS, not coordinates.
+ *    Rounding a path coordinate to two decimals moves that point by at most 0.005
+ *    user units; rounding a SCALE factor by the same 0.005 rescales everything
+ *    beneath it. On the corpus tiger, 1.7656463 -> 1.77 is a 0.2% scale error, and
+ *    the render still differed on 106,927 channels after the parentheses were back.
+ *
+ * The saving was one attribute per document — tens of bytes — against a whole-subtree
+ * geometric error. So the numbers are left exactly as they were found, and the
+ * attribute is matched above only to keep the standalone rounder away from it.
+ *
+ * None of this ever touched our own output: the tracer emits absolute paths and no
+ * transforms. It only ever damaged SVGs that came from somewhere else, which is
+ * precisely what `sprite --minify` ingests.
  */
 function roundNumericList(value: string, scale: number): string {
   let out = '';
@@ -174,7 +216,9 @@ export function optimizeSvg(svg: string, opts: OptimizeOptions = {}): string {
   NUMERIC_LISTS.lastIndex = 0;
   for (let m = NUMERIC_LISTS.exec(out); m !== null; m = NUMERIC_LISTS.exec(out)) {
     rounded += roundStandalone(out.slice(last, m.index), scale);
-    rounded += ` ${m[1]}="${roundNumericList(m[2], scale)}"`;
+    // `transform` is matched here only so the standalone rounder cannot reach it.
+    const value = m[1] === 'transform' ? m[2] : roundNumericList(m[2], scale);
+    rounded += ` ${m[1]}="${value}"`;
     last = m.index + m[0].length;
   }
   rounded += roundStandalone(out.slice(last), scale);
