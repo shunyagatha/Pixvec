@@ -45,6 +45,16 @@ export class PathBuilder {
   private startX = 0;
   private startY = 0;
   private lastCommand = '';
+  /**
+   * The most recent `lineTo`, computed but not yet written.
+   *
+   * Held back so `close()` can see it. `z` already draws a straight line from
+   * the current point back to the subpath's start, so a final line that lands
+   * on the start is that same line written twice — but whether it lands there
+   * is only decidable here, after snapping, and the caller that produced the
+   * segment cannot know.
+   */
+  private pendingLine: { dx: number; dy: number } | null = null;
 
   constructor(private readonly precision: number = 2) {}
 
@@ -89,7 +99,20 @@ export class PathBuilder {
     this.lastCommand = command;
   }
 
+  /** Write the held-back line, if there is one. Idempotent. */
+  private flushLine(): void {
+    const p = this.pendingLine;
+    if (!p) return;
+    // Clear first: `push` must not see a pending line, or a re-entrant read of
+    // `length` from inside it would write the same segment twice.
+    this.pendingLine = null;
+    if (p.dy === 0) this.push('h', [p.dx]);
+    else if (p.dx === 0) this.push('v', [p.dy]);
+    else this.push('l', [p.dx, p.dy]);
+  }
+
   moveTo(x: number, y: number): this {
+    this.flushLine();
     const ax = this.snap(x), ay = this.snap(y);
     if (this.out === '') this.push('M', [ax, ay]);
     else this.push('m', [ax - this.cx, ay - this.cy]);
@@ -102,14 +125,16 @@ export class PathBuilder {
     const ax = this.snap(x), ay = this.snap(y);
     const dx = ax - this.cx, dy = ay - this.cy;
     if (dx === 0 && dy === 0) return this;
-    if (dy === 0) this.push('h', [dx]);
-    else if (dx === 0) this.push('v', [dy]);
-    else this.push('l', [dx, dy]);
+    // The delta is fixed now, so holding the write back cannot change it: the
+    // cursor advances here and every other emitter flushes before it writes.
+    this.flushLine();
+    this.pendingLine = { dx, dy };
     this.cx = ax; this.cy = ay;
     return this;
   }
 
   curveTo(x1: number, y1: number, x2: number, y2: number, x: number, y: number): this {
+    this.flushLine();
     const a1x = this.snap(x1), a1y = this.snap(y1);
     const a2x = this.snap(x2), a2y = this.snap(y2);
     const ax = this.snap(x), ay = this.snap(y);
@@ -132,20 +157,39 @@ export class PathBuilder {
   }
 
   close(): this {
+    // Drop a final line that returns to the start; `z` draws it. Endpoints are
+    // compared after snapping, so a segment that misses the start in user space
+    // but rounds onto it counts too. Geometry is untouched either way: with the
+    // line gone the pen sits where that line began, and `z` runs from there to
+    // the start — the same straight line, one command instead of two.
+    //
+    // A closing *curve* is real geometry `z` cannot reproduce, so only the line
+    // case qualifies, and only when it is the last thing written.
+    if (this.pendingLine && this.cx === this.startX && this.cy === this.startY) {
+      this.pendingLine = null;
+    } else {
+      this.flushLine();
+    }
     this.push('z', []);
     this.cx = this.startX; this.cy = this.startY;
     return this;
   }
 
   get length(): number {
+    this.flushLine();
     return this.out.length;
   }
 
   isEmpty(): boolean {
+    this.flushLine();
     return this.out.length === 0;
   }
 
   toString(): string {
+    // Flushing here is what keeps an *open* path whole. `centerline` builds
+    // polylines and never calls `close()`, so without this its last segment
+    // would be held back for a command that never comes and simply vanish.
+    this.flushLine();
     return this.out;
   }
 }

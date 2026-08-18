@@ -809,6 +809,16 @@ var PathBuilder = class {
     __publicField(this, "startX", 0);
     __publicField(this, "startY", 0);
     __publicField(this, "lastCommand", "");
+    /**
+     * The most recent `lineTo`, computed but not yet written.
+     *
+     * Held back so `close()` can see it. `z` already draws a straight line from
+     * the current point back to the subpath's start, so a final line that lands
+     * on the start is that same line written twice — but whether it lands there
+     * is only decidable here, after snapping, and the caller that produced the
+     * segment cannot know.
+     */
+    __publicField(this, "pendingLine", null);
   }
   snap(v) {
     const f = 10 ** this.precision;
@@ -837,7 +847,17 @@ var PathBuilder = class {
     this.out += chunk;
     this.lastCommand = command;
   }
+  /** Write the held-back line, if there is one. Idempotent. */
+  flushLine() {
+    const p = this.pendingLine;
+    if (!p) return;
+    this.pendingLine = null;
+    if (p.dy === 0) this.push("h", [p.dx]);
+    else if (p.dx === 0) this.push("v", [p.dy]);
+    else this.push("l", [p.dx, p.dy]);
+  }
   moveTo(x, y) {
+    this.flushLine();
     const ax = this.snap(x), ay = this.snap(y);
     if (this.out === "") this.push("M", [ax, ay]);
     else this.push("m", [ax - this.cx, ay - this.cy]);
@@ -851,14 +871,14 @@ var PathBuilder = class {
     const ax = this.snap(x), ay = this.snap(y);
     const dx = ax - this.cx, dy = ay - this.cy;
     if (dx === 0 && dy === 0) return this;
-    if (dy === 0) this.push("h", [dx]);
-    else if (dx === 0) this.push("v", [dy]);
-    else this.push("l", [dx, dy]);
+    this.flushLine();
+    this.pendingLine = { dx, dy };
     this.cx = ax;
     this.cy = ay;
     return this;
   }
   curveTo(x1, y1, x2, y2, x, y) {
+    this.flushLine();
     const a1x = this.snap(x1), a1y = this.snap(y1);
     const a2x = this.snap(x2), a2y = this.snap(y2);
     const ax = this.snap(x), ay = this.snap(y);
@@ -883,18 +903,26 @@ var PathBuilder = class {
     return this.close();
   }
   close() {
+    if (this.pendingLine && this.cx === this.startX && this.cy === this.startY) {
+      this.pendingLine = null;
+    } else {
+      this.flushLine();
+    }
     this.push("z", []);
     this.cx = this.startX;
     this.cy = this.startY;
     return this;
   }
   get length() {
+    this.flushLine();
     return this.out.length;
   }
   isEmpty() {
+    this.flushLine();
     return this.out.length === 0;
   }
   toString() {
+    this.flushLine();
     return this.out;
   }
 };
