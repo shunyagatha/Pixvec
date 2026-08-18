@@ -577,9 +577,17 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<st
       });
       const out = String(args.output ?? inPath);
       await writeFile(out, after);
-      const saved = Buffer.byteLength(before, 'utf8') - Buffer.byteLength(after, 'utf8');
-      const pct = saved > 0 ? ((saved / Buffer.byteLength(before, 'utf8')) * 100).toFixed(1) : '0.0';
-      return `Wrote ${out} — ${Buffer.byteLength(before, 'utf8')} → ${Buffer.byteLength(after, 'utf8')} bytes (${pct}% smaller). Rendering is unchanged.`;
+      const beforeBytes = Buffer.byteLength(before, 'utf8');
+      const afterBytes = Buffer.byteLength(after, 'utf8');
+      const saved = beforeBytes - afterBytes;
+      // Substituting the literal '0.0' whenever `saved <= 0` and then interpolating
+      // it into "(x% smaller)" announced a 29% GROWTH as "0.0% smaller" — a constant
+      // formatted as a measurement, pointing the opposite way from the byte counts
+      // printed beside it. An agent reads that as a no-op, when the file it just
+      // overwrote (output defaults to the input path) got bigger.
+      const pct = beforeBytes === 0 ? '0.0' : ((Math.abs(saved) / beforeBytes) * 100).toFixed(1);
+      const change = saved > 0 ? `${pct}% smaller` : saved < 0 ? `${pct}% LARGER` : 'no change';
+      return `Wrote ${out} — ${beforeBytes} → ${afterBytes} bytes (${change}). Geometry is preserved; coordinates are rounded to the requested precision, so artwork under a scaling transform can shift by well under a pixel.`;
     }
     case 'component': {
       const svg = new TextDecoder().decode(await readFile(inPath));

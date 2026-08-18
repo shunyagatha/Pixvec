@@ -568,3 +568,57 @@ describe.skipIf(!built)('CLI: the measured sub-pixel auto-off reaches the flagsh
     expect(existsSync(off)).toBe(true);
   });
 });
+
+describe.skipIf(!built)('CLI: the savings figure points the way the bytes actually went', () => {
+  /**
+   * `optimize` can legitimately GROW a file: already-compact path data like `.25`
+   * abutting its neighbour re-emits as `0.25` plus a separator, which is exactly
+   * what SVGO-style minified output looks like going in.
+   *
+   * The CLI printed a fixed `−` in front of an already-negative percentage, so a
+   * 21.9% growth rendered as `(−-21.9%)` — at a glance, a reduction. The MCP
+   * server substituted the string literal `'0.0'` whenever nothing was saved and
+   * interpolated it into `(x% smaller)`, announcing growth as "0.0% smaller": a
+   * constant formatted as a measurement, pointing the opposite way from the byte
+   * counts printed beside it.
+   */
+  let dir: string;
+  let grows: string;
+  let shrinks: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vecline-pct-'));
+    const seg = (fn: (i: number) => string) =>
+      Array.from({ length: 300 }, (_, i) => fn(i)).join(' ');
+    grows = join(dir, 'grows.svg');
+    await writeFile(grows,
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0 0 ' +
+      seg((i) => `l.${String((i * 7) % 90 + 10)}.${String((i * 13) % 90 + 10)}`) + 'z"/></svg>');
+    shrinks = join(dir, 'shrinks.svg');
+    await writeFile(shrinks,
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0 0 ' +
+      seg((i) => `l${i % 9 + 1}.${String((i * 37) % 1000).padStart(3, '0')}67 2.${String((i * 53) % 1000).padStart(3, '0')}89`) + 'z"/></svg>');
+  });
+
+  it('says "larger" when the file got larger', async () => {
+    const r = await cli(['optimize', grows, '-o', join(dir, 'a.svg')]);
+    expect(r.code).toBe(0);
+    const text = r.stdout + r.stderr;
+    expect(text).toMatch(/larger/i);
+    // The old output. A minus sign in front of a negative number is not a report.
+    expect(text).not.toContain('−-');
+  });
+
+  it('still reports a real reduction as a reduction', async () => {
+    const r = await cli(['optimize', shrinks, '-o', join(dir, 'b.svg')]);
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/larger/i);
+  });
+
+  it('reports the growth in --json too, with a sign', async () => {
+    const r = await cli(['optimize', grows, '-o', join(dir, 'c.svg'), '--json']);
+    expect(r.code).toBe(0);
+    const j = JSON.parse(r.stdout);
+    expect(j.after).toBeGreaterThan(j.before);
+    expect(j.savedPct).toBeLessThan(0);
+  });
+});

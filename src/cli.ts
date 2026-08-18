@@ -1720,11 +1720,16 @@ async function runOptimize(
 
   const saved = Buffer.byteLength(before) - Buffer.byteLength(after);
   const pct = ((saved / Buffer.byteLength(before)) * 100).toFixed(1);
+  // The optimiser can legitimately GROW a file: already-compact path data like
+  // `.25` abutting its neighbour re-emits as `0.25` plus a separator. Printing a
+  // fixed `−` in front of an already-negative number rendered a 21.9% growth as
+  // `(−-21.9%)`, which at a glance reads as a reduction.
+  const delta = saved >= 0 ? `−${pct}%` : `+${Math.abs(+pct).toFixed(1)}% larger`;
   if (o.json) {
     emitJson({ input, output: outPath, before: Buffer.byteLength(before), after: Buffer.byteLength(after), savedPct: +pct });
     return;
   }
-  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${formatBytes(Buffer.byteLength(before))} → ${formatBytes(Buffer.byteLength(after))}  (−${pct}%)`)}`);
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${formatBytes(Buffer.byteLength(before))} → ${formatBytes(Buffer.byteLength(after))}  (${delta})`)}`);
 }
 
 // ---------------------------------------------------------------------------
