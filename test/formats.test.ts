@@ -412,3 +412,86 @@ describe('TGA alpha follows the header, not the bytes', () => {
     expect(alpha.slice(1).every((a) => a === 0)).toBe(true);
   });
 });
+
+describe('multi-size ICO keeps its AND-mask transparency', () => {
+  /**
+   * A format sweep once reported that multi-size ICO files "render fully opaque",
+   * and it was the one item on that list with no fix, no test and no recorded
+   * decision — so it stayed an open worry rather than a fact either way.
+   *
+   * It does not reproduce. Built to spec, with a 1bpp AND mask marking a
+   * transparent border, single-entry and multi-entry files both decode with the
+   * mask intact. What was missing was never a fix; it was this test.
+   */
+  // 24bpp ON PURPOSE, and this is the whole point of the fixture. A 32bpp payload
+  // carries its own alpha, and `applyAndMask` returns early for it —
+  // `bitCount === 32 && hasAnyAlpha(image)` — so a 32bpp fixture tests the alpha
+  // channel and leaves the mask path completely unexercised. The first version of
+  // this test did exactly that and survived neutering `applyAndMask` entirely.
+  // At 24bpp there is no alpha channel, so the AND mask is the only thing that can
+  // make a pixel transparent.
+  const entry = (size: number) => {
+    const rowBytes = Math.ceil(size * 3 / 4) * 4;  // 24bpp rows pad to 4 bytes
+    const xorLen = rowBytes * size;
+    const maskRow = Math.ceil(size / 32) * 4;      // 1bpp rows pad to 4 bytes
+    const andLen = maskRow * size;
+    const hdr = Buffer.alloc(40);
+    hdr.writeUInt32LE(40, 0);
+    hdr.writeInt32LE(size, 4);
+    hdr.writeInt32LE(size * 2, 8);                 // height is doubled: XOR + AND
+    hdr.writeUInt16LE(1, 12);
+    hdr.writeUInt16LE(24, 14);
+    hdr.writeUInt32LE(xorLen + andLen, 20);
+    const xor = Buffer.alloc(xorLen);
+    const and = Buffer.alloc(andLen);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const inside = x > size / 4 && x < size * 3 / 4 && y > size / 4 && y < size * 3 / 4;
+        const o = (size - 1 - y) * rowBytes + x * 3;  // BMP rows run bottom-up
+        xor[o] = 30; xor[o + 1] = 60; xor[o + 2] = 200;
+        if (!inside) and[(size - 1 - y) * maskRow + (x >> 3)] |= 0x80 >> (x & 7);
+      }
+    }
+    return Buffer.concat([hdr, xor, and]);
+  };
+
+  const build = (sizes: number[]) => {
+    const imgs = sizes.map(entry);
+    const dir = Buffer.alloc(6 + 16 * sizes.length);
+    dir.writeUInt16LE(0, 0);
+    dir.writeUInt16LE(1, 2);
+    dir.writeUInt16LE(sizes.length, 4);
+    let off = dir.length;
+    sizes.forEach((s, i) => {
+      const b = 6 + i * 16;
+      dir.writeUInt8(s, b); dir.writeUInt8(s, b + 1);
+      dir.writeUInt16LE(1, b + 4); dir.writeUInt16LE(24, b + 6);
+      dir.writeUInt32LE(imgs[i].length, b + 8);
+      dir.writeUInt32LE(off, b + 12);
+      off += imgs[i].length;
+    });
+    return Buffer.concat([dir, ...imgs]);
+  };
+
+  const transparentShare = (img: { data: Uint8ClampedArray }) => {
+    let clear = 0;
+    for (let i = 3; i < img.data.length; i += 4) if (img.data[i] === 0) clear++;
+    return clear / (img.data.length / 4);
+  };
+
+  it.each([[[32]], [[16, 32]], [[16, 32, 48]]])('preserves the mask for sizes %j', async (sizes) => {
+    const { loadAnyAsRaster } = await import('../src/api.js');
+    const { image } = await loadAnyAsRaster(build(sizes as number[]), 'test.ico');
+    // The border is transparent by construction and is most of the frame.
+    expect(transparentShare(image), 'the AND mask was dropped').toBeGreaterThan(0.5);
+    // And the centre must still be painted, so this is not "everything is clear".
+    const mid = ((image.height >> 1) * image.width + (image.width >> 1)) * 4;
+    expect(image.data[mid + 3]).toBe(255);
+  });
+
+  it('picks the largest entry from a multi-size file', async () => {
+    const { loadAnyAsRaster } = await import('../src/api.js');
+    const { image } = await loadAnyAsRaster(build([16, 32, 48]), 'test.ico');
+    expect(image.width).toBe(48);
+  });
+});
