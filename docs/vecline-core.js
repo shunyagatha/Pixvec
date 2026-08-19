@@ -2683,6 +2683,71 @@ function flattenToSegments(img, k, minRegion) {
   return { width: w, height: h, data: out };
 }
 
+// src/vectorize/smooth.ts
+function conductance(gradient, kappa) {
+  const t = gradient / kappa;
+  return Math.exp(-(t * t));
+}
+function interiorNoiseOf(img) {
+  const { width: w, height: h, data: d } = img;
+  if (w < 3 || h < 3) return 0;
+  const lum = (x, y) => {
+    const o = (y * w + x) * 4;
+    return (d[o] + d[o + 1] + d[o + 2]) / 3 * (d[o + 3] / 255);
+  };
+  let sum = 0;
+  let n2 = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const gx = lum(x + 1, y) - lum(x - 1, y);
+      const gy = lum(x, y + 1) - lum(x, y - 1);
+      if (Math.hypot(gx, gy) > 24) continue;
+      let mean = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) mean += lum(x + dx, y + dy);
+      sum += Math.abs(lum(x, y) - mean / 9);
+      n2++;
+    }
+  }
+  return n2 === 0 ? 0 : sum / n2;
+}
+function iterationsFor(noise, strength) {
+  if (strength <= 0) return 0;
+  const excess = Math.max(0, noise - 0.3);
+  const scaled = 1 - Math.exp(-excess / 0.5);
+  return Math.round(24 * strength * scaled);
+}
+function smoothPreservingEdges(img, strength, opts = {}) {
+  const kappa = opts.kappa ?? 20;
+  const lambda = opts.lambda ?? 0.2;
+  const iterations = opts.iterations ?? iterationsFor(interiorNoiseOf(img), strength);
+  if (iterations <= 0) return img;
+  const { width: w, height: h } = img;
+  const cur = new Float64Array(img.data.length);
+  for (let i = 0; i < cur.length; i++) cur[i] = img.data[i];
+  const next = new Float64Array(cur.length);
+  for (let it = 0; it < iterations; it++) {
+    next.set(cur);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const o = (y * w + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const p = cur[o + c];
+          const dN = cur[o - w * 4 + c] - p;
+          const dS = cur[o + w * 4 + c] - p;
+          const dE = cur[o + 4 + c] - p;
+          const dW = cur[o - 4 + c] - p;
+          next[o + c] = p + lambda * (conductance(Math.abs(dN), kappa) * dN + conductance(Math.abs(dS), kappa) * dS + conductance(Math.abs(dE), kappa) * dE + conductance(Math.abs(dW), kappa) * dW);
+        }
+      }
+    }
+    cur.set(next);
+  }
+  const out = new Uint8ClampedArray(img.data.length);
+  for (let i = 0; i < out.length; i++) out[i] = cur[i];
+  for (let i = 3; i < out.length; i += 4) out[i] = img.data[i];
+  return { width: w, height: h, data: out };
+}
+
 // src/vectorize/quantize.ts
 var SIDE = 33;
 var R_STRIDE = SIDE * SIDE;
@@ -4354,6 +4419,7 @@ var TRACE_DEFAULTS = {
   //   photo-cat   33.89 dB /  462 KB   (base 34.86 /  636)  — 27% smaller
   //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
   segment: 0,
+  smooth: 0,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -4409,6 +4475,9 @@ function trace(source, opts = {}) {
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  if (o.smooth && o.smooth > 0) {
+    img = smoothPreservingEdges(img, o.smooth);
   }
   if (o.segment && o.segment > 0) {
     img = flattenToSegments(img, o.segment, o.segmentMinRegion);
