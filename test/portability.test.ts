@@ -48,6 +48,7 @@ const CORE_MODULES = [
   'vectorize/merge.ts',
   'vectorize/smooth.ts',
   'vectorize/junctions.ts',
+  'vectorize/arcs.ts',
   'vectorize/contour.ts',
   'vectorize/subpixel.ts',
   'vectorize/fit.ts',
