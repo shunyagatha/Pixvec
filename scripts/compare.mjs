@@ -301,6 +301,45 @@ const vtracerBin = process.env.VECLINE_VTRACER && existsSync(process.env.VECLINE
   ? process.env.VECLINE_VTRACER
   : null;
 
+/**
+ * A paid hosted vectoriser, entered from pre-generated files rather than run.
+ *
+ * It has no CLI and no free API, so its row cannot be produced on demand the way
+ * vtracer's is. Point `VECLINE_RIVAL_SVG` at a directory of `<subject>.svg` files
+ * generated from the same corpus sources and they are scored beside everything
+ * else. The files are deliberately NOT committed — they are someone else's paid
+ * output, and this repository is MIT.
+ *
+ * Measured on logo-tux, which is the case that matters most and the one where the
+ * frontier is clearest:
+ *
+ *   entrant                bytes    gzip   curves    SSIM
+ *   the paid tool          54,217  11,936     551   0.9483
+ *   vecline auto          107,889  18,862      12   0.9913
+ *   vecline preset logo    54,471  19,638   1,082   0.8747
+ *   vecline logo +reg 6    22,370   8,872     165   0.8586
+ *
+ * Read honestly, that says WE DO NOT HOLD THE BETTER FRONTIER POINT ON FLAT ART.
+ * At matched raw size we are 0.07 SSIM behind; going 2.4x smaller costs 0.09. Only
+ * `auto` scores higher, and it does so by reproducing antialiased pixels rather
+ * than describing shapes — 12 curve segments against 551, and visibly jagged when
+ * rendered. A high score there is the metric rewarding faithfulness to a raster.
+ *
+ * Across the wider nine-subject set the split is by content: we lead SSIM on 6 of
+ * 9 and they lead bytes on 6 of 9, but our curve counts are 11-24 against their
+ * 551-28,403 throughout. On photographs the two are visually comparable. On flat
+ * art they are not, and the reason is that we are still emitting staircases.
+ *
+ * The caution that goes with those SSIM wins: on `photo-jpeg-artifacts` we score
+ * 0.9441 to their 0.7642 BECAUSE we reproduce the JPEG artefacts they remove. That
+ * is a metric rewarding the reproduction of damage, and it should never be quoted
+ * as a quality win. `logo-tux` is a clean source, which is why its numbers above
+ * are the ones worth trusting.
+ */
+const rivalSvgDir = process.env.VECLINE_RIVAL_SVG && existsSync(process.env.VECLINE_RIVAL_SVG)
+  ? process.env.VECLINE_RIVAL_SVG
+  : null;
+
 const vtracerCli = async (_file, source) => {
   const dir = await mkdtemp(join(tmpdir(), 'vecline-vtracer-'));
   try {
