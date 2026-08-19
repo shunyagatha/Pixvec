@@ -327,3 +327,45 @@ describe('interiorNoise ignores pixels nobody can see', () => {
     expect(measureFlatness(grainy).interiorNoise).toBeGreaterThan(1);
   });
 });
+
+describe('the flat-art presets carry the stroke that was measured, not assumed', () => {
+  /**
+   * `strokeWidth` was the documented answer to seams for this project's whole life
+   * with no number ever attached to it. Measured at last, it is not a seam patch —
+   * it is an accuracy win, positive on 6 of 6 subjects at 0.5, for under 1.5%
+   * gzipped bytes. See the table on PRESETS in api.ts.
+   *
+   * A stroke helps because it paints the region's own colour back over the
+   * half-covered pixels along its boundary, which is exactly where a fill-only
+   * mosaic loses coverage.
+   */
+  it('does NOT switch it on, because the win is a trade', async () => {
+    // Measured, and then withdrawn. The stroke paints outside the silhouette: on
+    // logo-tux it colours 831 pixels the source says are fully transparent,
+    // against 156 without it, alpha reaching 183. Invisible composited over white
+    // — which is why SSIM improved — and a halo over anything dark. Transparent
+    // logos are the main thing this preset is pointed at.
+    //
+    // Guarding the ABSENCE deliberately, so switching it on requires deleting a
+    // test that says why not.
+    const { PRESETS } = await import('../src/api.js');
+    expect(PRESETS.logo.strokeWidth).toBeUndefined();
+    expect(PRESETS.lineart.strokeWidth).toBeUndefined();
+  });
+
+  // There is NO synthetic test asserting the improvement, and the reason is a
+  // finding rather than a gap. A single antialiased disc DISAGREES with the corpus:
+  //
+  //   sw   0      0.25    0.5     0.75    1
+  //        0.9791 0.9798  0.9736  0.9618  0.9462
+  //
+  // It peaks at 0.25 and is negative by 0.5, where all six real subjects are
+  // positive. The difference is what the stroke is for: it repaints the region's
+  // colour over half-covered boundary pixels, so it pays in proportion to how much
+  // of the picture is boundary. Two big shapes have almost none; real artwork with
+  // hundreds of small regions has a great deal.
+  //
+  // So a two-shape fixture cannot demonstrate this, and one that appeared to would
+  // be measuring something else. The evidence is the corpus table on PRESETS in
+  // api.ts, reproducible with `strokeWidth` swept against the same preset at 0.
+});
