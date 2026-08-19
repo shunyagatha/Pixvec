@@ -407,7 +407,7 @@ The gradient rows are *both* far more accurate **and** an order of magnitude sma
 
 Two caveats. potrace is *bilevel by design*; its colour rows use `posterize`, a bolt-on, and reporting them without saying so would be a rigged fight. And the strongest *commercial* tracers (Illustrator Image Trace) and AI vectorisers remain unmeasured — vecline is best-in-class here against the installable open-source field, not proven against everything.
 
-**On tuning knobs, not just accuracy.** Beyond the numbers, vecline now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` seam hiding, and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); `--gradients` output that neither potrace nor imagetracerjs offers at all; and sharp's editing pipeline behind `vecline edit` and the `vecline/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — vecline's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
+**On tuning knobs, not just accuracy.** Beyond the numbers, vecline now carries the controls each of these tools is known for: potrace's `--threshold`/`--black-on-white` bilevel mode with Otsu auto-thresholding, its six `--turn-policy` modes for diagonal self-touches, and its `--fill-strategy` (`mean`/`dominant`/`median`); imagetracerjs's edge-preserving `--blur`, `--stroke-width` boundary repainting (measured here, unlike upstream: an accuracy gain on opaque artwork, a halo on transparent), and `--right-angle` corner snapping (generalised here from an exact test to a tolerance, so it also rectifies corners quantisation left a degree or two off); `--gradients` output that neither potrace nor imagetracerjs offers at all; and sharp's editing pipeline behind `vecline edit` and the `vecline/ops` entry point. The one thing deliberately *not* copied is potrace's histogram `rangeDistribution` for greyscale posterising — vecline's Wu + Oklab-Lloyd quantiser is a strictly better default, and `--fill-strategy` already exposes the representative-colour choice for callers who want it.
 
 ## Metrics
 
@@ -496,7 +496,7 @@ Regions are painted largest-first, so by the time a small shape is drawn the lar
 vecline vectorize chart.png --extend-under
 ```
 
-Two things follow. A boundary shared by two regions is normally traced *twice*, once as each one's edge; here it is traced once. And the hairline seam antialiasing can leave between two abutting shapes cannot appear, because there is no longer a join for it to open at — this is what `--stroke-width` exists to paint over.
+Two things follow. A boundary shared by two regions is normally traced *twice*, once as each one's edge; here it is traced once. And the hairline seam antialiasing can leave between two abutting shapes cannot appear, because there is no longer a join for it to open at — this is what `--stroke-width` exists to paint over — and, measured, it does more than cover a gap: repainting those half-covered boundary pixels is worth up to +0.085 SSIM on the corpus for under 3% more bytes. It is off by default because it also paints *outside* the silhouette, which haloes transparent artwork on a dark background.
 
 It is **off by default, and the reason is measured rather than assumed**:
 
@@ -545,7 +545,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--adaptive-t <pct>` | How far below the local mean counts as ink (default 15) |
 | `--blur <1-5>` | Selective, edge-preserving blur before quantising — removes grain without softening edges |
 | `--blur-delta <n>` | Edge-preservation threshold for `--blur` (default 20) |
-| `--stroke-width <n>` | Stroke each path in its own fill colour to hide seams between regions |
+| `--stroke-width <n>` | Stroke each path in its own fill colour, repainting the half-covered pixels along its boundary. A measured accuracy gain on opaque artwork (positive on 6 of 6 corpus subjects at `0.5`, under 3% more bytes) — but it paints outside the silhouette, so it haloes transparent artwork on dark backgrounds |
 | `--turn-policy <p>` | Resolve diagonal self-touches: `left` (default), `right`, `black`, `white`, `minority`, `majority` (potrace's `turnPolicy`) |
 | `--fill-strategy <how>` | How each palette colour is chosen from its cluster: `mean` (default), `dominant`, `median` (potrace's `fillStrategy`) |
 | `--right-angle` | Snap near-axis right-angle corners to exact 90° — crisper UI, screenshots, pixel art (imagetracerjs's `rightangleenhance`) |

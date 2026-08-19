@@ -2146,7 +2146,7 @@ program
   .option('--adaptive-window <px>', 'neighbourhood side length for --adaptive; 0 = an eighth of the shorter side', intArg('--adaptive-window', 0, 4096))
   .option('--adaptive-t <pct>', 'how far below the local mean counts as ink, in percent (default 15)', intArg('--adaptive-t', 0, 100))
   .optionsGroup('Geometry and curve fitting:')
-  .option('--stroke-width <n>', 'stroke each path in its fill colour to hide seams between regions', floatArg('--stroke-width', 0, 100))
+  .option('--stroke-width <n>', 'stroke each path in its fill colour, repainting the half-covered pixels along its boundary. Measured as an accuracy gain on opaque artwork — positive on 6 of 6 corpus subjects at 0.5, for under 3% more bytes — but it paints outside the silhouette, so it haloes transparent artwork on dark backgrounds. Try 0.5; it helps least on pictures made of a few large shapes', floatArg('--stroke-width', 0, 100))
   .addOption(
     new Option('--turn-policy <policy>', 'how to resolve diagonal self-touches (checkerboard saddles)')
       .choices(['left', 'right', 'black', 'white', 'minority', 'majority']),

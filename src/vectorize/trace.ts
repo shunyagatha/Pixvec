@@ -227,9 +227,40 @@ export interface TraceOptions {
   /**
    * Stroke every path in its own fill colour, at this width in pixels.
    *
-   * This is imagetracerjs's trick for hiding the hairline gap that can appear
-   * between two abutting colour regions: a thin same-colour stroke overpaints
-   * the seam. 0 (default) emits fill-only paths. A value around 1 is typical.
+   * Borrowed from imagetracerjs as a way to hide the hairline gap between two
+   * abutting colour regions, and described that way here for years with no number
+   * attached to it. It has now been measured, and it is better and worse than the
+   * description suggested.
+   *
+   * BETTER: it is an accuracy gain, not merely a cosmetic patch. SSIM delta
+   * against the same configuration at 0, on the `logo` preset:
+   *
+   *   subject          sw0.25   sw0.5   sw0.75    sw1   sw1.5
+   *   logo-tux         +0.025  +0.043  +0.054  +0.054  +0.029
+   *   alpha-dice       +0.026  +0.031  +0.023  +0.012  -0.007
+   *   vector-tiger     +0.015  +0.027  +0.034  +0.030  -0.009
+   *   photo-parrots    +0.015  +0.021  +0.020  +0.016  -0.003
+   *   photo-cat        +0.051  +0.085  +0.099  +0.102  +0.089
+   *   a JPEG sticker   +0.016  +0.021  +0.016  +0.005  -0.046
+   *
+   * Positive on 6 of 6 at 0.5, for 1.001x-1.028x raw bytes. The mechanism is that
+   * it repaints the region's own colour over the half-covered pixels along its
+   * boundary, which is where a fill-only mosaic loses coverage.
+   *
+   * WORSE: it paints OUTSIDE THE SILHOUETTE. On logo-tux it colours 831 pixels the
+   * source says are fully transparent, against 156 without it, with alpha reaching
+   * 183. Composited over white that is invisible — which is exactly why the SSIM
+   * above improves — and over anything dark it is a halo. That is why no preset
+   * turns it on, despite the table.
+   *
+   * AND IT DOES NOT SCALE THE WAY YOU WOULD GUESS. The payoff tracks how much of
+   * the picture IS boundary, so a single antialiased disc contradicts every row
+   * above: 0.9791 / 0.9798 / 0.9736 / 0.9618 / 0.9462 across the same sweep,
+   * peaking at 0.25 and negative by 0.5. Do not tune this on a simple figure.
+   *
+   * 0 (default) emits fill-only paths. 0.5 is the value the corpus supports where
+   * the artwork is opaque; a value around 1 is typical elsewhere and was the old
+   * advice here.
    */
   strokeWidth?: number;
   /**

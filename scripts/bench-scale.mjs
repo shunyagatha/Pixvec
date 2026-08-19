@@ -22,7 +22,7 @@
 // for "is this a vector".
 //
 // Usage:
-//   node scripts/bench-scale.mjs [corpusDir] [--base 256] [--scale 4] [--out report.json]
+//   node scripts/bench-scale.mjs [corpusDir] [--base 256] [--scales 4,3.902] [--out report.json]
 //
 // corpusDir: a directory of ground-truth .svg files. Omit it for the built-in
 // synthetic set. Real corpora worth pointing this at: simple-icons, Material
