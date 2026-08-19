@@ -339,10 +339,18 @@ describe('the flat-art presets carry the stroke that was measured, not assumed',
    * half-covered pixels along its boundary, which is exactly where a fill-only
    * mosaic loses coverage.
    */
-  it('logo and lineart request it', async () => {
+  it('does NOT switch it on, because the win is a trade', async () => {
+    // Measured, and then withdrawn. The stroke paints outside the silhouette: on
+    // logo-tux it colours 831 pixels the source says are fully transparent,
+    // against 156 without it, alpha reaching 183. Invisible composited over white
+    // — which is why SSIM improved — and a halo over anything dark. Transparent
+    // logos are the main thing this preset is pointed at.
+    //
+    // Guarding the ABSENCE deliberately, so switching it on requires deleting a
+    // test that says why not.
     const { PRESETS } = await import('../src/api.js');
-    expect(PRESETS.logo.strokeWidth).toBe(0.5);
-    expect(PRESETS.lineart.strokeWidth).toBe(0.5);
+    expect(PRESETS.logo.strokeWidth).toBeUndefined();
+    expect(PRESETS.lineart.strokeWidth).toBeUndefined();
   });
 
   // There is NO synthetic test asserting the improvement, and the reason is a

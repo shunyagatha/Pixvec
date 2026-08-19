@@ -82,9 +82,9 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // reason: -13.3% raw and -17.0% gzip for -0.001 dB. It pays for itself because
   // sub-pixel coordinates are fractional, and a fractional coordinate costs both
   // more characters and worse compression (integers gzip ~5.8x, fractionals ~2.7x).
-  // `strokeWidth: 0.5` is here because it was finally MEASURED, having been the
-  // documented answer to seams for this project's whole life without a single
-  // number attached to it. It is not a seam patch. It is an accuracy win:
+  // `strokeWidth` was finally MEASURED, having been the documented answer to seams
+  // for this project's whole life without a single number attached to it. On the
+  // metric alone it looks like an accuracy win:
   //
   //   subject          sw0.25   sw0.5   sw0.75    sw1   sw1.5
   //   logo-tux         +0.025  +0.043  +0.054  +0.054  +0.029
@@ -98,9 +98,33 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // 1.001x-1.028x raw bytes and 1.001x-1.014x gzipped. A strict improvement, which
   // this project almost never finds, and it was sitting switched off.
   //
-  // 0.5 rather than 0.75 or 1, which have a slightly better mean: 0.5 has the
-  // better WORST case (+0.021 against +0.016), and 1.5 goes negative on three of
-  // the six. A preset default should be chosen on its floor.
+  // AND IT IS NOT SWITCHED ON, because the table above is not the whole story.
+  //
+  // Two things killed it after that measurement, both found by looking where the
+  // metric could not:
+  //
+  // 1. IT PAINTS OUTSIDE THE SILHOUETTE. On logo-tux the stroke puts colour into
+  //    831 pixels the source says are fully transparent, against 156 without it,
+  //    with alpha reaching 183. Composited over white that is invisible, which is
+  //    exactly why SSIM improved; over a dark background it is a halo. Transparent
+  //    logos are the main thing `--preset logo` is pointed at, and this project has
+  //    already shipped one dark-background rendering failure.
+  //
+  // 2. THE GAIN IS PARTLY SELF-INFLICTED. The preset's own `minArea: 8` and
+  //    `tolerance: 0.6` cost accuracy that the stroke then partially repays. Plain
+  //    `auto` scores higher on logo-tux than the preset does with the stroke on.
+  //
+  // So it is a TRADE, not the strict improvement the numbers alone suggested, and
+  // a trade whose cost falls on the preset's primary use case. It stays available
+  // as an explicit option, which is what it always was.
+  //
+  // What would make it shippable: a stroke that stops at the silhouette instead of
+  // straddling it. The measured win is real between two OPAQUE regions, where the
+  // half-covered pixels belong to both; it is only at the outer boundary against
+  // transparency that there is nothing on the other side to repair.
+  //
+  // (0.5 was the value chosen, on its floor rather than its mean: better worst case
+  // than 0.75, +0.021 against +0.016, and 1.5 goes negative on three of six.)
   //
   // Deliberately NOT applied to `auto` or the bare trace defaults, though the table
   // shows it would help there too — photo-cat gains the most of any subject. That
@@ -120,11 +144,11 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // not expect this to help a simple figure, and do not tune it on one.
   logo: {
     colors: 16, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75,
-    subpixel: true, precision: 1, strokeWidth: 0.5,
+    subpixel: true, precision: 1,
   },
   lineart: {
     colors: 6, minArea: 4, tolerance: 0.6, fitError: 0.6, cornerAngle: 60,
-    subpixel: true, precision: 1, strokeWidth: 0.5,
+    subpixel: true, precision: 1,
   },
   poster: { colors: 32, minArea: 12, tolerance: 0.5, fitError: 0.5, cornerAngle: 80 },
   // `clean` is the one preset that is not trying to be faithful, and says so.

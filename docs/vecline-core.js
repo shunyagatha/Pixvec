@@ -1041,8 +1041,15 @@ function round(text, scale) {
   const n2 = Math.round(parseFloat(text) * scale) / scale;
   return Number.isFinite(n2) ? String(n2) : text;
 }
+var WIDTH_ATTRS = /\s(stroke-width|stroke-dashoffset|stroke-miterlimit|font-size)="[^"]*"/g;
 function roundStandalone(chunk, scale) {
-  return chunk.replace(/-?\d*\.\d+(?:e-?\d+)?/gi, (m) => round(m, scale));
+  const held = [];
+  const masked = chunk.replace(WIDTH_ATTRS, (m) => {
+    held.push(m);
+    return `\0${held.length - 1}\0`;
+  });
+  const rounded = masked.replace(/-?\d*\.\d+(?:e-?\d+)?/gi, (m) => round(m, scale));
+  return rounded.replace(/ (\d+) /g, (_, i) => held[Number(i)]);
 }
 function roundNumericList(value, scale) {
   let out = "";

@@ -93,3 +93,43 @@ describe('optimizeSvg leaves transforms intact', () => {
     expect(out).not.toContain('1.23456');
   });
 });
+
+describe('optimizeSvg does not round a width as if it were a coordinate', () => {
+  /**
+   * `stroke-width` went through the standalone number rounder, which is written for
+   * positions. Rounding a coordinate to `precision` moves a point by at most half a
+   * unit — the trade `precision` exists to offer. Rounding a WIDTH by the same rule
+   * doubles it: at precision 0, `stroke-width="0.5"` became `"1"`, painting the
+   * stroke at twice its intended size.
+   *
+   * Same family as the `transform` defect above: a value rounded by a rule written
+   * for something else. Found while measuring `strokeWidth`, which is what made it
+   * reachable.
+   */
+  const wrap = (body: string) =>
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">${body}</svg>`;
+
+  it('keeps the stroke width at every precision', () => {
+    const svg = wrap('<path d="M1.234 1.234h8.567v8.9H1.234z" fill="#123" stroke="#123" stroke-width="0.5"/>');
+    for (const precision of [2, 1, 0]) {
+      const out = optimizeSvg(svg, { precision });
+      expect(out, `precision ${precision} altered the stroke width`).toContain('stroke-width="0.5"');
+    }
+  });
+
+  it('still rounds the coordinates beside it', () => {
+    const svg = wrap('<path d="M1.234 1.234h8.567z" fill="#123" stroke="#123" stroke-width="0.5"/>');
+    const out = optimizeSvg(svg, { precision: 1 });
+    expect(out).toContain('stroke-width="0.5"');
+    expect(out).toContain('1.2');
+    expect(out).not.toContain('1.234');
+  });
+
+  it('protects the other width-valued attributes too', () => {
+    const svg = wrap('<path d="M1 1h8z" stroke="#123" stroke-width="0.25" stroke-miterlimit="0.75" font-size="0.5"/>');
+    const out = optimizeSvg(svg, { precision: 0 });
+    expect(out).toContain('stroke-width="0.25"');
+    expect(out).toContain('stroke-miterlimit="0.75"');
+    expect(out).toContain('font-size="0.5"');
+  });
+});
