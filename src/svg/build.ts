@@ -12,6 +12,13 @@ export interface SvgDocOptions {
   emitDimensions?: boolean;
   /** Human-readable `<title>`. */
   title?: string;
+  /**
+   * Extra presentation attributes on the root `<svg>`, already serialised as
+   * `name="value"`. For an INHERITED property that many children would otherwise
+   * repeat — `clip-rule` is the one this exists for, since a document with one
+   * clip path per colour would otherwise carry the same 22 bytes per class.
+   */
+  rootAttrs?: string[];
 }
 
 /** Assembles an SVG 1.1 / SVG 2 compatible document from pre-serialised children. */
@@ -25,6 +32,22 @@ export class SvgDoc {
 
   add(markup: string): this {
     this.children.push(markup);
+    return this;
+  }
+
+  /**
+   * Claim a place in child order now and supply the markup later, for a layer
+   * whose CONTENT depends on children emitted after it but whose POSITION must
+   * be before them. An unfilled slot serialises as nothing.
+   */
+  reserve(): number {
+    this.children.push('');
+    return this.children.length - 1;
+  }
+
+  /** Fill a slot from {@link reserve}. */
+  fill(slot: number, markup: string): this {
+    this.children[slot] = markup;
     return this;
   }
 
@@ -66,12 +89,13 @@ export class SvgDoc {
   }
 
   toString(): string {
-    const { width, height, generator, shapeRendering, emitDimensions = true, title } = this.opts;
+    const { width, height, generator, shapeRendering, emitDimensions = true, title, rootAttrs } = this.opts;
 
     const attrs = [
       'xmlns="http://www.w3.org/2000/svg"',
       `viewBox="0 0 ${width} ${height}"`,
     ];
+    if (rootAttrs?.length) attrs.push(...rootAttrs);
     if (this.inkscapeNs) {
       attrs.push('xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"');
     }
@@ -90,7 +114,8 @@ export class SvgDoc {
   }
 
   get childCount(): number {
-    return this.children.length;
+    // A reserved slot that was never filled is not a shape.
+    return this.children.reduce((n, c) => n + (c === '' ? 0 : 1), 0);
   }
 }
 

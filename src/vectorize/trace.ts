@@ -15,6 +15,7 @@ import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quan
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
 import { detectPrimitive, primitiveSvg } from './primitives.js';
+import { classAdjacency, clipPathDef, interpolationLayer } from './interpolate.js';
 
 /**
  * True vectorisation: colour regions become filled paths bounded by curves.
@@ -333,6 +334,66 @@ export interface TraceOptions {
    */
   strokeWidth?: number;
   /**
+   * Reconstruct the antialiased blend along every boundary between two colour
+   * classes — the information a partition of flat fills cannot carry.
+   *
+   * Where two regions meet, the source raster has a one- or two-pixel ramp
+   * between their colours and a flat partition has a step; worse, two abutting
+   * antialiased fills do not quite cover the shared pixel, so whatever lies
+   * beneath shows through as a hairline. This paints the mean of the two fills
+   * into that band, UNDER the fills, so it is visible only in the gap and at the
+   * fringe.
+   *
+   * IT CARRIES NO COORDINATES. Each class already emits one path; this gives it
+   * an id, `<use>`s it for the fill, and paints each adjacent pair's band by
+   * stroking one class's outline clipped to the other's territory. The cost is
+   * the number of adjacent class PAIRS, not the number of boundary arcs — 41 to
+   * 653 against 256 to 12,473 on the corpus. See `interpolate.ts` for the shape
+   * and for what it gives up against one stroked path per arc.
+   *
+   * Measured at `clean` over the nine-subject corpus, against the same document
+   * with neither this nor {@link strokeWidth} — dSSIM at 1x through resvg, and
+   * gzipped bytes relative to that same fills-only document. The right-hand pair
+   * is one open stroked path per interior arc, grouped by blend colour, which is
+   * the mechanism the paid rival ships and the one this replaces:
+   *
+   *                        this pass      one path per arc   arcs / class pairs
+   *   logo-tux             +0.0502 1.12x  +0.0630 1.37x         416 /  76
+   *   alpha-dice           +0.0287 1.11x  +0.0170 1.73x       3,868 / 653
+   *   photo-jpeg-source    +0.0026 1.11x  +0.0034 1.52x         256 /  41
+   *   photo-parrots        +0.0096 1.03x  +0.0098 1.67x       1,878 /  99
+   *   photo-portrait       +0.0144 1.03x  +0.0145 1.64x       1,878 / 106
+   *   photo-lighthouse     +0.0065 1.02x  +0.0065 1.73x       5,878 / 105
+   *   photo-jpeg-artifacts +0.0078 1.05x  +0.0077 1.78x       3,098 / 119
+   *   photo-cat            +0.0422 1.01x  +0.0454 1.59x       5,435 /  77
+   *   photo-motorcycles    +0.0063 1.01x  +0.0064 1.84x      12,473 / 119
+   *   mean                 +0.0187 1.06x  +0.0193 1.65x
+   *
+   * 97% of the accuracy for 8% of the extra bytes. Only logo-tux, the flattest and
+   * highest-contrast subject, prefers the arcs by a real margin.
+   *
+   * It is OFF everywhere, `clean` included, because it is not free: 1-12% of the
+   * gzipped file, and worth only +0.0026 on photo-jpeg-source.
+   *
+   * It suppresses {@link strokeWidth}: the same-colour stroke repaints, in one
+   * flat colour, the band this has just filled with the interpolated one. Running
+   * both scores worse than this alone on 7 of the 9 subjects (mean 0.7471 against
+   * 0.7606).
+   */
+  interpolate?: boolean;
+  /**
+   * Band width for {@link interpolate}, in user units. Defaults to 1.5, or 1
+   * where the image carries translucent pixels.
+   *
+   * 1.5 is the corpus optimum on 6 of 9 subjects; alpha-dice, photo-jpeg-artifacts
+   * and photo-motorcycles prefer 1. The alpha case is compositing algebra rather
+   * than a per-subject fit — under a fill of alpha `a` the band contributes with
+   * weight `(1 - a)` across its whole width instead of hiding beneath — so that
+   * one is a rule; the other two are the ordinary spread of a corpus, and the
+   * default costs them 0.0008 and 0.0031.
+   */
+  interpolateWidth?: number;
+  /**
    * Extend each region's fill *under* the regions painted after it, instead of
    * cutting at their shared edge. No antialiasing seam can open at a join that no
    * longer exists, and this is the only mechanism here that actually removes one.
@@ -592,6 +653,11 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  // Off everywhere, `clean` included. It is worth +0.0187 mean SSIM for +5.5%
+  // gzip over the corpus, which is a good trade on flat art (+0.0502 on logo-tux)
+  // and a thin one on a clean JPEG (+0.0026 on photo-jpeg-source) — a decision a
+  // caller should make, not a default.
+  interpolate: false,
   // OFF by default, tried twice and rejected twice on measurement.
   //
   // A second block used to sit above this one opening "On by default at 0.02",
@@ -1009,11 +1075,23 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     (a, b) => (classArea.get(b) ?? 0) - (classArea.get(a) ?? 0) || a - b,
   );
 
+  // The interpolation pass reads the class grid and re-uses the class paths, so
+  // it is refused where a class is not one flat path: `extendUnder` replaces a
+  // class's geometry with a union that no longer follows its own boundary, and
+  // `groupByColor` exists to be split into standalone separations, which a
+  // document of cross-references cannot survive. Gradient and primitive classes
+  // opt out individually below rather than disqualifying the whole document.
+  const interpolate = o.interpolate === true && !o.extendUnder && !o.groupByColor;
   const doc = new SvgDoc({
     width,
     height,
     generator: o.generator,
     title: o.title,
+    // Inherited, so one attribute serves every `<clipPath>` the pass adds; stating
+    // it is not optional, because neither resvg nor librsvg falls back to the
+    // referenced path's own `fill-rule` when clipping. Harmless when the pass
+    // ends up adding no clip path at all — the property reaches nothing else.
+    rootAttrs: interpolate ? ['clip-rule="evenodd"'] : undefined,
   });
 
   // A background rectangle is only sound when nothing is transparent; otherwise
@@ -1032,6 +1110,13 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       doc.addBackground(bg);
     }
   }
+
+  // The interpolation layer belongs here — over the background rectangle, under
+  // every fill — but its content is the set of classes that actually emitted a
+  // referenceable path, which is only known once they have. Claim the position
+  // now and supply the markup after the loop.
+  const interpSlot = interpolate ? doc.reserve() : -1;
+  const interpPathId = new Map<number, string>();
 
   const fitOpts: FitOptions = {
     // Sub-pixel refinement moves vertices off the grid; without it every
@@ -1088,7 +1173,13 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // appear between two abutting regions when a renderer antialiases their shared
   // edge. Emitted per path in the path's own fill colour — and at the path's own
   // alpha, since `fill-opacity` does not apply to strokes.
-  const strokeFor = (c: Rgba): string => strokeAttrs(c, o.strokeWidth);
+  //
+  // Suppressed under `interpolate`, and the two are not complementary: the
+  // same-colour stroke repaints, in one flat colour, the very band the
+  // interpolation layer has just filled with the blend. Measured on the corpus,
+  // running both is worse than the interpolation alone on 7 of 9 subjects —
+  // mean SSIM 0.7471 against 0.7606, and 0.8870 against 0.9182 on alpha-dice.
+  const strokeFor = (c: Rgba): string => strokeAttrs(c, interpolate ? 0 : o.strokeWidth);
 
   let regions = 0;
 
@@ -1219,9 +1310,30 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
         .filter((p): p is NonNullable<typeof p> => p !== null)
         .map((p) => primitiveSvg(p, attrs, o.precision))
         .join('');
-      markup = path.isEmpty()
-        ? shapes
-        : `${shapes}<path fill-rule="evenodd" d="${path.toString()}"${attrs}/>`;
+      // Under `interpolate` a class that is exactly one path keeps its geometry
+      // where it was and merely gains an id, so the interpolation layer can
+      // stroke and clip against it without repeating a single coordinate. A class
+      // that emitted primitives is not one path, so it keeps the plain form and
+      // simply takes no part in the layer.
+      //
+      // The fill moves onto a wrapping `<g>` rather than staying on the path, for
+      // two reasons. The layer's `<use>` elements must inherit `fill="none"` from
+      // the layer, and a `fill` set directly on the referenced path would beat
+      // that and repaint the whole region. And a renderer that cannot follow
+      // `href` still draws every fill from a real `<path>`, so the document
+      // degrades to the fills-only version rather than to a blank canvas — which
+      // publishing the geometry in `<defs>` and drawing it through `<use>` would
+      // have risked.
+      const referenceable = interpolate && primCount === 0 && !path.isEmpty();
+      if (referenceable) {
+        const id = `i${interpPathId.size}`;
+        interpPathId.set(cls, id);
+        markup = `<g${attrs}><path id="${id}" fill-rule="evenodd" d="${path.toString()}"/></g>`;
+      } else {
+        markup = path.isEmpty()
+          ? shapes
+          : `${shapes}<path fill-rule="evenodd" d="${path.toString()}"${attrs}/>`;
+      }
       // Include the alpha in the label when it is below opaque, so one colour at
       // two alpha levels does not produce two indistinguishable separations.
       label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);
@@ -1234,6 +1346,23 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     } else {
       doc.add(markup);
     }
+  }
+
+  if (interpolate && interpPathId.size > 1) {
+    // 1.5 user units, or 1 where anything is translucent: under a fill of alpha
+    // `a` the band shows through with weight `(1 - a)` across its whole width
+    // rather than hiding beneath, so widening it paints the picture instead of
+    // filling the seam. That is compositing algebra, not a per-subject fit.
+    const translucent = [...alphaLevels].some((a) => a > 0 && a < 255);
+    const layer = interpolationLayer({
+      adjacency: classAdjacency(classes, width, height),
+      pathId: interpPathId,
+      colorOf: (cls) => classColor(cls, palette, alphaLevels, levelCount),
+      backgroundClass,
+      width: o.interpolateWidth ?? (translucent ? 1 : 1.5),
+    });
+    for (const cls of layer.clipClasses) doc.addDef(clipPathDef(interpPathId.get(cls)!));
+    doc.fill(interpSlot, layer.markup);
   }
 
   return {
