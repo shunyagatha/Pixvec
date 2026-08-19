@@ -1071,3 +1071,161 @@ function B0(t: number): number { const m = 1 - t; return m * m * m; }
 function B1(t: number): number { const m = 1 - t; return 3 * t * m * m; }
 function B2(t: number): number { const m = 1 - t; return 3 * t * t * m; }
 function B3(t: number): number { return t * t * t; }
+
+// ---------------------------------------------------------------------------
+// Open runs — fitting a shared boundary arc once, for both faces
+// ---------------------------------------------------------------------------
+
+export interface OpenFitOptions {
+  /** Douglas–Peucker tolerance, in pixels. */
+  tolerance: number;
+  /** Maximum permitted Bézier fitting error, in pixels. */
+  fitError: number;
+  /** Turn angle in degrees above which an interior vertex is a hard corner. */
+  cornerAngle: number;
+  /** Merge adjacent curves where one fits both. Default on. */
+  optimize?: boolean;
+  /** Error budget for a merge. Defaults to `fitError`. */
+  optimizeError?: number;
+  /** Laplacian passes before fitting, both endpoints pinned. 0 skips it. */
+  regularise?: number;
+  /** How far a vertex may travel from where the lattice put it. Default 0.75px. */
+  regulariseBand?: number;
+}
+
+/**
+ * Laplacian smoothing of an OPEN run with both endpoints held fixed.
+ *
+ * The endpoints are junctions, shared with whatever arcs continue past them, so
+ * moving one would pull the boundary apart at exactly the place three regions
+ * meet. Everything between them is free within `band`, which is the pixel grid's
+ * own uncertainty — see {@link regulariseClosed} for why that licence exists.
+ */
+export function regulariseOpen(
+  px: Float64Array, py: Float64Array, n: number, band: number, passes: number,
+): void {
+  if (n < 3 || passes <= 0 || band <= 0) return;
+  const ox = Float64Array.from(px);
+  const oy = Float64Array.from(py);
+  const tx = new Float64Array(n);
+  const ty = new Float64Array(n);
+  const band2 = band * band;
+
+  for (let pass = 0; pass < passes; pass++) {
+    tx[0] = px[0]; ty[0] = py[0];
+    tx[n - 1] = px[n - 1]; ty[n - 1] = py[n - 1];
+    for (let i = 1; i < n - 1; i++) {
+      tx[i] = (px[i] + (px[i - 1] + px[i + 1]) / 2) / 2;
+      ty[i] = (py[i] + (py[i - 1] + py[i + 1]) / 2) / 2;
+    }
+    for (let i = 1; i < n - 1; i++) {
+      let dx = tx[i] - ox[i];
+      let dy = ty[i] - oy[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > band2) {
+        const k = band / Math.sqrt(d2);
+        dx *= k;
+        dy *= k;
+      }
+      px[i] = ox[i] + dx;
+      py[i] = oy[i] + dy;
+    }
+  }
+}
+
+/** Tangent at `i` on an open chain, clamped at the ends rather than wrapped. */
+function centerTangentOpen(px: Float64Array, py: Float64Array, n: number, i: number): Point {
+  const k = Math.max(1, Math.min(TANGENT_WINDOW, n - 1));
+  const before = Math.max(0, i - k);
+  const after = Math.min(n - 1, i + k);
+  return normalize(px[after] - px[before], py[after] - py[before]);
+}
+
+/**
+ * Fit one open run of points and return the segments that follow its first point.
+ *
+ * Separate from {@link fitLoop} because a closed loop has no endpoints and this
+ * has two that are not negotiable: they are junctions where other arcs continue,
+ * so they anchor both the smoothing and the simplification.
+ *
+ * The reason to fit a run here rather than inside each face's own loop is that
+ * this fitter is not reversal-symmetric — the same points fitted backwards come
+ * out as a different number of curves, up to 2.94px away. See `arcs.ts`.
+ */
+export function fitOpen(
+  pts: Int32Array | Float64Array | number[], opts: OpenFitOptions,
+): { start: Point; segments: Segment[] } | null {
+  const n = pts.length / 2;
+  if (n < 2) return null;
+
+  const px = new Float64Array(n);
+  const py = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    px[i] = pts[i * 2];
+    py[i] = pts[i * 2 + 1];
+  }
+
+  if (opts.regularise && opts.regularise > 0) {
+    regulariseOpen(px, py, n, opts.regulariseBand ?? 0.75, opts.regularise);
+  }
+
+  const start = { x: px[0], y: py[0] };
+  if (n === 2) return { start, segments: [{ kind: 'line', x: px[1], y: py[1] }] };
+
+  const interior: number[] = [];
+  douglasPeucker(px, py, 0, n - 1, opts.tolerance, interior, (i) => i);
+  const anchors = [0, ...interior, n - 1];
+
+  // Two anchors and nothing between them: the whole run is one straight edge.
+  if (anchors.length === 2) {
+    return { start, segments: [{ kind: 'line', x: px[n - 1], y: py[n - 1] }] };
+  }
+
+  // Both endpoints are breaks by definition. Interior anchors become breaks only
+  // where the turn is sharp, exactly as on a closed loop.
+  const threshold = Math.cos(opts.cornerAngle * (Math.PI / 180));
+  const breaks: Breakpoint[] = [{ index: 0, corner: true }];
+  for (let a = 1; a < anchors.length - 1; a++) {
+    const prev = anchors[a - 1], cur = anchors[a], next = anchors[a + 1];
+    const ax = px[cur] - px[prev], ay = py[cur] - py[prev];
+    const bx = px[next] - px[cur], by = py[next] - py[cur];
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    if (la === 0 || lb === 0) continue;
+    if ((ax * bx + ay * by) / (la * lb) < threshold) breaks.push({ index: cur, corner: true });
+  }
+  breaks.push({ index: n - 1, corner: true });
+
+  const segments: Segment[] = [];
+  for (let b = 0; b < breaks.length - 1; b++) {
+    const startIdx = breaks[b].index;
+    const endIdx = breaks[b + 1].index;
+    const count = endIdx - startIdx + 1;
+    if (count < 2) continue;
+
+    const cx = new Float64Array(count);
+    const cy = new Float64Array(count);
+    for (let i = 0; i < count; i++) {
+      cx[i] = px[startIdx + i];
+      cy[i] = py[startIdx + i];
+    }
+
+    const t1 = breaks[b].corner
+      ? leftTangent(cx, cy, 0)
+      : centerTangentOpen(px, py, n, startIdx);
+    const t2 = breaks[b + 1].corner
+      ? rightTangent(cx, cy, count - 1)
+      : negate(centerTangentOpen(px, py, n, endIdx));
+
+    const fitted: FittedSegment[] = [];
+    fitCubic(cx, cy, 0, count - 1, t1, t2, opts.fitError, fitted);
+    const optimized = opts.optimize === false
+      ? fitted
+      : optimizeCurves(cx, cy, fitted, opts.optimizeError ?? opts.fitError);
+    for (const f of optimized) segments.push(f.segment);
+  }
+
+  if (segments.length === 0) {
+    return { start, segments: [{ kind: 'line', x: px[n - 1], y: py[n - 1] }] };
+  }
+  return { start, segments };
+}

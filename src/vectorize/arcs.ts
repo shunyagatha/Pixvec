@@ -1,5 +1,10 @@
 import { type Loop, OUTSIDE_FRAME } from './contour.js';
 import { crackDegree } from './junctions.js';
+import {
+  type FitOptions, type FittedPath, type OpenFitOptions, type Segment,
+  fitLoop, fitOpen,
+} from './fit.js';
+import type { Point } from '../types.js';
 
 /**
  * Boundary decomposition into arcs shared by exactly two regions.
@@ -324,4 +329,95 @@ export function verifyTwins(dec: ArcDecomposition): TwinReport {
     else unpaired++;
   }
   return { paired, unpaired, boundary };
+}
+
+/**
+ * Reverse a fitted path exactly.
+ *
+ * Every control point is reused, swapped in pairs — no refitting, so the reversed
+ * traversal is the same curve to the last bit. That is the whole point of arcs:
+ * the face on the other side gets geometry that agrees by construction rather
+ * than by refitting and hoping.
+ */
+export function reversePath(path: FittedPath): FittedPath {
+  const on: Point[] = [path.start];
+  for (const s of path.segments) on.push({ x: s.x, y: s.y });
+
+  const segments: Segment[] = [];
+  for (let i = path.segments.length - 1; i >= 0; i--) {
+    const s = path.segments[i];
+    const target = on[i];
+    if (s.kind === 'line') segments.push({ kind: 'line', x: target.x, y: target.y });
+    else {
+      segments.push({
+        kind: 'curve',
+        x1: s.x2, y1: s.y2,
+        x2: s.x1, y2: s.y1,
+        x: target.x, y: target.y,
+      });
+    }
+  }
+  return { start: on[on.length - 1], segments };
+}
+
+/** Fitting options for a whole decomposition. */
+export interface FitArcsOptions extends OpenFitOptions {
+  /** Passed to {@link fitLoop} for arcs that carry no junction. */
+  closed?: FitOptions;
+}
+
+/**
+ * Fit every arc once, then assemble each face from the results.
+ *
+ * The two faces sharing an arc receive the same curve, one of them reversed
+ * through {@link reversePath}. Nothing is fitted twice, so nothing can disagree —
+ * which is what the reversal asymmetry recorded at the top of this file makes
+ * impossible any other way.
+ */
+export function fitFaces(
+  dec: ArcDecomposition, opts: FitArcsOptions,
+): Map<Loop, FittedPath> {
+  const fitted: Array<FittedPath | null> = dec.arcs.map((arc) => {
+    if (!arc.closed) return fitOpen(arc.pts, opts);
+    const loop = fitLoop(arc.pts, opts.closed ?? {
+      tolerance: opts.tolerance,
+      fitError: opts.fitError,
+      cornerAngle: opts.cornerAngle,
+      polygonOnly: false,
+      optimize: opts.optimize,
+      optimizeError: opts.optimizeError,
+      regularise: opts.regularise,
+      regulariseBand: opts.regulariseBand,
+    });
+    if (!loop) return null;
+    // Make the cycle explicit so reversal and concatenation treat closed and open
+    // arcs alike. `fitLoop`'s polygon branch leaves the return leg to `z`; the
+    // curve branch already emits it.
+    const last = loop.segments[loop.segments.length - 1];
+    if (last && (last.x !== loop.start.x || last.y !== loop.start.y)) {
+      loop.segments.push({ kind: 'line', x: loop.start.x, y: loop.start.y });
+    }
+    return loop;
+  });
+
+  const out = new Map<Loop, FittedPath>();
+  for (const [loop, refs] of dec.faces) {
+    const segments: Segment[] = [];
+    let start: Point | null = null;
+    for (const ref of refs) {
+      const base = fitted[ref.arc];
+      if (!base) continue;
+      const piece = ref.reversed ? reversePath(base) : base;
+      if (start === null) start = piece.start;
+      for (const s of piece.segments) segments.push(s);
+    }
+    if (start === null || segments.length === 0) continue;
+    // The last segment lands back on the first point; `z` covers that, and a
+    // zero-length line before it is the redundancy fit.ts already removed once.
+    const last = segments[segments.length - 1];
+    if (last.kind === 'line' && last.x === start.x && last.y === start.y) segments.pop();
+    if (segments.length === 0) continue;
+    out.set(loop, { start, segments });
+  }
+  return out;
 }

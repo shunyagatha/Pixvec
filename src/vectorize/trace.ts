@@ -10,6 +10,7 @@ import { refineLoop } from './subpixel.js';
 import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
 import { regulariseAgreeing } from './junctions.js';
+import { decomposeToArcs, fitFaces } from './arcs.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -149,6 +150,23 @@ export interface TraceOptions {
   regularise?: number;
   /** How far a boundary vertex may move from the lattice. Default 0.75px. */
   regulariseBand?: number;
+  /**
+   * Trace shared boundaries once and let both neighbours reference the result,
+   * instead of giving each region a private copy of every edge it shares.
+   *
+   * This is what makes curve fitting safe on a mosaic. The fitter is not
+   * reversal-symmetric — the same run of points fitted backwards comes out as a
+   * different NUMBER of curves, up to 2.94px away — so two faces fitting their own
+   * copies of one boundary tear apart along it. Fitting each arc once removes that
+   * possibility rather than bounding it. See `arcs.ts`.
+   *
+   * Implies junction retention in the contour walk, and supersedes `regularise`,
+   * whose per-loop smoothing this does per-arc with the endpoints pinned. It also
+   * raises `regularise` to at least 2, because an untouched lattice boundary
+   * cannot leave the Douglas-Peucker dead zone and the mosaic would emit polygons
+   * under a curve fitter's name.
+   */
+  mosaic?: boolean;
   /**
    * Simplify boundaries with a quantisation-aware straightness test instead of
    * Douglas–Peucker.
@@ -515,6 +533,7 @@ export const TRACE_DEFAULTS = {
   segment: 0,
   smooth: 0,
   regularise: 0,
+  mosaic: false,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -757,8 +776,10 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // `regularise` needs junctions to survive the collinear collapse, or two runs
   // either side of one merge and stop matching what the neighbour sees.
   const shareBoundaries = (o.regularise ?? 0) > 0;
+  const mosaic = o.mosaic === true;
   const loopsByComponent = traceComponents(
-    comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget, shareBoundaries,
+    comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget,
+    shareBoundaries || mosaic,
   );
   // Smooth each shared boundary ONCE, before anything reads a loop's shape.
   // Independent per-loop smoothing moves two neighbours' copies of the same edge
@@ -769,6 +790,33 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
         o.regularise ?? 0, o.regulariseBand ?? 0.75,
       )
     : undefined;
+  // Fit every shared boundary ONCE, then assemble each face from the results.
+  // The alternative is each face fitting its own copy, which the reversal
+  // measurement in arcs.ts rules out for anything that emits curves.
+  const mosaicFaces = mosaic
+    ? fitFaces(decomposeToArcs(loopsByComponent, comps.labels, width, height), {
+        tolerance: o.tolerance,
+        fitError: o.fitError,
+        cornerAngle: o.cornerAngle,
+        optimize: o.optimize,
+        optimizeError: o.optimizeError,
+// `mosaic` implies smoothing, and the floor is not a preference.
+        //
+        // Crack-following emits axis-aligned unit steps only, so an untouched
+        // lattice vertex cannot deviate from a chord by less than 1/sqrt(5) =
+        // 0.4472136 — above the 0.4 tolerance, so Douglas-Peucker removes nothing
+        // and every arc comes out a polygon. Measured on logo-tux: 0 passes gives
+        // 0 curves at 18,297 bytes; one pass gives 306 at 30,606.
+        //
+        // Two rather than one because the second is nearly free and the sweep
+        // flattens immediately after: across passes 1 to 8 at bands 0.5, 0.75 and
+        // 1.0, SSIM spans 0.8740 to 0.8804 and never orders them consistently.
+        // A caller asking for more gets more.
+        regularise: Math.max(o.regularise ?? 0, 2),
+        regulariseBand: o.regulariseBand ?? 0.75,
+      })
+    : undefined;
+
   /** Shared empty stand-in, so releasing a consumed entry allocates nothing. */
   const EMPTY_LOOPS: Loop[] = [];
 
@@ -950,7 +998,9 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       const refined = shared ?? (o.subpixel && !rankOfClass
         ? refineLoop(loop, img, classes, cls).pts
         : loop.pts);
-      const fitted = fitLoop(refined, fitOpts);
+      // Under `mosaic` the face was already assembled from arcs that were each
+      // fitted once, so re-fitting here would throw away the agreement.
+      const fitted = mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
