@@ -319,6 +319,17 @@ const vtracerBin = process.env.VECLINE_VTRACER && existsSync(process.env.VECLINE
  *   vecline preset logo    54,471  19,638   1,082   0.8747
  *   vecline logo +reg 6    22,370   8,872     165   0.8586
  *
+ * CORRECTED: that table asked the WRONG PRESET. `clean` was never scored on flat
+ * art, and it holds a far better point than `logo` does:
+ *
+ *   the paid tool     54,217 B  11,936 gz  551 curves  SSIM 0.9483
+ *   preset clean      17,645 B   3,780 gz    4 curves       0.9390
+ *
+ * 3.2x smaller gzipped for 0.009 SSIM. Rendered, the rival is still smoother — our
+ * feet step visibly and the silhouette distorts slightly — so they keep the better
+ * ABSOLUTE quality, and the paragraph below stands on that. But "0.07 behind at
+ * matched size" came from `logo` and overstates the gap by roughly sevenfold.
+ *
  * Read honestly, that says WE DO NOT HOLD THE BETTER FRONTIER POINT ON FLAT ART.
  * At matched raw size we are 0.07 SSIM behind; going 2.4x smaller costs 0.09. Only
  * `auto` scores higher, and it does so by reproducing antialiased pixels rather

@@ -142,8 +142,42 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // the picture is boundary, so two big shapes gain almost nothing and lose to the
   // overpaint, while artwork with hundreds of small regions gains throughout. Do
   // not expect this to help a simple figure, and do not tune it on one.
+  // `colors: 8`, not 16, and the direction is the finding. Every earlier sweep of
+  // this preset went UPWARD — 32 and 64 are both worse — so 16 was treated as a
+  // floor and never tested from below. It is not a floor. On logo-tux:
+  //
+  //   colours   6       8      10      12      16
+  //   gzip   11,929  12,836  15,459  16,644  19,638
+  //   SSIM   0.8872  0.8933  0.8897  0.8906  0.8747
+  //
+  // 8 is +0.0186 SSIM against 16 at 0.65x the bytes — better on both axes — and
+  // rendered it is visibly cleaner: less mottling in the grey shading, smoother
+  // edges. Across the flat-art corpus, best-vs-16: logo-tux +0.0186 at 0.65x,
+  // vector-tiger +0.0052 at 0.97x, vector-comparison +0.0036 at 0.83x, all strict.
+  // vector-source is unchanged because it only contains two real colours.
+  //
+  // The one loss is alpha-dice, which prefers 16 by 0.008. That is the trade taken:
+  // three strict wins and a visible improvement on the preset's namesake case
+  // against one modest regression on a subject with far more real inks than a logo.
+  //
+  // THE OTHER PRESETS WERE SWEPT THE SAME WAY AND MOSTLY LEFT ALONE, because the
+  // "tuned only from above" mistake is not universal:
+  //
+  //   lineart  ships 6   logo-tux prefers 8 (+0.009), vector-comparison prefers 6.
+  //                      Mixed, and 6 is right for its actual subject. Unchanged.
+  //   poster   ships 32  photo-parrots prefers 32 — correct for its purpose.
+  //                      vector-tiger prefers 8, but poster is not for flat art.
+  //   detailed ships 48  the auto palette beats every fixed value tried. Unchanged.
+  //   clean    ships 16  logo-tux prefers 16; the sticker prefers 6. Unchanged.
+  //
+  // Only `logo` was mistuned. Recorded so the sweep is not repeated on the rest.
+  //
+  // A paid rival describes logo-tux with TEN fills, which is what prompted looking
+  // down rather than up. Our peak is 8 and its gzip at 6 colours (11,929) lands
+  // within seven bytes of theirs (11,936) — the palette was never the reason they
+  // score higher, but it was costing us a third of our bytes for nothing.
   logo: {
-    colors: 16, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75,
+    colors: 8, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75,
     subpixel: true, precision: 1,
   },
   lineart: {
