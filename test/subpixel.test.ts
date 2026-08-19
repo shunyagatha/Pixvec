@@ -296,3 +296,104 @@ describe('subpixel + extendUnder', () => {
     // Asserting a difference would only encode the fixture's flatness.
   });
 });
+
+/**
+ * The two shared-boundary options make `subpixel` a no-op, and until now said
+ * nothing about it.
+ *
+ * The fixture is anti-aliased on purpose. Refinement provably cannot move a
+ * vertex where there is no coverage to read, so a hard-edged fixture would make
+ * every arm identical for a reason that has nothing to do with the precedence
+ * under test — the trap already recorded in the `extendUnder` case above. The
+ * first assertion is therefore the control: on THIS image, with nothing shared
+ * turned on, refinement changes the output. Only then does "identical" mean
+ * anything in the arms that follow.
+ */
+describe('subpixel superseded by shared-boundary geometry', () => {
+  /** A disc with genuine partial coverage at its rim, so refinement has work. */
+  function antialiasedDisc(size = 56): RasterImage {
+    const img: RasterImage = {
+      width: size, height: size, data: new Uint8ClampedArray(size * size * 4),
+    };
+    const c = (size - 1) / 2;
+    const r = size * 0.36;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        // 4x4 supersample, so rim pixels carry fractional coverage.
+        let hit = 0;
+        for (let sy = 0; sy < 4; sy++) {
+          for (let sx = 0; sx < 4; sx++) {
+            const px = x + (sx + 0.5) / 4;
+            const py = y + (sy + 0.5) / 4;
+            if ((px - c) ** 2 + (py - c) ** 2 <= r * r) hit++;
+          }
+        }
+        const v = Math.round(255 * (1 - hit / 16));
+        const o = (y * size + x) * 4;
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+        img.data[o + 3] = 255;
+      }
+    }
+    return img;
+  }
+
+  // `latticeSimplify` is pinned in every arm below. Its default is `!subpixel`,
+  // so leaving it alone would swap simplifiers at the same moment it swaps
+  // refinement and the comparison would measure both at once.
+  const BASE = { colors: 4, latticeSimplify: false } as const;
+
+  it('changes the output when nothing is shared — the control', async () => {
+    const { trace } = await import('../src/vectorize/trace.js');
+    const source = antialiasedDisc();
+
+    const on = trace(source, { ...BASE, subpixel: true });
+    const off = trace(source, { ...BASE, subpixel: false });
+    expect(on.svg).not.toBe(off.svg);
+    expect(on.notes).toEqual([]);
+    expect(off.notes).toEqual([]);
+  });
+
+  it('says so under regularise, where refinement never runs', async () => {
+    const { trace } = await import('../src/vectorize/trace.js');
+    const source = antialiasedDisc();
+
+    const on = trace(source, { ...BASE, subpixel: true, regularise: 2 });
+    const off = trace(source, { ...BASE, subpixel: false, regularise: 2 });
+
+    // The note's own claim, checked rather than trusted.
+    expect(on.svg).toBe(off.svg);
+    expect(on.notes.join('\n')).toContain('Sub-pixel refinement had no effect');
+    expect(on.notes.join('\n')).toContain('`regularise` option');
+    // Nothing to report when the caller did not ask for refinement.
+    expect(off.notes).toEqual([]);
+  });
+
+  it('says so under mosaic, where refinement runs and is discarded', async () => {
+    const { trace } = await import('../src/vectorize/trace.js');
+    const source = antialiasedDisc();
+
+    const on = trace(source, { ...BASE, subpixel: true, mosaic: true });
+    const off = trace(source, { ...BASE, subpixel: false, mosaic: true });
+
+    expect(on.svg).toBe(off.svg);
+    expect(on.notes.join('\n')).toContain('Sub-pixel refinement had no effect');
+    expect(on.notes.join('\n')).toContain('`mosaic` option');
+    expect(off.notes).toEqual([]);
+  });
+
+  it('reaches the caller through vectorize, not only through trace', async () => {
+    const { vectorize } = await import('../src/api.js');
+    const { encode } = await import('./fixtures.js');
+    const { decodeRaster } = await import('../src/io/decode.js');
+
+    const bytes = await encode(antialiasedDisc(), 'png');
+    const { image, meta } = await decodeRaster(bytes);
+    const out = await vectorize(
+      { image, meta, bytes },
+      { mode: 'trace', trace: { ...BASE, subpixel: true, mosaic: true } },
+    );
+    // The CLI prints `result.notes`, so this is the assertion that the message
+    // reaches a person rather than only a return value nobody reads.
+    expect(out.notes.join('\n')).toContain('Sub-pixel refinement had no effect');
+  });
+});

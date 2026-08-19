@@ -112,7 +112,17 @@ const MAX_HANDLE_RATIO = 1;
 const NEWTON_BAND = 4;
 /** Half-width of the window used to estimate a tangent on a pixel staircase. */
 const TANGENT_WINDOW = 4;
-/** Merge passes before giving up; each pass can halve the curve count. */
+/**
+ * Merge passes before giving up; each pass can halve the curve count.
+ *
+ * NOT THE LIMITER, measured, so nobody reaches for it when the merge pass looks
+ * weak. Instrumented over the eight corpus subjects at `clean`'s settings: 9,194
+ * calls, of which 662 need a second pass, 58 a third and 6 a fourth. The cap is
+ * reached 0 times and the deepest any call goes is 4 of 8.
+ *
+ * What actually bounds the pass is `optimizeError`, which defaults to `fitError`
+ * — see {@link optimizeCurves}.
+ */
 const MAX_OPTIMIZE_PASSES = 8;
 
 /** Fit one closed lattice loop. Returns null if the loop degenerates. */
@@ -306,12 +316,29 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
  * stack over one another and the subject turns muddy, measurably worse than a
  * classical tracer on the same input at 58,667 bytes against its 53,920.
  *
- * So the prerequisite is shared-boundary topology: trace each boundary between two
- * regions ONCE, smooth that one copy, and have both faces reference it. Then there
- * is no second copy to disagree with. That was deferred once on the grounds that
- * `extendUnder` already covered the seam case; this measurement is the evidence
- * that it does not cover THIS one, and the two failures are worth keeping so the
- * next attempt starts from the topology rather than from the smoothing.
+ * THE PREREQUISITE WAS SHARED-BOUNDARY TOPOLOGY, AND IT HAS SINCE LANDED. This
+ * paragraph used to name that topology as the missing piece and say the two
+ * failures were worth keeping so a later attempt would start from it. The attempt
+ * happened, twice, and both halves are now in the tree:
+ *
+ * - `junctions.ts` makes two neighbours agree on a SMOOTHED boundary without a
+ *   shared structure at all, by pinning the vertices where three or more cracks
+ *   meet. The Laplacian update `(prev + next) / 2` is symmetric under reversing
+ *   the traversal, so both faces compute the same position for every free vertex.
+ * - `arcs.ts` supersedes even that for FITTING, and has to: the argument from
+ *   symmetry covers smoothing and stops there. Fitting a lattice circle forwards
+ *   and backwards gives 42 curves against 46, up to 2.94px apart. So each boundary
+ *   is cut into arcs at junctions, each arc is fitted ONCE, and the second face
+ *   gets that same curve reversed control point by control point.
+ *
+ * WHAT IS LEFT FOR THIS FUNCTION, instrumented on logo-tux rather than assumed. It
+ * is unreachable from `trace`'s own `fitOpts`, which passes a hard 0 — across
+ * `regularise` 0, 2 and 6, all 509 `fitLoop` calls arrive with `regularise: 0` and
+ * this function is entered zero times. Its live caller is `fitFaces` in arcs.ts,
+ * which routes junction-free CLOSED arcs here with at least 2 passes: 6 entries
+ * under `--preset clean`, 17 at `regularise: 6`, every one of them doing work. So
+ * it still runs on the shipped `clean` path, on exactly the arcs where there is no
+ * junction to pin and no second copy to disagree with.
  */
 export function regulariseClosed(
   px: Float64Array, py: Float64Array, n: number, band: number, passes: number,
@@ -793,6 +820,17 @@ function fitCubic(
  * It is kept because it is never harmful — a merge is only taken when it passes
  * the same error test the split failed — and occasionally removes a tenth of the
  * curves. It is not the reason potrace beats this fitter on photographs.
+ *
+ * **AND THAT SENTENCE IS ALSO THE PASS'S CEILING, WHICH IS A CHOICE RATHER THAN A
+ * PROPERTY.** "The same error test" means `optimizeError`, which defaults to
+ * `fitError` — so by default the merge is asked to pass a test the split has
+ * already demonstrated it fails, and it accepts only a small fraction of what it
+ * tries. Widening that one budget is what makes the pass work: `clean` sets 0.75
+ * and drops 16.2% of its segments corpus-wide.
+ *
+ * Every merge is still verified against the original chain points, so the bound is
+ * whatever the caller asked for rather than a guess — the budget is the knob, and
+ * the algorithm was never the problem.
  */
 function optimizeCurves(
   x: Float64Array, y: Float64Array,
@@ -1228,4 +1266,66 @@ export function fitOpen(
     return { start, segments: [{ kind: 'line', x: px[n - 1], y: py[n - 1] }] };
   }
   return { start, segments };
+}
+
+/**
+ * Sample a fitted path back into a dense polyline, roughly one point per
+ * `spacing` pixels of arc length.
+ *
+ * The point of this is to ask a geometric question of the curve that will
+ * actually be *emitted*, rather than of the lattice staircase it came from.
+ * Crack-following places every vertex on a pixel corner, so a rasterised disc
+ * arrives as a staircase whose corners sit up to ~1.4 px off the disc — and any
+ * fitter judging "is this a circle" on those vertices is judging the sampling
+ * grid, not the shape. The fitted path has already absorbed that: the smoothing
+ * and the least-squares solve put it through the middle of the staircase.
+ *
+ * Sampling density is deliberately high (default one point per pixel, minimum
+ * four per segment). A residual test takes the WORST point, so more samples can
+ * only ever raise the residual — the density is a conservative choice, not a way
+ * of making shapes look rounder than they are.
+ */
+export function flattenPath(path: FittedPath, spacing = 1): Float64Array {
+  const out: number[] = [];
+  let cx = path.start.x;
+  let cy = path.start.y;
+  out.push(cx, cy);
+  const bez = new Float64Array(8);
+  for (const s of path.segments) {
+    if (s.kind === 'line') {
+      // Subdivided, not just its endpoint. A straight run is where a residual
+      // test goes blind: a disc with a flat chord sliced off keeps both chord
+      // ENDPOINTS exactly on the circle, so a per-vertex test scores it as a
+      // perfect circle and the missing 12% is never seen. That is the recorded
+      // false positive, and it survives any amount of smoothing — the only thing
+      // that catches it is sampling the middle of the straight bit.
+      const dl = Math.hypot(s.x - cx, s.y - cy);
+      const ds = Math.max(1, Math.min(256, Math.ceil(dl / Math.max(0.05, spacing))));
+      for (let k = 1; k <= ds; k++) {
+        out.push(cx + ((s.x - cx) * k) / ds, cy + ((s.y - cy) * k) / ds);
+      }
+      cx = s.x; cy = s.y;
+      continue;
+    }
+    // Control-polygon length is an upper bound on arc length, so this never
+    // under-samples.
+    const len = Math.hypot(s.x1 - cx, s.y1 - cy)
+      + Math.hypot(s.x2 - s.x1, s.y2 - s.y1)
+      + Math.hypot(s.x - s.x2, s.y - s.y2);
+    const steps = Math.max(4, Math.min(256, Math.ceil(len / Math.max(0.05, spacing))));
+    bez[0] = cx; bez[1] = cy;
+    bez[2] = s.x1; bez[3] = s.y1;
+    bez[4] = s.x2; bez[5] = s.y2;
+    bez[6] = s.x; bez[7] = s.y;
+    for (let k = 1; k <= steps; k++) {
+      const p = bezierAt(bez, k / steps);
+      out.push(p.x, p.y);
+    }
+    cx = s.x; cy = s.y;
+  }
+  // The path is implicitly closed; drop a duplicated final point so the shoelace
+  // area and the vertex census are not distorted by a zero-length edge.
+  const n = out.length >> 1;
+  if (n > 1 && out[0] === out[(n - 1) * 2] && out[1] === out[(n - 1) * 2 + 1]) out.length -= 2;
+  return Float64Array.from(out);
 }

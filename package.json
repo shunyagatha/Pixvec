@@ -197,6 +197,8 @@
     "bench:scale": "node scripts/bench-scale.mjs",
     "format:sweep": "node scripts/format-sweep.mjs",
     "diagnose": "node scripts/diagnose-photo.mjs",
+    "structure": "node scripts/structure-report.mjs",
+    "structure:check": "node scripts/structure-report.mjs --check",
     "playground": "node scripts/build-playground.mjs",
     "figma:art": "node scripts/build-figma-art-trace.mjs && node scripts/build-figma-art-sweep.mjs && node scripts/build-figma-art.mjs && node scripts/build-figma-carousel.mjs",
     "mcpb": "npx -y @anthropic-ai/mcpb pack mcpb vecline.mcpb",
