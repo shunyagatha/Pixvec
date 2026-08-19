@@ -96,6 +96,7 @@ export function traceComponents(
   componentCount: number,
   turnPolicy: TurnPolicy = 'left',
   budget?: LoopBudgetGuard,
+  splitAtJunctions = false,
 ): Loop[][] {
   const VW = width + 1; // vertices per row
   const vertexCount = VW * (height + 1);
@@ -176,7 +177,7 @@ export function traceComponents(
     if (used[start]) continue;
     const loop = walkLoop(
       start, edgeComp[start], edgeFrom, edgeTo, edgeComp, edgeNext, head, used,
-      VW, width, height, labels, turnPolicy, edgeOther,
+      VW, width, height, labels, turnPolicy, edgeOther, splitAtJunctions,
     );
     if (loop) result[edgeComp[start]].push(loop);
   }
@@ -199,6 +200,7 @@ function walkLoop(
   labels: Int32Array,
   turnPolicy: TurnPolicy,
   edgeOther: Int32Array,
+  splitAtJunctions: boolean,
 ): Loop | null {
   const xs: number[] = [];
   const ys: number[] = [];
@@ -246,7 +248,14 @@ function walkLoop(
     const q = (i + 1) % n;
     const ax = xs[i] - xs[p], ay = ys[i] - ys[p];
     const bx = xs[q] - xs[i], by = ys[q] - ys[i];
-    if (ax * by - ay * bx !== 0) {
+    // A vertex where the neighbour CHANGES is a junction — the point where three
+    // regions meet — and it has to survive even when it is geometrically
+    // collinear, or the two boundary runs either side of it merge into one and
+    // stop matching the runs the neighbouring regions see. Off by default,
+    // because keeping it would add vertices to output that is otherwise pinned
+    // byte-for-byte.
+    const junction = splitAtJunctions && os[i] !== os[(i - 1 + n) % n];
+    if (ax * by - ay * bx !== 0 || junction) {
       kx.push(xs[i]);
       ky.push(ys[i]);
       ko.push(os[i]);
