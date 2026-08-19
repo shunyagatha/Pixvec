@@ -622,3 +622,65 @@ describe.skipIf(!built)('CLI: the savings figure points the way the bytes actual
     expect(j.savedPct).toBeLessThan(0);
   });
 });
+
+describe.skipIf(!built)('CLI: `edit` says so when it drops frames, same as `convert`', () => {
+  /**
+   * `edit` carries the identical single-frame limit as `convert` — editing a
+   * 42-frame GIF wrote one frame and reported only the new dimensions — and the
+   * identical duty to say so. `convert`'s note has been covered since it landed.
+   * `edit`'s never was: `grep "'edit'" test/*.ts` returned nothing, so the whole
+   * command had no CLI contract test and its disclosure was unguarded.
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'vecline-edit-'));
+
+  async function animatedGif(count: number): Promise<string> {
+    const sharpMod = (await import('sharp')).default;
+    const size = 8;
+    const frames = await Promise.all(
+      Array.from({ length: count }, (_, f) => {
+        const buf = Buffer.alloc(size * size * 4);
+        for (let i = 0; i < buf.length; i += 4) {
+          buf[i] = (f * 50) % 256; buf[i + 1] = 40; buf[i + 2] = 200; buf[i + 3] = 255;
+        }
+        return sharpMod(buf, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer();
+      }),
+    );
+    const out = join(dir, `edit-anim-${count}.gif`);
+    await sharpMod(frames, { join: { animated: true } })
+      .gif({ delay: frames.map(() => 100), loop: 0 })
+      .toFile(out);
+    return out;
+  }
+
+  it('the fixture really is animated, or the rest of this proves nothing', async () => {
+    const sharpMod = (await import('sharp')).default;
+    const meta = await sharpMod(await animatedGif(4), { animated: true }).metadata();
+    expect(meta.pages).toBe(4);
+  });
+
+  it('names the frames it did not carry over', async () => {
+    const src = await animatedGif(4);
+    const r = await cli(['edit', src, '-o', join(dir, 'edited.gif'), '--resize', '4x4']);
+    expect(r.code).toBe(0);
+    const all = r.stdout + r.stderr;
+    expect(all, 'edited an animation and said nothing about the lost frames')
+      .toMatch(/3 frames were not carried over/);
+  });
+
+  it('reports both counts in --json', async () => {
+    const src = await animatedGif(4);
+    const r = await cli(['edit', src, '-o', join(dir, 'edited2.gif'), '--resize', '4x4', '--json']);
+    expect(r.code).toBe(0);
+    const j = JSON.parse(r.stdout);
+    expect(j.sourceFrames).toBe(4);
+    expect(j.framesWritten).toBe(1);
+  });
+
+  it('stays quiet for a still image', async () => {
+    const still = join(dir, 'still.png');
+    await writeFile(still, await encode(flatArtwork(16, 16), 'png'));
+    const r = await cli(['edit', still, '-o', join(dir, 'still-out.png'), '--resize', '8x8']);
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/not carried over/);
+  });
+});
