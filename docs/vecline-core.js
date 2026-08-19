@@ -630,6 +630,9 @@ function compareImages(reference, candidate, opts = {}) {
     for (let c = 0; c < 3; c++) {
       channelScores.push(ssimPlane(planesA.rgb[c], planesB.rgb[c], width, height));
     }
+    if (!(isConstant(planesA.alpha) && isConstant(planesB.alpha) && planesA.alpha[0] === planesB.alpha[0])) {
+      channelScores.push(ssimPlane(planesA.alpha, planesB.alpha, width, height));
+    }
     ssim = channelScores.reduce((s, v) => s + v, 0) / channelScores.length;
     ssimLuma = ssimPlane(planesA.luma, planesB.luma, width, height);
   }
@@ -668,15 +671,21 @@ function extractPlanes(rgba, pixels) {
   const r = new Float64Array(pixels);
   const g = new Float64Array(pixels);
   const b = new Float64Array(pixels);
+  const alpha = new Float64Array(pixels);
   const luma = new Float64Array(pixels);
   for (let i = 0; i < pixels; i++) {
     const o = i * 4;
     r[i] = rgba[o];
     g[i] = rgba[o + 1];
     b[i] = rgba[o + 2];
+    alpha[i] = rgba[o + 3];
     luma[i] = luma709(rgba[o], rgba[o + 1], rgba[o + 2]);
   }
-  return { rgb: [r, g, b], luma };
+  return { rgb: [r, g, b], alpha, luma };
+}
+function isConstant(plane) {
+  for (let i = 1; i < plane.length; i++) if (plane[i] !== plane[0]) return false;
+  return true;
 }
 function deltaEStats(reference, candidate, bg, field) {
   const flatA = compositeOver(reference, bg);
@@ -1104,7 +1113,8 @@ function optimizeSvg(svg, opts = {}) {
   NUMERIC_LISTS.lastIndex = 0;
   for (let m = NUMERIC_LISTS.exec(out); m !== null; m = NUMERIC_LISTS.exec(out)) {
     rounded += roundStandalone(out.slice(last, m.index), scale);
-    rounded += ` ${m[1]}="${roundNumericList(m[2], scale)}"`;
+    const value = m[1] === "transform" ? m[2] : roundNumericList(m[2], scale);
+    rounded += ` ${m[1]}="${value}"`;
     last = m.index + m[0].length;
   }
   rounded += roundStandalone(out.slice(last), scale);
@@ -2517,20 +2527,22 @@ function refineLoop(loop, img, classes, cls) {
 function segmentPixels(img, k = 300, minRegion = 0) {
   const { width: w, height: h, data } = img;
   const n2 = w * h;
-  const lab = new Float64Array(n2 * 3);
+  const lab = new Float64Array(n2 * 4);
   const px = new Float64Array(3);
   for (let i = 0; i < n2; i++) {
     const o = i * 4;
     srgbToOklab(data[o], data[o + 1], data[o + 2], px);
-    lab[i * 3] = px[0];
-    lab[i * 3 + 1] = px[1];
-    lab[i * 3 + 2] = px[2];
+    lab[i * 4] = px[0];
+    lab[i * 4 + 1] = px[1];
+    lab[i * 4 + 2] = px[2];
+    lab[i * 4 + 3] = data[o + 3] / 255;
   }
   const dist = (a, b) => {
-    const dl = lab[a * 3] - lab[b * 3];
-    const da = lab[a * 3 + 1] - lab[b * 3 + 1];
-    const db = lab[a * 3 + 2] - lab[b * 3 + 2];
-    return Math.sqrt(dl * dl + da * da + db * db);
+    const dl = lab[a * 4] - lab[b * 4];
+    const da = lab[a * 4 + 1] - lab[b * 4 + 1];
+    const db = lab[a * 4 + 2] - lab[b * 4 + 2];
+    const dt = lab[a * 4 + 3] - lab[b * 4 + 3];
+    return Math.sqrt(dl * dl + da * da + db * db + dt * dt);
   };
   const maxEdges = n2 * 4;
   const ea = new Int32Array(maxEdges);
