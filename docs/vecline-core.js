@@ -903,6 +903,30 @@ var PathBuilder = class {
     this.cy = ay;
     return this;
   }
+  /**
+   * Quadratic Bézier — four numbers where {@link curveTo} spends six.
+   *
+   * The zero test is the same one `lineTo` makes, and for the same reason. A `q`
+   * whose control point and endpoint both land on the current point draws
+   * nothing and leaves the cursor where it was, so writing it costs bytes and
+   * changes no geometry — and after snapping, a short curve on a dense boundary
+   * becomes exactly that. A previous attempt at this method omitted the test and
+   * wrote runs of `q0 0 0 0 0 0 0 0` where the correct output was nothing at all.
+   * Tested BEFORE `flushLine`, so a held-back line is not forced out by a command
+   * that turns out not to exist.
+   */
+  quadTo(x1, y1, x, y) {
+    const a1x = this.snap(x1), a1y = this.snap(y1);
+    const ax = this.snap(x), ay = this.snap(y);
+    const d1x = a1x - this.cx, d1y = a1y - this.cy;
+    const dx = ax - this.cx, dy = ay - this.cy;
+    if (d1x === 0 && d1y === 0 && dx === 0 && dy === 0) return this;
+    this.flushLine();
+    this.push("q", [d1x, d1y, dx, dy]);
+    this.cx = ax;
+    this.cy = ay;
+    return this;
+  }
   /** Axis-aligned rectangle as a closed subpath — the workhorse of pixel mode. */
   rect(x, y, w, h) {
     this.moveTo(x, y);
@@ -1964,6 +1988,8 @@ var MAX_HANDLE_RATIO = 1;
 var NEWTON_BAND = 4;
 var TANGENT_WINDOW = 4;
 var MAX_OPTIMIZE_PASSES = 8;
+var QUAD_DEVIATION = Math.sqrt(3) / 36;
+var QUAD_PROJECT_STEPS = 4;
 function fitLoop(pts, opts) {
   const n2 = pts.length / 2;
   if (n2 < 3) return null;
@@ -2004,7 +2030,8 @@ function fitLoop(pts, opts) {
     const fitted = [];
     fitCubic(chain.x, chain.y, 0, chain.x.length - 1, t1, t2, opts.fitError, fitted);
     const optimized = opts.optimize === false ? fitted : optimizeCurves(chain.x, chain.y, fitted, opts.optimizeError ?? opts.fitError);
-    for (const f of optimized) segments.push(f.segment);
+    const reduced = opts.quadratics ? reduceToQuadratics(chain.x, chain.y, optimized, emittedErrorBudget(opts)) : optimized;
+    for (const f of reduced) segments.push(f.segment);
   }
   if (segments.length === 0) return null;
   return { start: { x: px[breaks[0].index], y: py[breaks[0].index] }, segments };
@@ -2344,6 +2371,95 @@ function tryMerge(x, y, a, b, error) {
   emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, a.t1, b.t2);
   return out[0] ?? null;
 }
+function bestQuadratic(p0x, p0y, c1x, c1y, c2x, c2y, p3x, p3y) {
+  return {
+    x: (3 * (c1x + c2x) - p0x - p3x) / 4,
+    y: (3 * (c1y + c2y) - p0y - p3y) / 4
+  };
+}
+function quadDeviation(p0x, p0y, c1x, c1y, c2x, c2y, p3x, p3y) {
+  const ex = -p0x + 3 * c1x - 3 * c2x + p3x;
+  const ey = -p0y + 3 * c1y - 3 * c2y + p3y;
+  return QUAD_DEVIATION * Math.hypot(ex, ey);
+}
+function quadAt(p0x, p0y, qx, qy, p3x, p3y, t) {
+  const m = 1 - t;
+  const a = m * m, b = 2 * m * t, c = t * t;
+  return { x: a * p0x + b * qx + c * p3x, y: a * p0y + b * qy + c * p3y };
+}
+function quadMaxError(x, y, first, last, qx, qy) {
+  const p0x = x[first], p0y = y[first];
+  const p3x = x[last], p3y = y[last];
+  const u = chordLengthParameterize(x, y, first, last);
+  let worst2 = 0;
+  for (let i = first + 1; i < last; i++) {
+    const px = x[i], py = y[i];
+    let t = u[i - first];
+    let p = quadAt(p0x, p0y, qx, qy, p3x, p3y, t);
+    let best = Math.hypot(p.x - px, p.y - py);
+    for (let k = 0; k < QUAD_PROJECT_STEPS; k++) {
+      const m = 1 - t;
+      const dx = 2 * (m * (qx - p0x) + t * (p3x - qx));
+      const dy = 2 * (m * (qy - p0y) + t * (p3y - qy));
+      const ddx = 2 * (p3x - 2 * qx + p0x);
+      const ddy = 2 * (p3y - 2 * qy + p0y);
+      const rx = p.x - px, ry = p.y - py;
+      const denom = dx * dx + dy * dy + rx * ddx + ry * ddy;
+      if (denom === 0) break;
+      let next = t - (rx * dx + ry * dy) / denom;
+      if (!Number.isFinite(next)) break;
+      if (next < 0) next = 0;
+      else if (next > 1) next = 1;
+      const cand = quadAt(p0x, p0y, qx, qy, p3x, p3y, next);
+      const dist = Math.hypot(cand.x - px, cand.y - py);
+      if (!(dist < best)) break;
+      best = dist;
+      t = next;
+      p = cand;
+    }
+    if (best > worst2) worst2 = best;
+  }
+  return worst2;
+}
+function reduceToQuadratics(x, y, segments, error) {
+  let converted = false;
+  const out = [];
+  for (const f of segments) {
+    const s = f.segment;
+    if (s.kind !== "curve") {
+      out.push(f);
+      continue;
+    }
+    const p0x = x[f.first], p0y = y[f.first];
+    const q = bestQuadratic(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
+    let ok;
+    if (f.last - f.first >= 3) {
+      ok = quadMaxError(x, y, f.first, f.last, q.x, q.y) <= error;
+    } else {
+      const u = chordLengthParameterize(x, y, f.first, f.last);
+      const bez = Float64Array.of(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
+      const spent = computeMaxError(x, y, f.first, f.last, bez, u).maxError;
+      ok = quadDeviation(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y) <= error - spent;
+    }
+    if (!ok) {
+      out.push(f);
+      continue;
+    }
+    converted = true;
+    out.push({
+      segment: { kind: "quad", x1: q.x, y1: q.y, x: s.x, y: s.y },
+      first: f.first,
+      last: f.last,
+      t1: f.t1,
+      t2: f.t2
+    });
+  }
+  return converted ? out : segments;
+}
+function emittedErrorBudget(opts) {
+  if (opts.optimize === false) return opts.fitError;
+  return Math.max(opts.fitError, opts.optimizeError ?? opts.fitError);
+}
 function centerTangentOfChain(x, y, i) {
   const k = Math.min(TANGENT_WINDOW, i, x.length - 1 - i);
   if (k < 1) return normalize(x[i + 1] - x[i - 1], y[i + 1] - y[i - 1]);
@@ -2559,7 +2675,8 @@ function fitOpen(pts, opts) {
     const fitted = [];
     fitCubic(cx, cy, 0, count2 - 1, t1, t2, opts.fitError, fitted);
     const optimized = opts.optimize === false ? fitted : optimizeCurves(cx, cy, fitted, opts.optimizeError ?? opts.fitError);
-    for (const f of optimized) segments.push(f.segment);
+    const reduced = opts.quadratics ? reduceToQuadratics(cx, cy, optimized, emittedErrorBudget(opts)) : optimized;
+    for (const f of reduced) segments.push(f.segment);
   }
   if (segments.length === 0) {
     return { start, segments: [{ kind: "line", x: px[n2 - 1], y: py[n2 - 1] }] };
@@ -2578,6 +2695,17 @@ function flattenPath(path, spacing = 1) {
       const ds = Math.max(1, Math.min(256, Math.ceil(dl / Math.max(0.05, spacing))));
       for (let k = 1; k <= ds; k++) {
         out.push(cx + (s.x - cx) * k / ds, cy + (s.y - cy) * k / ds);
+      }
+      cx = s.x;
+      cy = s.y;
+      continue;
+    }
+    if (s.kind === "quad") {
+      const qlen = Math.hypot(s.x1 - cx, s.y1 - cy) + Math.hypot(s.x - s.x1, s.y - s.y1);
+      const qsteps = Math.max(4, Math.min(256, Math.ceil(qlen / Math.max(0.05, spacing))));
+      for (let k = 1; k <= qsteps; k++) {
+        const p = quadAt(cx, cy, s.x1, s.y1, s.x, s.y, k / qsteps);
+        out.push(p.x, p.y);
       }
       cx = s.x;
       cy = s.y;
@@ -3144,7 +3272,9 @@ function reversePath(path) {
     const s = path.segments[i];
     const target = on[i];
     if (s.kind === "line") segments.push({ kind: "line", x: target.x, y: target.y });
-    else {
+    else if (s.kind === "quad") {
+      segments.push({ kind: "quad", x1: s.x1, y1: s.y1, x: target.x, y: target.y });
+    } else {
       segments.push({
         kind: "curve",
         x1: s.x2,
@@ -3169,7 +3299,8 @@ function fitFaces(dec, opts) {
       optimize: opts.optimize,
       optimizeError: opts.optimizeError,
       regularise: opts.regularise,
-      regulariseBand: opts.regulariseBand
+      regulariseBand: opts.regulariseBand,
+      quadratics: opts.quadratics
     });
     if (!loop) return null;
     const last = loop.segments[loop.segments.length - 1];
@@ -4920,6 +5051,7 @@ var TRACE_DEFAULTS = {
   smooth: 0,
   regularise: 0,
   mosaic: false,
+  quadratics: false,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -5078,6 +5210,7 @@ function trace(source, opts = {}) {
     cornerAngle: o.cornerAngle,
     optimize: o.optimize,
     optimizeError: o.optimizeError,
+    quadratics: o.quadratics,
     // `mosaic` implies smoothing, and the floor is not a preference.
     //
     // Crack-following emits axis-aligned unit steps only, so an untouched
@@ -5185,6 +5318,7 @@ function trace(source, opts = {}) {
     polygonOnly: o.polygonOnly,
     optimize: o.optimize,
     optimizeError: o.optimizeError,
+    quadratics: o.quadratics,
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold
   };
@@ -5230,6 +5364,7 @@ function trace(source, opts = {}) {
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
         if (seg.kind === "line") path.lineTo(seg.x, seg.y);
+        else if (seg.kind === "quad") path.quadTo(seg.x1, seg.y1, seg.x, seg.y);
         else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
       }
       path.close();
@@ -6966,6 +7101,10 @@ function traceGeometry(source, opts = {}) {
     polygonOnly: o.polygonOnly,
     optimize: o.optimize,
     optimizeError: o.optimizeError,
+    // Honoured here too, so DXF/EPS/PDF cannot silently disagree with the SVG
+    // about what geometry the same options produce. Every one of those writers
+    // handles a `quad` segment (elevated for EPS/PDF, sampled for DXF).
+    quadratics: o.quadratics,
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold
   };
@@ -7011,6 +7150,22 @@ function sampleCubic(p0, c1, c2, p3, steps) {
   }
   return out;
 }
+function sampleQuad(p0, q, p2, steps) {
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const mt = 1 - t;
+    const a = mt * mt, b = 2 * mt * t, c = t * t;
+    out.push({ x: a * p0.x + b * q.x + c * p2.x, y: a * p0.y + b * q.y + c * p2.y });
+  }
+  return out;
+}
+function elevateQuad(p0, q, p2) {
+  return {
+    c1: { x: p0.x + 2 / 3 * (q.x - p0.x), y: p0.y + 2 / 3 * (q.y - p0.y) },
+    c2: { x: p2.x + 2 / 3 * (q.x - p2.x), y: p2.y + 2 / 3 * (q.y - p2.y) }
+  };
+}
 function flatten(path, steps = 10) {
   const pts = [{ x: path.start.x, y: path.start.y }];
   let cur = { x: path.start.x, y: path.start.y };
@@ -7018,6 +7173,10 @@ function flatten(path, steps = 10) {
     if (seg.kind === "line") {
       cur = { x: seg.x, y: seg.y };
       pts.push(cur);
+    } else if (seg.kind === "quad") {
+      const sampled = sampleQuad(cur, { x: seg.x1, y: seg.y1 }, { x: seg.x, y: seg.y }, steps);
+      for (const p of sampled) pts.push(p);
+      cur = { x: seg.x, y: seg.y };
     } else {
       const sampled = sampleCubic(cur, { x: seg.x1, y: seg.y1 }, { x: seg.x2, y: seg.y2 }, { x: seg.x, y: seg.y }, steps);
       for (const p of sampled) pts.push(p);
@@ -7254,14 +7413,21 @@ function toEps(geometry, opts = {}) {
         return;
       }
       out.push(`${n(sub.start.x)} ${n(fy(sub.start.y))} moveto`);
+      let cur = { x: sub.start.x, y: sub.start.y };
       for (const seg of sub.segments) {
         if (seg.kind === "line") {
           out.push(`${n(seg.x)} ${n(fy(seg.y))} lineto`);
+        } else if (seg.kind === "quad") {
+          const { c1, c2 } = elevateQuad(cur, { x: seg.x1, y: seg.y1 }, { x: seg.x, y: seg.y });
+          out.push(
+            `${n(c1.x)} ${n(fy(c1.y))} ${n(c2.x)} ${n(fy(c2.y))} ${n(seg.x)} ${n(fy(seg.y))} curveto`
+          );
         } else {
           out.push(
             `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} curveto`
           );
         }
+        cur = { x: seg.x, y: seg.y };
       }
       out.push("closepath");
     });
@@ -7300,8 +7466,21 @@ function toPdf(geometry, opts = {}) {
     ops.push(opts.cmyk ? `${rgbToCmyk(r, g, b).map((v) => n(v)).join(" ")} k` : `${n(r / 255)} ${n(g / 255)} ${n(b / 255)} rg`);
     path.subpaths.forEach((sub, i) => {
       const flattened = [`${n(sub.start.x)} ${n(fy(sub.start.y))} m`];
+      let cur = { x: sub.start.x, y: sub.start.y };
       for (const seg of sub.segments) {
-        flattened.push(seg.kind === "line" ? `${n(seg.x)} ${n(fy(seg.y))} l` : `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} c`);
+        if (seg.kind === "line") {
+          flattened.push(`${n(seg.x)} ${n(fy(seg.y))} l`);
+        } else if (seg.kind === "quad") {
+          const { c1, c2 } = elevateQuad(cur, { x: seg.x1, y: seg.y1 }, { x: seg.x, y: seg.y });
+          flattened.push(
+            `${n(c1.x)} ${n(fy(c1.y))} ${n(c2.x)} ${n(fy(c2.y))} ${n(seg.x)} ${n(fy(seg.y))} c`
+          );
+        } else {
+          flattened.push(
+            `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} c`
+          );
+        }
+        cur = { x: seg.x, y: seg.y };
       }
       flattened.push("h");
       const prim = path.primitives?.[i];

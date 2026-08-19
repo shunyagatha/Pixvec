@@ -187,6 +187,20 @@ export interface TraceOptions {
    */
   mosaic?: boolean;
   /**
+   * Write a quadratic (`q`) instead of a cubic (`c`) wherever one describes the
+   * same span within the error budget the cubic already had to pass. Off by
+   * default.
+   *
+   * Four numbers against six, and on a traced boundary most cubics are barely
+   * cubic — measured over the corpus at `--preset clean`, 44.7% of the 116,983
+   * emitted cubics sit within 0.1px of their best quadratic. It is a pure
+   * serialisation change: no boundary moves, no region is added or removed, and
+   * every replacement is checked against the ORIGINAL traced points rather than
+   * against the cubic it replaces. See `reduceToQuadratics` in fit.ts for why
+   * that distinction is the whole of the correctness argument.
+   */
+  quadratics?: boolean;
+  /**
    * Simplify boundaries with a quantisation-aware straightness test instead of
    * Douglas–Peucker.
    *
@@ -609,6 +623,7 @@ export const TRACE_DEFAULTS = {
   smooth: 0,
   regularise: 0,
   mosaic: false,
+  quadratics: false,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -926,6 +941,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
         cornerAngle: o.cornerAngle,
         optimize: o.optimize,
         optimizeError: o.optimizeError,
+        quadratics: o.quadratics,
 // `mosaic` implies smoothing, and the floor is not a preference.
         //
         // Crack-following emits axis-aligned unit steps only, so an untouched
@@ -1063,6 +1079,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     polygonOnly: o.polygonOnly,
     optimize: o.optimize,
     optimizeError: o.optimizeError,
+    quadratics: o.quadratics,
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold,
   };
@@ -1171,6 +1188,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
         if (seg.kind === 'line') path.lineTo(seg.x, seg.y);
+        else if (seg.kind === 'quad') path.quadTo(seg.x1, seg.y1, seg.x, seg.y);
         else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
       }
       path.close();

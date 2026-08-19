@@ -147,6 +147,30 @@ export class PathBuilder {
     return this;
   }
 
+  /**
+   * Quadratic Bézier — four numbers where {@link curveTo} spends six.
+   *
+   * The zero test is the same one `lineTo` makes, and for the same reason. A `q`
+   * whose control point and endpoint both land on the current point draws
+   * nothing and leaves the cursor where it was, so writing it costs bytes and
+   * changes no geometry — and after snapping, a short curve on a dense boundary
+   * becomes exactly that. A previous attempt at this method omitted the test and
+   * wrote runs of `q0 0 0 0 0 0 0 0` where the correct output was nothing at all.
+   * Tested BEFORE `flushLine`, so a held-back line is not forced out by a command
+   * that turns out not to exist.
+   */
+  quadTo(x1: number, y1: number, x: number, y: number): this {
+    const a1x = this.snap(x1), a1y = this.snap(y1);
+    const ax = this.snap(x), ay = this.snap(y);
+    const d1x = a1x - this.cx, d1y = a1y - this.cy;
+    const dx = ax - this.cx, dy = ay - this.cy;
+    if (d1x === 0 && d1y === 0 && dx === 0 && dy === 0) return this;
+    this.flushLine();
+    this.push('q', [d1x, d1y, dx, dy]);
+    this.cx = ax; this.cy = ay;
+    return this;
+  }
+
   /** Axis-aligned rectangle as a closed subpath — the workhorse of pixel mode. */
   rect(x: number, y: number, w: number, h: number): this {
     this.moveTo(x, y);
