@@ -82,13 +82,49 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // reason: -13.3% raw and -17.0% gzip for -0.001 dB. It pays for itself because
   // sub-pixel coordinates are fractional, and a fractional coordinate costs both
   // more characters and worse compression (integers gzip ~5.8x, fractionals ~2.7x).
+  // `strokeWidth: 0.5` is here because it was finally MEASURED, having been the
+  // documented answer to seams for this project's whole life without a single
+  // number attached to it. It is not a seam patch. It is an accuracy win:
+  //
+  //   subject          sw0.25   sw0.5   sw0.75    sw1   sw1.5
+  //   logo-tux         +0.025  +0.043  +0.054  +0.054  +0.029
+  //   alpha-dice       +0.026  +0.031  +0.023  +0.012  -0.007
+  //   vector-tiger     +0.015  +0.027  +0.034  +0.030  -0.009
+  //   photo-parrots    +0.015  +0.021  +0.020  +0.016  -0.003
+  //   photo-cat        +0.051  +0.085  +0.099  +0.102  +0.089
+  //   the sticker      +0.016  +0.021  +0.016  +0.005  -0.046
+  //
+  // SSIM delta against the same preset at 0. Positive on 6 of 6 at 0.5, for
+  // 1.001x-1.028x raw bytes and 1.001x-1.014x gzipped. A strict improvement, which
+  // this project almost never finds, and it was sitting switched off.
+  //
+  // 0.5 rather than 0.75 or 1, which have a slightly better mean: 0.5 has the
+  // better WORST case (+0.021 against +0.016), and 1.5 goes negative on three of
+  // the six. A preset default should be chosen on its floor.
+  //
+  // Deliberately NOT applied to `auto` or the bare trace defaults, though the table
+  // shows it would help there too — photo-cat gains the most of any subject. That
+  // changes the published README figures and the byte-identity baseline, so it is a
+  // separate decision with its own measurement, not a rider on this one.
+  //
+  // Why a stroke helps at all: it paints the region's own colour back over the
+  // half-covered pixels along its boundary, which is where a fill-only mosaic loses
+  // coverage. The paid rival ships `stroke-width="2.00"` on its output group for
+  // what looks like the same reason.
+  //
+  // WHICH SETS ITS LIMIT, and a single antialiased disc shows the boundary
+  // condition by disagreeing with every row above: 0.9791 at 0, 0.9798 at 0.25,
+  // then DOWN to 0.9736 at 0.5 and 0.9462 at 1. The payoff scales with how much of
+  // the picture is boundary, so two big shapes gain almost nothing and lose to the
+  // overpaint, while artwork with hundreds of small regions gains throughout. Do
+  // not expect this to help a simple figure, and do not tune it on one.
   logo: {
     colors: 16, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75,
-    subpixel: true, precision: 1,
+    subpixel: true, precision: 1, strokeWidth: 0.5,
   },
   lineart: {
     colors: 6, minArea: 4, tolerance: 0.6, fitError: 0.6, cornerAngle: 60,
-    subpixel: true, precision: 1,
+    subpixel: true, precision: 1, strokeWidth: 0.5,
   },
   poster: { colors: 32, minArea: 12, tolerance: 0.5, fitError: 0.5, cornerAngle: 80 },
   // `clean` is the one preset that is not trying to be faithful, and says so.
