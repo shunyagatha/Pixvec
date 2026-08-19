@@ -334,6 +334,40 @@ export interface Palette {
   count: number;
 }
 
+/**
+ * WHERE THE PALETTE BUDGET ACTUALLY GOES, measured, because it is not where you
+ * would guess and it bounds what any downstream stage can do.
+ *
+ * A third of the palette is spent on colours that exist almost entirely as thin
+ * antialiasing fringe. Classifying each entry by the share of ITS pixels that touch
+ * a different class — a spatial test, not a colour-space one:
+ *
+ *   logo-tux       6 of 16 entries are >85% boundary, holding  6.3% of pixels
+ *   vector-tiger   5 of 16 entries are >85% boundary, holding  3.0% of pixels
+ *
+ * Those entries buy almost no area and fragment every boundary into slivers. For
+ * comparison a paid rival describes logo-tux with TEN fills in total and scores
+ * higher than we do with sixteen, so the budget is being spent badly rather than
+ * being too small.
+ *
+ * A COLOUR-SPACE TEST DOES NOT FIND THEM, and getting this wrong is easy: asking
+ * "does this entry lie between two others" flags 13 of 16 on logo-tux, because
+ * every grey lies on the black-white line by construction. Tux genuinely has grey
+ * shading. Only the spatial test separates a real shade from a fringe.
+ *
+ * MERGING THEM AWAY WAS TRIED AND IS NOT A DEFAULT. Repainting each fringe pixel
+ * with its dominant non-fringe neighbour, then tracing, over seven subjects:
+ *
+ *   logo-tux            0.768x gzip, +0.0033 SSIM   <- the one clear win
+ *   vector-tiger        1.062x,      +0.0106        accuracy bought with size
+ *   vector-comparison   0.996x,      -0.0003        nil
+ *   the sticker         0.668x,      -0.0042        much smaller, slightly worse
+ *   vector-source, alpha-dice, photo-parrots: NO fringe classes, so no-ops
+ *
+ * One clear win of the four where it fires. Reported carefully because "4 of 7
+ * improved" would be the wrong headline — three of those four are the no-ops, and
+ * an absence of effect is not an effect.
+ */
 /** Build a palette of at most `maxColors` entries for `img`. */
 export function quantize(img: RasterImage, maxColors: number, opts: QuantizeOptions = {}): Palette {
   // A caller-supplied palette bypasses the whole quantiser: build straight from
