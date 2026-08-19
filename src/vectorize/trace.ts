@@ -396,8 +396,38 @@ export const TRACE_DEFAULTS = {
   // setting where **100% of emitted path coordinates stay integers**. That is what
   // buys the `h`/`v` shorthand, and integers gzip about 5.8x against 2.7x for
   // fractionals — so the lattice is not a limitation being tolerated here, it is
-  // load-bearing for file size. Anything that moves coordinates off it (see
-  // `subpixel`) should be opt-in or preset-scoped, and is.
+  // load-bearing for file size.
+  //
+  // THAT PARAGRAPH USED TO END "anything that moves coordinates off it (see
+  // `subpixel`) should be opt-in or preset-scoped, and is." That stopped being
+  // true when `subpixel` became the default, and the correction is more
+  // interesting than the error.
+  //
+  // Forcing `subpixel: true` really does move coordinates off the lattice, and the
+  // dead zone above really does stop describing that path:
+  //
+  //                    subpixel forced ON        subpixel OFF
+  //   logo-tux         73.5% integer, 2,982 cv   100%, 12 cv
+  //   vector-tiger     73.2% integer, 23,455 cv  100%, 110 cv
+  //   the sticker      62.1% integer, 2,150 cv   100%, 21 cv
+  //
+  // But that is NOT what ships, because `refineGateFor` (api.ts) turns `subpixel`
+  // off wherever measured `interiorNoise` exceeds 0.3 — and every one of those
+  // four subjects exceeds it: 0.653, 0.456, 0.796, 5.061. So the shipped default
+  // emits 100% integers on all of them, and the dead-zone reasoning still holds
+  // for the path users actually get.
+  //
+  // Worth knowing WHY they all exceed it, because it is not what the limit was
+  // calibrated for. On synthetics the measure is clean — flat two-tone 0.0000, a
+  // smooth gradient 0.1886, a steep gradient 0.2222, per-pixel grain 4.4445 — so
+  // it is not confusing shading with noise. Real artwork reads high because busy
+  // pictures have few genuinely interior pixels: the samples that survive the
+  // gradient filter still sit beside sub-threshold edges. The limit therefore acts
+  // as "is this picture detailed" at least as much as "is this picture noisy".
+  //
+  // `logo` and `lineart` state `subpixel: true` themselves and are spread after
+  // the gate, so they still get refinement. That is the intended escape hatch and
+  // it is the one measured to pay: +1.84 dB at -21.2% segments on `logo`.
   tolerance: 0.4,
   fitError: 0.4,
   cornerAngle: 75,
