@@ -119,8 +119,15 @@ export function fillAttrs(c: Rgba): string {
 }
 
 /**
- * Stroke attributes for the seam-hiding hairline, carrying the same alpha the
- * fill does.
+ * Stroke attributes for the boundary hairline, carrying the same alpha the fill
+ * does.
+ *
+ * Called "seam-hiding" here for years on the strength of where it came from
+ * rather than any measurement. Measured, it is an accuracy gain — positive on 6
+ * of 6 corpus subjects at width 0.5, for under 3% more bytes — because it repaints
+ * the half-covered pixels along a region's boundary. It also paints outside the
+ * silhouette, which is why no preset enables it. Numbers on `strokeWidth` in
+ * `vectorize/trace.ts`.
  *
  * `fill-opacity` does not apply to strokes. Emitting the colour without
  * `stroke-opacity` therefore drew a fully opaque outline around a translucent
