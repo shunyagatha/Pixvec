@@ -32,13 +32,64 @@
  * 190 B / 0.9931, and an ellipse and a stadium come back bit-exact. The `<rect>`
  * is render-identical by construction.
  *
- * That gain is currently out of reach at the shipped `maxError` of 1.0: detection
- * runs on the raw crack-following loop, whose antialiased rim puts every curved
- * shape at a residual of 1.16–1.44. **Raising the budget is not the fix** — a disc
- * with a 12% flat chord is accepted at 1.4 (SSIM 0.989 -> 0.942), and a false
- * positive can score *below* a genuine circle (1.077 against 1.211), so no
- * threshold separates them. Densifying the boundary before fitting is the fix;
- * until then this stays opt-in.
+ * WHAT UNBLOCKED THIS, AND WHAT THE PREVIOUS NOTE GOT WRONG.
+ *
+ * That gain used to be out of reach at the shipped `maxError` of 1.0, because
+ * detection ran on the raw crack-following loop, whose antialiased rim puts every
+ * curved shape at a residual of 1.16-1.44. Reproduced: an antialiased disc scores
+ * 1.08 / 1.20 / 1.15 / 1.23 at r = 10 / 25 / 60 / 120, an ellipse 1.21-1.26, a
+ * rounded rect 1.16-1.30. `trace.ts` now hands these fitters the FITTED path
+ * instead — see `flattenPath` — and the same shapes come back at 0.53 / 0.89 /
+ * 0.88 / 0.98 and 0.80-0.97 and 0.77-1.91.
+ *
+ * The old note ended "densifying the boundary before fitting is the fix", and
+ * that sentence claimed more than its evidence. Measured as a separate arm —
+ * resample the lattice loop at one point per pixel, change nothing else —
+ * densifying moves a true positive by 0.02 to 0.07 px (disc r=120: 1.233 ->
+ * 1.189) and unlocks **nothing**: 0 of 8 curved shapes cross 1.0. It is not
+ * useless, it just does a different job, and the job it does is the important
+ * one. See the trap below.
+ *
+ * What the fitted geometry unlocks is CIRCLE and ELLIPSE, and that is all. Both
+ * clear 1.0 on every size measured (4 radii, 3 aspect ratios). `rect` was never
+ * blocked — it fits at residual 0. `roundrect` gains one of three fixtures and
+ * loses the other two, which end up FURTHER from acceptance (1.156 -> 2.000,
+ * 1.299 -> 1.912) because the smoothing pulls a large corner radius off its own
+ * level set. So the earlier finding that refined loops "unlock circle and ellipse
+ * and nothing else" survives; it is round-rects it is silent about.
+ *
+ * THE FALSE POSITIVE, AND WHY DENSIFYING IS WHAT KILLS IT. The recorded trap is a
+ * disc with a flat chord sliced off, which used to score *below* a genuine circle
+ * so that no threshold separated them. That is not an accident of tuning, it is
+ * structural: the contour tracer stores a straight run as its two endpoints
+ * however long it is, and both endpoints of a chord lie exactly ON the circle. A
+ * per-vertex residual therefore cannot see the missing 12%. This file already
+ * knew that about `fitSector`, which resamples for exactly this reason; nothing
+ * had carried the lesson to `fitCircle`.
+ *
+ * Once the boundary is sampled through the middle of the straight run, the trap
+ * springs the right way. Chord discs at 3 / 6 / 12 / 20% of the diameter score
+ * 1.15 / 1.44 / 1.13 / 1.14 on the raw lattice — indistinguishable from the
+ * 1.08-1.23 of a real disc — and 1.47 to 2.00 once sampled, against 0.39-1.06 for
+ * a genuine disc across nine radii from 10 to 350 px. A threshold now separates
+ * them, and 1.0 sits inside the gap.
+ *
+ * **Raising the budget is still not the fix**, and this was re-measured on the new
+ * geometry rather than assumed. On a rasterised sheet of twelve shapes that are
+ * deliberately NOT primitives, `maxError` 1.0 promotes exactly one — a half-disc,
+ * as a genuine `sector` — and takes SSIM 0.9853 -> 0.9855. At 1.2 two polygons slip
+ * through and it falls to 0.9848; at 2.0 nine shapes are claimed, every one of them
+ * further from the source in its own bounding box (round-rects by 14-16 dB), and
+ * SSIM falls to 0.9365.
+ *
+ * AND IT STAYS OPT-IN, because the unlock is not the same thing as a win. Over
+ * the nine-subject corpus at `clean`, promotion now leaves seven subjects
+ * byte-identical and the other two within 63 bytes, because none of them
+ * contains a geometric primitive above the size floor — real photographs and a
+ * penguin do not. The gain shows up only on artwork that is MADE of primitives: a
+ * rasterised dashboard goes 9,932 -> 7,619 bytes (-23.3%), 465 -> 294 segments,
+ * SSIM 0.9802 -> 0.9806. A default that is inert on nine subjects out of ten is a
+ * flag, not a default.
  *
  * The residual is measured differently for the sector: the contour tracer stores
  * a straight run as its two endpoints however long it is, so a sector's radial
@@ -48,6 +99,12 @@
  *
  * Pure: integer lattice in, plain description out. No dependencies.
  */
+
+/**
+ * A flat `x, y` polygon. `Int32Array` is the crack-following lattice loop;
+ * `Float64Array` is off-lattice geometry — a smoothed or fitted boundary.
+ */
+export type PointArray = Int32Array | Float64Array | number[];
 
 export type Primitive =
   | { kind: 'circle'; cx: number; cy: number; r: number }
@@ -76,7 +133,7 @@ const DEFAULTS = { maxError: 1.0, minExtent: 3 } as const;
  * closed `x,y` polygon on the integer lattice — a {@link Loop}'s `pts`.
  */
 export function detectPrimitive(
-  pts: Int32Array | number[],
+  pts: PointArray,
   opts: PrimitiveOptions = {},
 ): Primitive | null {
   const maxError = opts.maxError ?? DEFAULTS.maxError;
@@ -190,7 +247,7 @@ function sectorPath(
 
 /** Axis-aligned rectangle: the contour of a real rect is exactly its bbox. */
 function fitRect(
-  pts: Int32Array | number[],
+  pts: PointArray,
   n: number,
   b: Bbox,
   w: number,
@@ -219,7 +276,7 @@ function fitRect(
  * so it is swept and the value with the smallest worst-vertex residual wins.
  */
 function fitRoundRect(
-  pts: Int32Array | number[],
+  pts: PointArray,
   n: number,
   b: Bbox,
   w: number,
@@ -286,7 +343,7 @@ function fitRoundRect(
 
 /** Algebraic (Kåsa) least-squares circle, gated on the worst radial residual. */
 function fitCircle(
-  pts: Int32Array | number[],
+  pts: PointArray,
   n: number,
   area: number,
 ): { prim: Primitive; err: number } | null {
@@ -329,7 +386,7 @@ function fitCircle(
 
 /** Axis-aligned ellipse seeded from the bbox, gated on the worst point residual. */
 function fitEllipse(
-  pts: Int32Array | number[],
+  pts: PointArray,
   n: number,
   b: Bbox,
   w: number,
@@ -410,7 +467,7 @@ interface Sector {
  * inside the error budget.
  */
 function fitSector(
-  pts: Int32Array | number[],
+  pts: PointArray,
   n: number,
   b: Bbox,
   w: number,
@@ -567,7 +624,7 @@ function prune(
  * points. Long straight runs are stored as a single edge by the contour tracer,
  * so walking vertices would skip most of a radial edge entirely.
  */
-function densify(pts: Int32Array | number[], n: number, cap: number): Float64Array {
+function densify(pts: PointArray, n: number, cap: number): Float64Array {
   let perim = 0;
   for (let i = 0, j = n - 1; i < n; j = i++) {
     perim += Math.hypot(pts[i << 1] - pts[j << 1], pts[(i << 1) + 1] - pts[(j << 1) + 1]);
@@ -810,7 +867,7 @@ function wrapPi(a: number): number {
 
 interface Bbox { minX: number; minY: number; maxX: number; maxY: number; }
 
-function bbox(pts: Int32Array | number[], n: number): Bbox {
+function bbox(pts: PointArray, n: number): Bbox {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let i = 0; i < n; i++) {
     const x = pts[i << 1], y = pts[(i << 1) + 1];
@@ -823,7 +880,7 @@ function bbox(pts: Int32Array | number[], n: number): Bbox {
 }
 
 /** Signed polygon area (shoelace) over a flat, implicitly-closed x,y array. */
-function shoelace(pts: Int32Array | number[], n: number): number {
+function shoelace(pts: PointArray, n: number): number {
   let a = 0;
   for (let i = 0, j = n - 1; i < n; j = i++) {
     const xi = pts[i << 1], yi = pts[(i << 1) + 1];

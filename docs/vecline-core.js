@@ -2566,6 +2566,44 @@ function fitOpen(pts, opts) {
   }
   return { start, segments };
 }
+function flattenPath(path, spacing = 1) {
+  const out = [];
+  let cx = path.start.x;
+  let cy = path.start.y;
+  out.push(cx, cy);
+  const bez = new Float64Array(8);
+  for (const s of path.segments) {
+    if (s.kind === "line") {
+      const dl = Math.hypot(s.x - cx, s.y - cy);
+      const ds = Math.max(1, Math.min(256, Math.ceil(dl / Math.max(0.05, spacing))));
+      for (let k = 1; k <= ds; k++) {
+        out.push(cx + (s.x - cx) * k / ds, cy + (s.y - cy) * k / ds);
+      }
+      cx = s.x;
+      cy = s.y;
+      continue;
+    }
+    const len = Math.hypot(s.x1 - cx, s.y1 - cy) + Math.hypot(s.x2 - s.x1, s.y2 - s.y1) + Math.hypot(s.x - s.x2, s.y - s.y2);
+    const steps = Math.max(4, Math.min(256, Math.ceil(len / Math.max(0.05, spacing))));
+    bez[0] = cx;
+    bez[1] = cy;
+    bez[2] = s.x1;
+    bez[3] = s.y1;
+    bez[4] = s.x2;
+    bez[5] = s.y2;
+    bez[6] = s.x;
+    bez[7] = s.y;
+    for (let k = 1; k <= steps; k++) {
+      const p = bezierAt(bez, k / steps);
+      out.push(p.x, p.y);
+    }
+    cx = s.x;
+    cy = s.y;
+  }
+  const n2 = out.length >> 1;
+  if (n2 > 1 && out[0] === out[(n2 - 1) * 2] && out[1] === out[(n2 - 1) * 2 + 1]) out.length -= 2;
+  return Float64Array.from(out);
+}
 
 // src/vectorize/subpixel.ts
 var MIN_CONTRAST_SQ = 3 * 3 * 4;
@@ -4758,14 +4796,36 @@ var TRACE_DEFAULTS = {
   // tolerance buys — few smooth curves on a big arc — is preserved by the
   // `logo`/`lineart` presets, which keep a higher value on purpose.
   //
-  // **0.4 is the top of a flat dead zone, not an optimum, and it is kept anyway.**
-  // A 131-setting sweep found that every tolerance in (0, 0.44] produces
+  // **0.4 is inside a flat dead zone, not an optimum, and it is kept anyway.**
+  // A 131-setting sweep found that every tolerance in the zone produces
   // *byte-identical* output — same sha256, 34,084 B, 12,603 segments, zero curves —
   // and that `cornerAngle` and `fitError` are unreachable there: all six
   // cornerAngle values from 45 to 135 give the same sha at tolerance 0.4, and the
   // instrumented fitter shows why. Every one of 12,879 loops takes the
   // `fitterIsDead` shortcut, Douglas-Peucker removes 0.0% of 63,338 lattice
   // points, and `findBreakpoints` is called **zero** times.
+  //
+  // THE ZONE'S TOP IS NOT 0.44. That was this comment rounding a measurement off,
+  // and the real bound is arithmetic rather than empirical: crack-following emits
+  // axis-aligned unit steps, so an interior lattice vertex that is not collinear
+  // with the chord is |cross| / |chord| away from it with an integer numerator,
+  // and the smallest such distance a collinear-collapsed run can produce is over
+  // the chord (2, 1) — 1 / sqrt(5) = 0.4472135954999579. `douglasPeucker` keeps a
+  // vertex on `dist > tolerance`, so 1/sqrt(5) is itself the first LIVE tolerance
+  // and everything strictly below it is dead. The zone is (0, 1/sqrt(5)).
+  //
+  // Swept on the 4,025 real lattice loops of logo-tux at 16 colours, with
+  // `latticeSimplify` off so Douglas-Peucker is the only simplifier:
+  //
+  //   tolerance                                curves    lines
+  //   0.001 … 0.44721359549995787 (1 ulp below)     0   21,093
+  //   0.4472135954999579  (= 1/sqrt(5))         3,697   17,263
+  //   0.5                                       4,182   16,770
+  //
+  // One ulp is the whole cliff. 0.4 is not sitting near an edge, it is sitting
+  // 0.047 below one — which is why every value from 0.001 to 0.44 is the same
+  // file, and why raising the default to 0.45 rather than 0.4472136 was never the
+  // meaningful part of the change.
   //
   // Raising it to 0.45 wakes the fitter and is worse on both axes at once:
   // -0.03 dB and +44% bytes (68,328 -> 98,189 on the real corpus). Accuracy then
@@ -4814,6 +4874,7 @@ var TRACE_DEFAULTS = {
   polygonOnly: false,
   primitives: false,
   primitiveError: 1,
+  primitiveMinExtent: 12,
   optimize: true,
   // 1, not 2. Sub-pixel refinement moves coordinates off the integer lattice,
   // and it is the lattice that compresses — measured on 25 real logos, turning
@@ -4828,20 +4889,15 @@ var TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
-  // On by default at 0.02, which is the value the two failure modes agree on.
-  //
-  // It was off while the runt-absorption pass absorbed every small region, which
-  // cost logo-tux 0.9884 -> 0.9570 SSIM and visibly eroded its silhouette. Once
-  // absorption was restricted to runts that are INSIDE a region rather than on a
-  // boundary between two — grain, not anti-aliasing fringe — the cost collapsed:
-  //
-  //   logo-tux   0.9884 -> 0.9731   17.6 KB -> 14.4 KB
-  //   sticker    0.9620 -> 0.9556   11.1 KB -> 9.9 KB
-  //
-  // 0.015 and 0.006 of SSIM for 18% and 11% of the bytes, and the segmentation is
-  // what lets the lattice simplifier run at all on a noisy source, because it
-  // establishes the precondition rather than merely passing a test for it.
   // OFF by default, tried twice and rejected twice on measurement.
+  //
+  // A second block used to sit above this one opening "On by default at 0.02",
+  // with its own table of runt-absorption figures. It never described shipped
+  // behaviour: `segment` was introduced at 0 (#85) and has never held another
+  // value here — `git log -S` finds no commit that set it otherwise. Two adjacent
+  // comments disagreeing about a default is worse than either alone, so the one
+  // the code contradicts is gone. 0.02 is what the `clean` preset asks for, and
+  // that is where the case for it belongs.
   //
   // It is a genuine win on some content and a loss on other content, and the
   // published photo row is the case that decides it. On a REAL photograph
@@ -4908,8 +4964,18 @@ function trace(source, opts = {}) {
     ...clean
   };
   if (o.tolerance === 0) o.subpixel = false;
+  const notes = [];
   if (o.subpixel && o.extendUnder) {
     o.subpixel = false;
+    notes.push(
+      'Sub-pixel refinement was turned off because --extend-under was requested: those loops bound a union of colour classes, so "inside" cannot be decided from the class map, which is what refinement needs.'
+    );
+  }
+  if (o.subpixel && ((o.regularise ?? 0) > 0 || o.mosaic === true)) {
+    const cause = o.mosaic === true ? "the `mosaic` option, which --preset clean turns on, fits each shared boundary once and assembles every face from those arcs" : "the `regularise` option smooths each shared boundary once with junctions pinned";
+    notes.push(
+      `Sub-pixel refinement had no effect on this trace: ${cause}, and that shared geometry replaces the refined vertices for every loop. The output is byte-identical with subpixel off; refinement applies only where each region is fitted from its own copy of the boundary.`
+    );
   }
   const report = (stage, pct) => {
     if (o.signal?.aborted) throw new Error("Trace aborted.");
@@ -5094,11 +5160,24 @@ function trace(source, opts = {}) {
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     latticeBand: opts.latticeBand,
-    // Deliberately NOT forwarded when shared-boundary regularisation ran: that
-    // already smoothed every run once, with junctions pinned. A second closed-loop
-    // pass in the fitter would move those junctions and undo the agreement the
+    // Always 0, and the `shareBoundaries ? 0 : o.regularise` that used to stand
+    // here could not have been anything else. `shareBoundaries` is DEFINED as
+    // `(o.regularise ?? 0) > 0`, so the true arm passed 0 and the false arm passed
+    // a value that is 0 or less — and `regulariseClosed` returns immediately on
+    // `passes <= 0`. Instrumented on logo-tux: across `regularise` 0, 2 and 6, all
+    // 509 `fitLoop` calls arrive with `regularise: 0` and `regulariseClosed` is
+    // entered 0 times. The branch was a decision the code had already made.
+    //
+    // The reason it is 0 is unchanged and still right: shared-boundary smoothing
+    // already smoothed every run once with junctions pinned, and a second
+    // closed-loop pass here would move those junctions and undo the agreement the
     // first pass exists to create.
-    regularise: shareBoundaries ? 0 : o.regularise,
+    //
+    // `regulariseClosed` is NOT dead code. `fitFaces` (arcs.ts) routes
+    // junction-free closed arcs to it with at least 2 passes — 6 of them under
+    // `--preset clean`, 17 at `regularise: 6` — it is simply not reachable from
+    // this options object.
+    regularise: 0,
     regulariseBand: o.regulariseBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
@@ -5129,13 +5208,24 @@ function trace(source, opts = {}) {
     for (const group of ownLoops) for (const loop of group) classLoops.push(loop);
     for (const c of components) loopsByComponent[c] = EMPTY_LOOPS;
     const eligible = o.primitives && classLoops.length > 0 && classLoops.every((l) => l.signedArea > 0);
-    const prims = classLoops.map((l) => eligible ? detectPrimitive(l.pts, { maxError: o.primitiveError }) : null);
+    const fitFor = (loop) => {
+      const shared = sharedGeometry?.get(loop);
+      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
+      return mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
+    };
+    const fittedByLoop = eligible ? classLoops.map(fitFor) : [];
+    const prims = classLoops.map((l, i) => {
+      if (!eligible) return null;
+      const f = fittedByLoop[i];
+      return detectPrimitive(f ? flattenPath(f) : l.pts, {
+        maxError: o.primitiveError,
+        minExtent: o.primitiveMinExtent
+      });
+    });
     const path = new PathBuilder(o.precision);
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue;
-      const shared = sharedGeometry?.get(loop);
-      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
-      const fitted = mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
+      const fitted = eligible ? fittedByLoop[i] : fitFor(loop);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
@@ -5173,7 +5263,8 @@ function trace(source, opts = {}) {
     shapes: doc.childCount,
     colors: classArea.size,
     regions,
-    despeckled
+    despeckled,
+    notes
   };
 }
 function traceSeparations(source, opts = {}) {

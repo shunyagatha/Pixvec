@@ -942,17 +942,37 @@ async function runVectorExport(
   }
   const source = await loadRaster(bytes);
 
-  // Only DXF reads the primitive annotation — a CIRCLE entity beats a 12-gon
-  // for anything that will be cut. The EPS and PDF writers ignore it entirely
-  // and emit the flattened polygon either way, so computing it for them is work
-  // whose result is discarded.
+  // ALL THREE read the primitive annotation, and the set is right. This comment
+  // used to say only DXF did, that EPS and PDF "ignore it entirely and emit the
+  // flattened polygon either way", and then list all three anyway — so the code
+  // and the reason above it disagreed. The code was correct. Measured on a
+  // 200x200 black disc on white, `primitives` off -> on:
   //
-  // It is not cheap work. Detection scales with region count: 11 ms -> 29 ms on
-  // a 200x200 disc, and on a photograph it dominates the export, because every
-  // region gets a circle/ellipse/rect fit attempted against it.
+  //   dxf  9,911 -> 255 B   (2 CIRCLE entities)
+  //   eps 10,654 -> 326 B   (2 `arc` operators — eps.ts:47)
+  //   pdf  7,175 -> 853 B   (four cubics per circle — pdf.ts:86)
+  //
+  // PDF has no arc operator, so it serialises both forms and keeps the shorter;
+  // that is still consuming the annotation, and on a disc it is 8.4x smaller.
+  //
+  // WHAT IT COSTS IS THE PART WORTH RE-EXAMINING, and the old figure does not
+  // reproduce. On a 200x200 disc detection is near-free — 4.19 -> 4.42 ms per
+  // `traceGeometry` call over 20 runs, not the 11 -> 29 recorded here. On real
+  // artwork it dominates, far more than the old note implied:
+  //
+  //   logo-tux   265x314     14.6 ->    388.2 ms   (26.7x)
+  //   alpha-dice 800x600     53.6 ->  3,348.6 ms   (62.4x)
+  //   photo-cat 1600x1598   779.0 -> 17,383.9 ms   (22.3x)
+  //
+  // and on those it buys almost nothing, because almost nothing in a photograph
+  // is a circle: logo-tux EPS 147,707 -> 147,337 B (0.25%), PDF byte-identical.
+  // So the honest state is a synthetic-versus-real split, unresolved: the disc
+  // case is a 32x win and the photograph case is a 22x slowdown for 0%. An
+  // open question, not a defect — deciding it needs a rule about when to attempt
+  // detection at all, which is `primitives`' problem rather than this set's.
   //
   // Written as the set of formats that consume it rather than as `ext !== …`,
-  // so that teaching EPS to emit `arc` is a one-word change here.
+  // so that a fourth exporter learning to emit arcs is a one-word change here.
   const PRIMITIVE_AWARE = new Set(['.dxf', '.eps', '.pdf']);
   const geometry = traceGeometry(source.image, {
     colors: o.colors,

@@ -5,7 +5,7 @@ import { selectiveBlur } from '../preprocess.js';
 import { assertRasterImage, type RasterImage, type Rgba } from '../types.js';
 import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, type SpeckleScope } from './components.js';
 import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } from './contour.js';
-import { fitLoop, type FitOptions } from './fit.js';
+import { fitLoop, flattenPath, type FitOptions, type FittedPath } from './fit.js';
 import { refineLoop } from './subpixel.js';
 import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
@@ -77,6 +77,25 @@ export interface TraceOptions {
   primitives?: boolean;
   /** Residual budget for {@link primitives}, in pixels. Default 1.0. */
   primitiveError?: number;
+  /**
+   * Smallest extent, in pixels, a region may have and still be promoted to a
+   * primitive. Default 12.
+   *
+   * Not a recognisability floor — a 4px disc is perfectly recognisable. It is a
+   * BYTE floor, and it exists because promotion is not free: a primitive leaves
+   * the class's shared `<path>` and becomes its own element, repeating
+   * `fill`/`fill-opacity`/`stroke`/`stroke-width` — 60 to 110 bytes — where
+   * inside the path it cost only its `d`. Below roughly this size the element
+   * costs more than the geometry it replaced.
+   *
+   * Measured over the nine-subject corpus at `clean`: with no floor, promotion
+   * fires 41 times on alpha-dice and 118 on photo-jpeg-artifacts, every one of
+   * them a speck of radius 1.3-3.6 px, and the corpus grows 0.19% while SSIM
+   * falls on six subjects. At 12 the corpus SHRINKS 0.10%, seven of nine
+   * subjects come back byte-identical, and a chart of real primitives keeps
+   * every promotion it had (13 on the dashboard fixture, -23.3% bytes).
+   */
+  primitiveMinExtent?: number;
   /** Merge adjacent curves where one fits both. Default on. */
   optimize?: boolean;
   /** Error budget for a curve merge. Defaults to `fitError`. */
@@ -373,10 +392,16 @@ export interface TraceOptions {
    * displacement is exactly zero, so pixel art and sprites are byte-identical
    * either way.
    *
-   * Cannot be combined with `extendUnder`, and the combination is now an error
-   * rather than a silent downgrade: those loops bound a *union* of classes rather
-   * than one class's own pixels, so "inside" cannot be decided from the class map.
-   * Asking for both used to return output byte-identical to asking for neither.
+   * Cannot be combined with `extendUnder`: those loops bound a *union* of classes
+   * rather than one class's own pixels, so "inside" cannot be decided from the
+   * class map. `extendUnder` wins, and the trace returns a note saying so — this
+   * used to claim the combination was "an error", which it has not been since
+   * `subpixel` became a default and throwing would have blamed a caller who never
+   * asked for it. Asking for both used to return output byte-identical to asking
+   * for neither, with nothing said at all.
+   *
+   * Superseded the same way, and for a longer time without a word, by
+   * {@link regularise} and {@link mosaic} — see the note block in `trace`.
    */
   subpixel?: boolean;
   /**
@@ -430,6 +455,20 @@ export interface TraceOutput {
   regions: number;
   /** Regions absorbed by the despeckle pass. */
   despeckled: number;
+  /**
+   * What the resolver decided on the caller's behalf, in sentences.
+   *
+   * This exists because the alternative kept being chosen by accident. Two
+   * options in this file supersede `subpixel`, which is a DEFAULT — so a caller
+   * who asks for one of them and nothing else has refinement removed without ever
+   * having mentioned it. Before this channel there was nowhere to say so:
+   * `TraceOutput` carried no options back, so the older claim that a downgrade was
+   * "not silent, the caller gets `subpixel: false` back in the resolved options"
+   * described a return value that did not exist.
+   *
+   * `vectorize` forwards these into `VectorizeResult.notes`, which the CLI prints.
+   */
+  notes: string[];
 }
 
 export const TRACE_DEFAULTS = {
@@ -446,14 +485,36 @@ export const TRACE_DEFAULTS = {
   // tolerance buys — few smooth curves on a big arc — is preserved by the
   // `logo`/`lineart` presets, which keep a higher value on purpose.
   //
-  // **0.4 is the top of a flat dead zone, not an optimum, and it is kept anyway.**
-  // A 131-setting sweep found that every tolerance in (0, 0.44] produces
+  // **0.4 is inside a flat dead zone, not an optimum, and it is kept anyway.**
+  // A 131-setting sweep found that every tolerance in the zone produces
   // *byte-identical* output — same sha256, 34,084 B, 12,603 segments, zero curves —
   // and that `cornerAngle` and `fitError` are unreachable there: all six
   // cornerAngle values from 45 to 135 give the same sha at tolerance 0.4, and the
   // instrumented fitter shows why. Every one of 12,879 loops takes the
   // `fitterIsDead` shortcut, Douglas-Peucker removes 0.0% of 63,338 lattice
   // points, and `findBreakpoints` is called **zero** times.
+  //
+  // THE ZONE'S TOP IS NOT 0.44. That was this comment rounding a measurement off,
+  // and the real bound is arithmetic rather than empirical: crack-following emits
+  // axis-aligned unit steps, so an interior lattice vertex that is not collinear
+  // with the chord is |cross| / |chord| away from it with an integer numerator,
+  // and the smallest such distance a collinear-collapsed run can produce is over
+  // the chord (2, 1) — 1 / sqrt(5) = 0.4472135954999579. `douglasPeucker` keeps a
+  // vertex on `dist > tolerance`, so 1/sqrt(5) is itself the first LIVE tolerance
+  // and everything strictly below it is dead. The zone is (0, 1/sqrt(5)).
+  //
+  // Swept on the 4,025 real lattice loops of logo-tux at 16 colours, with
+  // `latticeSimplify` off so Douglas-Peucker is the only simplifier:
+  //
+  //   tolerance                                curves    lines
+  //   0.001 … 0.44721359549995787 (1 ulp below)     0   21,093
+  //   0.4472135954999579  (= 1/sqrt(5))         3,697   17,263
+  //   0.5                                       4,182   16,770
+  //
+  // One ulp is the whole cliff. 0.4 is not sitting near an edge, it is sitting
+  // 0.047 below one — which is why every value from 0.001 to 0.44 is the same
+  // file, and why raising the default to 0.45 rather than 0.4472136 was never the
+  // meaningful part of the change.
   //
   // Raising it to 0.45 wakes the fitter and is worse on both axes at once:
   // -0.03 dB and +44% bytes (68,328 -> 98,189 on the real corpus). Accuracy then
@@ -502,6 +563,7 @@ export const TRACE_DEFAULTS = {
   polygonOnly: false,
   primitives: false,
   primitiveError: 1.0,
+  primitiveMinExtent: 12,
   optimize: true,
   // 1, not 2. Sub-pixel refinement moves coordinates off the integer lattice,
   // and it is the lattice that compresses — measured on 25 real logos, turning
@@ -516,20 +578,15 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
-  // On by default at 0.02, which is the value the two failure modes agree on.
-  //
-  // It was off while the runt-absorption pass absorbed every small region, which
-  // cost logo-tux 0.9884 -> 0.9570 SSIM and visibly eroded its silhouette. Once
-  // absorption was restricted to runts that are INSIDE a region rather than on a
-  // boundary between two — grain, not anti-aliasing fringe — the cost collapsed:
-  //
-  //   logo-tux   0.9884 -> 0.9731   17.6 KB -> 14.4 KB
-  //   sticker    0.9620 -> 0.9556   11.1 KB -> 9.9 KB
-  //
-  // 0.015 and 0.006 of SSIM for 18% and 11% of the bytes, and the segmentation is
-  // what lets the lattice simplifier run at all on a noisy source, because it
-  // establishes the precondition rather than merely passing a test for it.
   // OFF by default, tried twice and rejected twice on measurement.
+  //
+  // A second block used to sit above this one opening "On by default at 0.02",
+  // with its own table of runt-absorption figures. It never described shipped
+  // behaviour: `segment` was introduced at 0 (#85) and has never held another
+  // value here — `git log -S` finds no commit that set it otherwise. Two adjacent
+  // comments disagreeing about a default is worse than either alone, so the one
+  // the code contradicts is gone. 0.02 is what the `clean` preset asks for, and
+  // that is where the case for it belongs.
   //
   // It is a genuine win on some content and a loss on other content, and the
   // published photo row is the case that decides it. On a REAL photograph
@@ -664,6 +721,9 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // earning its keep: nothing else in the suite states that contract.
   if (o.tolerance === 0) o.subpixel = false;
 
+  /** Downgrades the caller did not ask for, reported rather than left to be found. */
+  const notes: string[] = [];
+
   if (o.subpixel && o.extendUnder) {
     // `extendUnder` wins, and this is no longer an error.
     //
@@ -679,6 +739,54 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // classes, so "inside" cannot be decided from the class map, which is
     // exactly what coverage refinement needs.
     o.subpixel = false;
+    notes.push(
+      'Sub-pixel refinement was turned off because --extend-under was requested: ' +
+        'those loops bound a union of colour classes, so "inside" cannot be decided ' +
+        'from the class map, which is what refinement needs.',
+    );
+  }
+
+  // BOTH SHARED-BOUNDARY PATHS SUPERSEDE `subpixel`, and neither used to say so.
+  //
+  // This is the same defect class as the `extendUnder` clash above — a silent
+  // downgrade of a default — and it was harder to see, because the decision is not
+  // made here. It emerges 300 lines below at `const refined =`, where
+  // `sharedGeometry` wins the `??`. Measured on logo-tux, with `latticeSimplify`
+  // pinned so only refinement varies, `subpixel` on and off give the SAME sha256
+  // at `regularise` 2 and at 4, while at `regularise: 0` they differ by 81,097
+  // against 27,473 bytes. The flag stops meaning anything, silently.
+  //
+  //  - Under `regularise > 0` the refinement never runs at all: `shared ?? …`
+  //    short-circuits, so `refineLoop` is called 509 times at the default and 0
+  //    times at `regularise: 2`.
+  //  - Under `mosaic` it runs and is thrown away, because every face is assembled
+  //    from arcs that were already fitted once — 166 calls on logo-tux under
+  //    `--preset clean`, about 23 ms of a 277 ms trace, for output byte-identical
+  //    to the same run with `subpixel: false`.
+  //
+  // A note rather than a throw, and rather than forcing `subpixel: false`:
+  //
+  //  - Throwing would blame a caller who only ever typed `--regularise 2`, since
+  //    `subpixel` is on by default. That is exactly the argument that turned the
+  //    `extendUnder` clash above from an error into a downgrade.
+  //  - Clearing the flag would not be neutral either: `latticeSimplify` defaults
+  //    to `!o.subpixel`, so setting it false here silently switches the lattice
+  //    simplifier ON, taking `regularise: 2` on logo-tux from 52,295 to 60,031
+  //    bytes. A message that changed the output would be a worse fix than the
+  //    silence it replaces.
+  //
+  // So the geometry is untouched and the consequence is stated.
+  if (o.subpixel && ((o.regularise ?? 0) > 0 || o.mosaic === true)) {
+    const cause = o.mosaic === true
+      ? 'the `mosaic` option, which --preset clean turns on, fits each shared boundary '
+        + 'once and assembles every face from those arcs'
+      : 'the `regularise` option smooths each shared boundary once with junctions pinned';
+    notes.push(
+      `Sub-pixel refinement had no effect on this trace: ${cause}, and that shared ` +
+        'geometry replaces the refined vertices for every loop. The output is ' +
+        'byte-identical with subpixel off; refinement applies only where each region ' +
+        'is fitted from its own copy of the boundary.',
+    );
   }
 
   // Progress and cancellation share one helper so a stage cannot report itself
@@ -930,11 +1038,24 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     latticeBand: opts.latticeBand,
-    // Deliberately NOT forwarded when shared-boundary regularisation ran: that
-    // already smoothed every run once, with junctions pinned. A second closed-loop
-    // pass in the fitter would move those junctions and undo the agreement the
+    // Always 0, and the `shareBoundaries ? 0 : o.regularise` that used to stand
+    // here could not have been anything else. `shareBoundaries` is DEFINED as
+    // `(o.regularise ?? 0) > 0`, so the true arm passed 0 and the false arm passed
+    // a value that is 0 or less — and `regulariseClosed` returns immediately on
+    // `passes <= 0`. Instrumented on logo-tux: across `regularise` 0, 2 and 6, all
+    // 509 `fitLoop` calls arrive with `regularise: 0` and `regulariseClosed` is
+    // entered 0 times. The branch was a decision the code had already made.
+    //
+    // The reason it is 0 is unchanged and still right: shared-boundary smoothing
+    // already smoothed every run once with junctions pinned, and a second
+    // closed-loop pass here would move those junctions and undo the agreement the
     // first pass exists to create.
-    regularise: shareBoundaries ? 0 : o.regularise,
+    //
+    // `regulariseClosed` is NOT dead code. `fitFaces` (arcs.ts) routes
+    // junction-free closed arcs to it with at least 2 passes — 6 of them under
+    // `--preset clean`, 17 at `regularise: 6` — it is simply not reachable from
+    // this options object.
+    regularise: 0,
     regulariseBand: o.regulariseBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
@@ -1000,25 +1121,52 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // fixture and then never fire on a real chart.
     const eligible = o.primitives && classLoops.length > 0
       && classLoops.every((l) => l.signedArea > 0);
-    const prims = classLoops.map((l) =>
-      eligible ? detectPrimitive(l.pts, { maxError: o.primitiveError }) : null);
 
-    const path = new PathBuilder(o.precision);
-    for (const [i, loop] of classLoops.entries()) {
-      if (prims[i]) continue; // emitted as its own element below
-      // `!rankOfClass` is belt-and-braces: the subpixel + extendUnder combination
-      // is refused above, so this can only be false when subpixel is off anyway.
-      // It stays because the two conditions are independent and a future caller of
-      // extendedLoops should not silently start refining a union boundary.
-      // Shared-boundary geometry wins where it exists: it is the only version both
-      // neighbours agree on, and the per-loop paths below cannot produce that.
+    // The geometry a loop finally becomes, computed once per loop.
+    //
+    // `!rankOfClass` is belt-and-braces: the subpixel + extendUnder combination
+    // is refused above, so this can only be false when subpixel is off anyway.
+    // It stays because the two conditions are independent and a future caller of
+    // extendedLoops should not silently start refining a union boundary.
+    // Shared-boundary geometry wins where it exists: it is the only version both
+    // neighbours agree on, and the per-loop paths below cannot produce that.
+    // Under `mosaic` the face was already assembled from arcs that were each
+    // fitted once, so re-fitting here would throw away the agreement.
+    const fitFor = (loop: Loop): FittedPath | null => {
       const shared = sharedGeometry?.get(loop);
       const refined = shared ?? (o.subpixel && !rankOfClass
         ? refineLoop(loop, img, classes, cls).pts
         : loop.pts);
-      // Under `mosaic` the face was already assembled from arcs that were each
-      // fitted once, so re-fitting here would throw away the agreement.
-      const fitted = mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
+      return mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
+    };
+
+    // Ask the primitive fitters about the curve that will actually be EMITTED,
+    // not about the lattice staircase behind it.
+    //
+    // Crack-following walks pixel corners, so a rasterised disc arrives as a
+    // staircase whose worst vertex sits 1.16-1.44 px off the disc it came from —
+    // above any residual budget that a false positive would also have to clear.
+    // Judging the fitted path instead measures the substitution being proposed:
+    // "how far is the curve I am about to write from this circle", which is the
+    // question the trade actually turns on.
+    //
+    // Held in an array rather than recomputed because emission below needs the
+    // same object; only built when primitives are on, so the default path keeps
+    // fitting one loop at a time.
+    const fittedByLoop: Array<FittedPath | null> = eligible ? classLoops.map(fitFor) : [];
+    const prims = classLoops.map((l, i) => {
+      if (!eligible) return null;
+      const f = fittedByLoop[i];
+      return detectPrimitive(f ? flattenPath(f) : l.pts, {
+        maxError: o.primitiveError,
+        minExtent: o.primitiveMinExtent,
+      });
+    });
+
+    const path = new PathBuilder(o.precision);
+    for (const [i, loop] of classLoops.entries()) {
+      if (prims[i]) continue; // emitted as its own element below
+      const fitted = eligible ? fittedByLoop[i] : fitFor(loop);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
@@ -1076,6 +1224,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     colors: classArea.size,
     regions,
     despeckled,
+    notes,
   };
 }
 

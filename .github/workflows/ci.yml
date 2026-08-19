@@ -122,6 +122,58 @@ jobs:
       - name: Scale-fidelity frontier (reported, not gated)
         run: npm run bench:scale
 
+  # `--preset clean` is the one preset no gate could see. It is deliberately not
+  # faithful — it redraws flat artwork as smooth filled faces — so SSIM scores it
+  # BELOW plain `auto` on the same image (0.9168 against 0.9913 on logo-tux) and
+  # every fidelity check this repo owns is pointed the wrong way for it.
+  #
+  # That is not a theoretical gap. v2.1.0 shipped `clean` emitting ZERO curve
+  # commands: the crack-following lattice cannot deviate from a chord by less
+  # than 1/sqrt(5) = 0.4472, that is above the 0.4 tolerance, so Douglas-Peucker
+  # removed nothing, the fitter was declared dead on every loop and never ran.
+  # A whole release, and nothing failed, because nothing measured the shape of
+  # the output — only its fidelity to the input.
+  #
+  # So this job gates structure: curve fraction, boundary pixels per anchor,
+  # whether neighbouring faces agree to the digit about the edge between them,
+  # and the counts and bytes those could otherwise be bought with. SSIM is gated
+  # too, as a floor — without one, every structural axis is won outright by
+  # emitting a single ellipse.
+  #
+  # It fails on movement in EITHER direction. "Better" is not a property of a
+  # number here: a rising curve fraction is the goal on the `petals` subject and
+  # a defect on `keycap`, which is rectangles and should stay at 0%. And a
+  # one-sided gate whose baseline is never refreshed slowly loses the ability to
+  # fail at all. Refreshing baselines/structure.json is part of making the change.
+  #
+  # One platform, on purpose. The subjects are synthesised in the script (corpus/
+  # is gitignored and holds paid third-party output, so no gate could ever depend
+  # on it), the tracer returns byte-identical SVG for identical input — the
+  # script re-runs a subject and reports `determinism` to check that claim rather
+  # than assume it — and the two figures that could drift across machines are
+  # SSIM, which goes through the renderer, and gzip, which goes through zlib.
+  structure:
+    name: Structure gate (--preset clean)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the engine
+        run: npm run build
+
+      - name: Report the structure
+        run: npm run structure
+
+      - name: Compare against the committed baseline
+        run: npm run structure:check
+
   # The plugin's dist/ is gitignored, so the sandbox tests skip in the matrix
   # above rather than failing every contributor who has not built an extension
   # they are not touching. This job is what stops that skip becoming a place for

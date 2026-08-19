@@ -47,6 +47,21 @@ import type { Point } from '../types.js';
  * Measured over the eight-subject corpus at `clean`'s pre-passes: 0 unpaired out
  * of 15,516 interior arcs on alpha-dice, 2,185 on logo-tux and 31,212 on
  * photo-motorcycles, with every face rebuilding exactly.
+ *
+ * SPLITTING AT EVERY JUNCTION LOOKS WASTEFUL, AND MERGING BACK IS NOT AVAILABLE.
+ * An interior arc is drawn by both faces and cannot cost either of them less than
+ * one segment, so the arc count puts a hard floor under the emitted total and the
+ * obvious economy is to join two consecutive arcs into one. That only stays
+ * face-independent when both arcs separate the SAME region pair — otherwise the
+ * neighbour across the junction still splits there and the two sides stop
+ * agreeing, which is the tearing this whole file exists to prevent.
+ *
+ * But an arc ends precisely WHERE the neighbour changes, so a same-pair join needs
+ * the neighbour to change and change back: a degree-4 saddle. Measured over the
+ * corpus, 1,469 of 169,268 consecutive joins qualify — 0.87%, and **0 of 4,409 on
+ * logo-tux**, the flattest subject and the one this preset is aimed at. The lever
+ * is not merely rare, it is structurally almost absent. Segment economy on a
+ * mosaic lives in `optimizeError`; do not spend the effort here again.
  */
 
 /** One boundary run, stored once and referenced by the two faces that share it. */

@@ -271,7 +271,41 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // was worth checking whether that was the advantage; swept at 8, 10, 12 and 16
   // it is an ordinary size-for-fidelity trade and not a free win — mean SSIM over
   // eight subjects runs 0.7406 (16), 0.7357 (12), 0.7327 (10), 0.7316 (8).
-  clean: { colors: 16, minArea: 4, smooth: 1, segment: 0.02, mosaic: true, strokeWidth: 1 },
+  //
+  // `optimizeError: 0.75` — the merge pass was inert, and not for the reason its
+  // own docstring gave. fit.ts reads `opts.optimizeError ?? opts.fitError`, so
+  // `clean` inherited 0.4 and a merged curve had to be no worse than a freshly
+  // fitted one. Instrumented, it accepted a fraction of the merges it attempted.
+  // Giving it its own budget, corpus-wide over eight subjects:
+  //
+  //   value   segments   curve%      raw      gzip   mean SSIM
+  //    0.4      97,117    67.5%  1,485,348  508,628   0.74064
+  //    0.70     85,104    63.1%  1,272,581  453,800   0.73951
+  //    0.75     83,296    62.3%  1,239,972  444,371   0.73940
+  //    0.80     81,556    61.6%  1,208,231  434,582   0.73899
+  //    0.90     77,930    59.8%  1,140,813  417,131   0.73834
+  //
+  // THERE IS NO PEAK, and an earlier version of this note claimed one. Corpus
+  // mean SSIM falls monotonically across the whole sweep; logo-tux alone reads
+  // 0.9168 / 0.9173 / 0.9174 / 0.9173 / 0.9166 at 0.4 / 0.70 / 0.75 / 0.80 / 0.90,
+  // which is a plateau one ten-thousandth wide, not an optimum — 0.80 matches it
+  // while being 3.7% smaller. So 0.75 is a CHOSEN point on a smooth trade and
+  // anything in 0.70-0.85 is defensible. It is picked because it takes 74% of the
+  // segment gap to the rival (1,714 -> 1,444 on logo-tux) while keeping curve
+  // share above 72%, which is the property this preset exists to raise.
+  //
+  // WHAT IT COSTS. Curve share, and by arithmetic rather than by anything going
+  // wrong: merging two curves into one removes one from the numerator and one
+  // from the denominator, which lowers any share above 50%. Lines do NOT rise —
+  // they fall corpus-wide, so nothing is being flattened into a straight segment.
+  // SSIM falls on seven of eight subjects, worst -0.0044 on photo-jpeg-artifacts.
+  // logo-tux rises by 0.0006 and that is not worth quoting: a smoother curve
+  // landing nearer the antialiased original explains it at least as well as any
+  // gain in accuracy.
+  clean: {
+    colors: 16, minArea: 4, smooth: 1, segment: 0.02,
+    mosaic: true, strokeWidth: 1, optimizeError: 0.75,
+  },
   // `photo` carries no minArea/tolerance/cornerAngle overrides on purpose. It
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake
   // `autoTracePreset` documents having removed — and `npm run compare` caught
@@ -1564,6 +1598,9 @@ function traceResult(
   notes: string[],
   report: QualityReport | undefined,
 ): VectorizeResult {
+  // The tracer's own notes first: they describe what it did to the options this
+  // function is about to report as `settled`, so they read in the right order.
+  notes.push(...out.notes);
   if (out.despeckled > 0) {
     notes.push(`Absorbed ${out.despeckled} speck${out.despeckled === 1 ? '' : 's'} below --min-area.`);
   }
