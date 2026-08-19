@@ -2475,6 +2475,97 @@ function B2(t) {
 function B3(t) {
   return t * t * t;
 }
+function regulariseOpen(px, py, n2, band, passes) {
+  if (n2 < 3 || passes <= 0 || band <= 0) return;
+  const ox = Float64Array.from(px);
+  const oy = Float64Array.from(py);
+  const tx = new Float64Array(n2);
+  const ty = new Float64Array(n2);
+  const band2 = band * band;
+  for (let pass = 0; pass < passes; pass++) {
+    tx[0] = px[0];
+    ty[0] = py[0];
+    tx[n2 - 1] = px[n2 - 1];
+    ty[n2 - 1] = py[n2 - 1];
+    for (let i = 1; i < n2 - 1; i++) {
+      tx[i] = (px[i] + (px[i - 1] + px[i + 1]) / 2) / 2;
+      ty[i] = (py[i] + (py[i - 1] + py[i + 1]) / 2) / 2;
+    }
+    for (let i = 1; i < n2 - 1; i++) {
+      let dx = tx[i] - ox[i];
+      let dy = ty[i] - oy[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > band2) {
+        const k = band / Math.sqrt(d2);
+        dx *= k;
+        dy *= k;
+      }
+      px[i] = ox[i] + dx;
+      py[i] = oy[i] + dy;
+    }
+  }
+}
+function centerTangentOpen(px, py, n2, i) {
+  const k = Math.max(1, Math.min(TANGENT_WINDOW, n2 - 1));
+  const before = Math.max(0, i - k);
+  const after = Math.min(n2 - 1, i + k);
+  return normalize(px[after] - px[before], py[after] - py[before]);
+}
+function fitOpen(pts, opts) {
+  const n2 = pts.length / 2;
+  if (n2 < 2) return null;
+  const px = new Float64Array(n2);
+  const py = new Float64Array(n2);
+  for (let i = 0; i < n2; i++) {
+    px[i] = pts[i * 2];
+    py[i] = pts[i * 2 + 1];
+  }
+  if (opts.regularise && opts.regularise > 0) {
+    regulariseOpen(px, py, n2, opts.regulariseBand ?? 0.75, opts.regularise);
+  }
+  const start = { x: px[0], y: py[0] };
+  if (n2 === 2) return { start, segments: [{ kind: "line", x: px[1], y: py[1] }] };
+  const interior = [];
+  douglasPeucker(px, py, 0, n2 - 1, opts.tolerance, interior, (i) => i);
+  const anchors = [0, ...interior, n2 - 1];
+  if (anchors.length === 2) {
+    return { start, segments: [{ kind: "line", x: px[n2 - 1], y: py[n2 - 1] }] };
+  }
+  const threshold = Math.cos(opts.cornerAngle * (Math.PI / 180));
+  const breaks = [{ index: 0, corner: true }];
+  for (let a = 1; a < anchors.length - 1; a++) {
+    const prev = anchors[a - 1], cur = anchors[a], next = anchors[a + 1];
+    const ax = px[cur] - px[prev], ay = py[cur] - py[prev];
+    const bx = px[next] - px[cur], by = py[next] - py[cur];
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    if (la === 0 || lb === 0) continue;
+    if ((ax * bx + ay * by) / (la * lb) < threshold) breaks.push({ index: cur, corner: true });
+  }
+  breaks.push({ index: n2 - 1, corner: true });
+  const segments = [];
+  for (let b = 0; b < breaks.length - 1; b++) {
+    const startIdx = breaks[b].index;
+    const endIdx = breaks[b + 1].index;
+    const count2 = endIdx - startIdx + 1;
+    if (count2 < 2) continue;
+    const cx = new Float64Array(count2);
+    const cy = new Float64Array(count2);
+    for (let i = 0; i < count2; i++) {
+      cx[i] = px[startIdx + i];
+      cy[i] = py[startIdx + i];
+    }
+    const t1 = breaks[b].corner ? leftTangent(cx, cy, 0) : centerTangentOpen(px, py, n2, startIdx);
+    const t2 = breaks[b + 1].corner ? rightTangent(cx, cy, count2 - 1) : negate(centerTangentOpen(px, py, n2, endIdx));
+    const fitted = [];
+    fitCubic(cx, cy, 0, count2 - 1, t1, t2, opts.fitError, fitted);
+    const optimized = opts.optimize === false ? fitted : optimizeCurves(cx, cy, fitted, opts.optimizeError ?? opts.fitError);
+    for (const f of optimized) segments.push(f.segment);
+  }
+  if (segments.length === 0) {
+    return { start, segments: [{ kind: "line", x: px[n2 - 1], y: py[n2 - 1] }] };
+  }
+  return { start, segments };
+}
 
 // src/vectorize/subpixel.ts
 var MIN_CONTRAST_SQ = 3 * 3 * 4;
@@ -2891,6 +2982,182 @@ function regulariseAgreeing(loopsByComponent, labels, width, height, passes, ban
     }
   }
   return geometry;
+}
+
+// src/vectorize/arcs.ts
+function canonical(xs, ys) {
+  const n2 = xs.length;
+  const fwd = [];
+  const rev = [];
+  for (let i = 0; i < n2; i++) {
+    fwd.push(xs[i] + "," + ys[i]);
+    rev.push(xs[n2 - 1 - i] + "," + ys[n2 - 1 - i]);
+  }
+  const f = fwd.join(";");
+  const r = rev.join(";");
+  return f <= r ? { key: f, reversed: false } : { key: r, reversed: true };
+}
+function canonicalClosed(xs, ys) {
+  const n2 = xs.length;
+  let best = 0;
+  for (let i = 1; i < n2; i++) {
+    if (xs[i] < xs[best] || xs[i] === xs[best] && ys[i] < ys[best]) best = i;
+  }
+  const fwd = [];
+  const rev = [];
+  for (let i = 0; i < n2; i++) {
+    const f2 = (best + i) % n2;
+    const r2 = (best - i + n2 * n2) % n2;
+    fwd.push(xs[f2] + "," + ys[f2]);
+    rev.push(xs[r2] + "," + ys[r2]);
+  }
+  const f = fwd.join(";");
+  const r = rev.join(";");
+  return f <= r ? { key: f, reversed: false, start: best } : { key: r, reversed: true, start: best };
+}
+function pair(one, other) {
+  return one <= other ? { a: one, b: other } : { a: other, b: one };
+}
+function decomposeToArcs(loopsByComponent, labels, width, height) {
+  const arcs = [];
+  const faces = /* @__PURE__ */ new Map();
+  const index = /* @__PURE__ */ new Map();
+  for (let comp = 0; comp < loopsByComponent.length; comp++) {
+    for (const loop of loopsByComponent[comp] ?? []) {
+      const os = loop.otherSide;
+      if (!os) throw new Error("decomposeToArcs needs otherSide; trace with splitAtJunctions");
+      const n2 = loop.pts.length / 2;
+      const px = (i2) => loop.pts[i2 * 2];
+      const py = (i2) => loop.pts[i2 * 2 + 1];
+      const isJunction = new Uint8Array(n2);
+      let junctionCount = 0;
+      for (let i2 = 0; i2 < n2; i2++) {
+        const prev = os[(i2 - 1 + n2) % n2];
+        if (prev !== os[i2] || crackDegree(labels, width, height, px(i2), py(i2)) !== 2) {
+          isJunction[i2] = 1;
+          junctionCount++;
+        }
+      }
+      const refs = [];
+      if (junctionCount === 0) {
+        const xs = [];
+        const ys = [];
+        for (let i2 = 0; i2 < n2; i2++) {
+          xs.push(px(i2));
+          ys.push(py(i2));
+        }
+        const { key, reversed, start: start2 } = canonicalClosed(xs, ys);
+        let id = index.get(key);
+        if (id === void 0) {
+          const pts = new Int32Array(n2 * 2);
+          for (let i2 = 0; i2 < n2; i2++) {
+            const j = reversed ? (start2 - i2 + n2 * n2) % n2 : (start2 + i2) % n2;
+            pts[i2 * 2] = xs[j];
+            pts[i2 * 2 + 1] = ys[j];
+          }
+          id = arcs.length;
+          arcs.push({ pts, ...pair(comp, os[0]), closed: true });
+          index.set(key, id);
+        }
+        refs.push({ arc: id, reversed });
+        faces.set(loop, refs);
+        continue;
+      }
+      let start = 0;
+      while (!isJunction[start]) start++;
+      let i = start;
+      do {
+        const xs = [px(i)];
+        const ys = [py(i)];
+        const other = os[i];
+        let j = (i + 1) % n2;
+        for (; ; ) {
+          xs.push(px(j));
+          ys.push(py(j));
+          if (isJunction[j]) break;
+          j = (j + 1) % n2;
+        }
+        const { key, reversed } = canonical(xs, ys);
+        let id = index.get(key);
+        if (id === void 0) {
+          const pts = new Int32Array(xs.length * 2);
+          for (let k = 0; k < xs.length; k++) {
+            const s = reversed ? xs.length - 1 - k : k;
+            pts[k * 2] = xs[s];
+            pts[k * 2 + 1] = ys[s];
+          }
+          id = arcs.length;
+          arcs.push({ pts, ...pair(comp, other), closed: false });
+          index.set(key, id);
+        }
+        refs.push({ arc: id, reversed });
+        i = j;
+      } while (i !== start);
+      faces.set(loop, refs);
+    }
+  }
+  return { arcs, faces };
+}
+function reversePath(path) {
+  const on = [path.start];
+  for (const s of path.segments) on.push({ x: s.x, y: s.y });
+  const segments = [];
+  for (let i = path.segments.length - 1; i >= 0; i--) {
+    const s = path.segments[i];
+    const target = on[i];
+    if (s.kind === "line") segments.push({ kind: "line", x: target.x, y: target.y });
+    else {
+      segments.push({
+        kind: "curve",
+        x1: s.x2,
+        y1: s.y2,
+        x2: s.x1,
+        y2: s.y1,
+        x: target.x,
+        y: target.y
+      });
+    }
+  }
+  return { start: on[on.length - 1], segments };
+}
+function fitFaces(dec, opts) {
+  const fitted = dec.arcs.map((arc) => {
+    if (!arc.closed) return fitOpen(arc.pts, opts);
+    const loop = fitLoop(arc.pts, opts.closed ?? {
+      tolerance: opts.tolerance,
+      fitError: opts.fitError,
+      cornerAngle: opts.cornerAngle,
+      polygonOnly: false,
+      optimize: opts.optimize,
+      optimizeError: opts.optimizeError,
+      regularise: opts.regularise,
+      regulariseBand: opts.regulariseBand
+    });
+    if (!loop) return null;
+    const last = loop.segments[loop.segments.length - 1];
+    if (last && (last.x !== loop.start.x || last.y !== loop.start.y)) {
+      loop.segments.push({ kind: "line", x: loop.start.x, y: loop.start.y });
+    }
+    return loop;
+  });
+  const out = /* @__PURE__ */ new Map();
+  for (const [loop, refs] of dec.faces) {
+    const segments = [];
+    let start = null;
+    for (const ref of refs) {
+      const base = fitted[ref.arc];
+      if (!base) continue;
+      const piece = ref.reversed ? reversePath(base) : base;
+      if (start === null) start = piece.start;
+      for (const s of piece.segments) segments.push(s);
+    }
+    if (start === null || segments.length === 0) continue;
+    const last = segments[segments.length - 1];
+    if (last.kind === "line" && last.x === start.x && last.y === start.y) segments.pop();
+    if (segments.length === 0) continue;
+    out.set(loop, { start, segments });
+  }
+  return out;
 }
 
 // src/vectorize/quantize.ts
@@ -4596,6 +4863,7 @@ var TRACE_DEFAULTS = {
   segment: 0,
   smooth: 0,
   regularise: 0,
+  mosaic: false,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -4720,6 +4988,7 @@ function trace(source, opts = {}) {
   }
   report("Tracing contours", 55);
   const shareBoundaries = (o.regularise ?? 0) > 0;
+  const mosaic = o.mosaic === true;
   const loopsByComponent = traceComponents(
     comps.labels,
     width,
@@ -4727,7 +4996,7 @@ function trace(source, opts = {}) {
     comps.count,
     o.turnPolicy,
     o.loopBudget,
-    shareBoundaries
+    shareBoundaries || mosaic
   );
   const sharedGeometry = shareBoundaries ? regulariseAgreeing(
     loopsByComponent,
@@ -4737,6 +5006,27 @@ function trace(source, opts = {}) {
     o.regularise ?? 0,
     o.regulariseBand ?? 0.75
   ) : void 0;
+  const mosaicFaces = mosaic ? fitFaces(decomposeToArcs(loopsByComponent, comps.labels, width, height), {
+    tolerance: o.tolerance,
+    fitError: o.fitError,
+    cornerAngle: o.cornerAngle,
+    optimize: o.optimize,
+    optimizeError: o.optimizeError,
+    // `mosaic` implies smoothing, and the floor is not a preference.
+    //
+    // Crack-following emits axis-aligned unit steps only, so an untouched
+    // lattice vertex cannot deviate from a chord by less than 1/sqrt(5) =
+    // 0.4472136 — above the 0.4 tolerance, so Douglas-Peucker removes nothing
+    // and every arc comes out a polygon. Measured on logo-tux: 0 passes gives
+    // 0 curves at 18,297 bytes; one pass gives 306 at 30,606.
+    //
+    // Two rather than one because the second is nearly free and the sweep
+    // flattens immediately after: across passes 1 to 8 at bands 0.5, 0.75 and
+    // 1.0, SSIM spans 0.8740 to 0.8804 and never orders them consistently.
+    // A caller asking for more gets more.
+    regularise: Math.max(o.regularise ?? 0, 2),
+    regulariseBand: o.regulariseBand ?? 0.75
+  }) : void 0;
   const EMPTY_LOOPS = [];
   const extendedLoops = (rank, rankOfClass2) => {
     const mask = new Int32Array(width * height).fill(-1);
@@ -4845,7 +5135,7 @@ function trace(source, opts = {}) {
       if (prims[i]) continue;
       const shared = sharedGeometry?.get(loop);
       const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
-      const fitted = fitLoop(refined, fitOpts);
+      const fitted = mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
       for (const seg of fitted.segments) {
