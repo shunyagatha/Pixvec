@@ -8,6 +8,7 @@ import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } fro
 import { fitLoop, type FitOptions } from './fit.js';
 import { refineLoop } from './subpixel.js';
 import { flattenToSegments } from './merge.js';
+import { smoothPreservingEdges } from './smooth.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -125,6 +126,16 @@ export interface TraceOptions {
   segment?: number;
   /** Regions smaller than this are absorbed after {@link segment}. Default 8. */
   segmentMinRegion?: number;
+  /**
+   * Flatten interiors before quantising, without averaging across a boundary.
+   *
+   * Perona-Malik diffusion, in [0, 1]. 0 (default) skips it. Strength is scaled by
+   * the image's OWN measured interior noise, so a clean logo is barely touched
+   * while a compressed JPEG is smoothed hard — the two cases want opposite
+   * treatment and a constant serves neither. See `smooth.ts` for the five-subject
+   * table this is calibrated against, and for what it explicitly does not do.
+   */
+  smooth?: number;
   /**
    * Simplify boundaries with a quantisation-aware straightness test instead of
    * Douglas–Peucker.
@@ -428,6 +439,7 @@ export const TRACE_DEFAULTS = {
   //   photo-cat   33.89 dB /  462 KB   (base 34.86 /  636)  — 27% smaller
   //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
   segment: 0,
+  smooth: 0,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -575,6 +587,12 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  // Ahead of segmentation and quantisation both: flattening interiors first means
+  // the region finder meets gradients that have already collapsed, and the palette
+  // is not spent on compression noise. See `smooth.ts`.
+  if (o.smooth && o.smooth > 0) {
+    img = smoothPreservingEdges(img, o.smooth);
   }
   // Before quantisation, deliberately: the whole point is that the palette meets
   // regions that are already coherent. See `segment` on TraceOptions.

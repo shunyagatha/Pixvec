@@ -37,7 +37,7 @@ function gzipBytes(svg: string): number {
 
 export type VectorizeModeOption = VectorizeMode | 'auto' | 'lossless';
 
-export type Preset = 'auto' | 'logo' | 'lineart' | 'poster' | 'photo' | 'detailed' | 'pixelart' | 'exact';
+export type Preset = 'auto' | 'logo' | 'lineart' | 'poster' | 'photo' | 'detailed' | 'clean' | 'pixelart' | 'exact';
 
 /**
  * Presets are starting points, not straitjackets — every field stays
@@ -91,6 +91,44 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
     subpixel: true, precision: 1,
   },
   poster: { colors: 32, minArea: 12, tolerance: 0.5, fitError: 0.5, cornerAngle: 80 },
+  // `clean` is the one preset that is not trying to be faithful, and says so.
+  //
+  // It exists for artwork that arrived damaged — a sticker or logo that was flat
+  // colour once, then got shrunk and JPEG'd. Every other preset reproduces that
+  // damage accurately. This one spends `smooth` to collapse the compression noise
+  // and `segment` to make the palette meet coherent regions, and accepts a lower
+  // fidelity score on purpose: scoring against the degraded source rewards
+  // reproducing the degradation.
+  //
+  // Measured at colors 16, filter on versus off:
+  //
+  //   sticker (noisy JPEG)  0.48x bytes, SSIM -0.0435   <- what this is for
+  //   photo-cat             0.64x, -0.1119
+  //   logo-tux (clean PNG)  0.77x, -0.0903              <- and why it self-scales
+  //
+  // The last row is the reason `smooth` is scaled by measured noise instead of
+  // being a constant: on a clean source there is nothing to remove, so a fixed
+  // strength pays real fidelity for almost no reduction. On a clean input this
+  // preset therefore converges toward ordinary `poster` behaviour, which is the
+  // correct answer rather than a compromise.
+  //
+  // What it does NOT do, measured against a paid reconstruction tool on the same
+  // sticker: produce redrawn, flat-filled illustration with bold outlines. That
+  // recovers the artwork behind the raster using priors about illustrations; this
+  // is a filter, and no strength setting turns one into the other — past a point
+  // the subject dissolves instead. Recorded so the name is not read as a promise.
+  // NOTE the fields that are deliberately absent: tolerance, fitError, cornerAngle.
+  // The first version of this preset set them to 0.5/0.5/80 and was WORSE than
+  // `auto` — 547 curve segments that speckled every boundary instead of smoothing
+  // it, at 28,789 bytes. Removing those three overrides leaves 7 curves and 8,797
+  // bytes on the same image, from the same filter.
+  //
+  // That is the same finding as the curves-by-default rejection, arriving a second
+  // time by a different road: the fitter is not short of tolerance, it is being fed
+  // boundaries that are still rough, and fitting a rough boundary produces a rough
+  // curve. Smoothing the IMAGE is what earns curves later; forcing them earlier
+  // just spends bytes on noise. Do not add them back without rendering the result.
+  clean: { colors: 16, minArea: 4, smooth: 1, segment: 0.02 },
   // `photo` carries no minArea/tolerance/cornerAngle overrides on purpose. It
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake
   // `autoTracePreset` documents having removed — and `npm run compare` caught
@@ -955,6 +993,22 @@ function runPixel(
  * keeps the lean default, which is already ideal — and is never sent here anyway,
  * since auto mode routes it to bit-exact pixel output first.
  */
+/**
+ * The refinement half of `autoTracePreset`, on its own.
+ *
+ * Split out so an explicitly chosen preset gets the same measured protection that
+ * `auto` gets. Deliberately returns ONLY the refine fields — palette choice stays
+ * the preset's business, and a preset that names `subpixel` overrides this by
+ * spreading after it.
+ */
+export function refineGateFor(image: RasterImage): { subpixel?: boolean; latticeSimplify?: boolean } {
+  const flat = measureFlatness(image);
+  if (flat.interiorNoise <= REFINE_NOISE_LIMIT) return {};
+  // Both, together. `latticeSimplify` defaults to `!subpixel`, so switching only
+  // subpixel off turns simplification ON and costs MORE bytes than leaving it be.
+  return { subpixel: false, latticeSimplify: false };
+}
+
 function autoTracePreset(img: RasterImage, notes: string[]): TraceOptions {
   const flat = measureFlatness(img, 4096);
 
@@ -1058,8 +1112,26 @@ async function runTrace(
     ? PRESETS[opts.preset as keyof typeof PRESETS]
     : autoTracePreset(input.image, notes);
 
+  // The noise gate applies whichever preset was chosen, not only under `auto`.
+  //
+  // `autoTracePreset` both picks a palette AND decides whether the source is clean
+  // enough for sub-pixel refinement. Selecting any explicit preset replaced the
+  // whole thing, so `--preset poster` on a JPEG got refinement the measurement
+  // exists to prevent — and, because `latticeSimplify` defaults to `!subpixel`
+  // (trace.ts), it got lattice simplification too. On the reported sticker that is
+  // 28,136 bytes against 8,797 for the same preset with the gate applied.
+  //
+  // Same shape as the `--no-subpixel` defect: a measured decision that reached one
+  // entry point and not the others. It sits BEFORE the preset spread, so a preset
+  // that states an opinion still wins — `logo` and `lineart` set `subpixel: true`
+  // deliberately, and that is respected.
+  const refineGate = opts.preset && opts.preset !== 'auto' && opts.preset in PRESETS
+    ? refineGateFor(input.image)
+    : {};
+
   const base: TraceOptions = {
     ...TRACE_DEFAULTS,
+    ...refineGate,
     // Ahead of the spreads so a caller can still pass its own, or null to opt
     // out. Without it an oversized image ends the process with a V8 heap dump
     // instead of a sentence naming three ways forward.
