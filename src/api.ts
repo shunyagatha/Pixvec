@@ -509,6 +509,40 @@ export function measureFlatness(img: RasterImage, colorCap = 4096): Flatness {
  */
 const REFINE_NOISE_LIMIT = 0.3;
 
+// RETUNE ATTEMPTED AND REJECTED, and the reason is a corpus flip worth keeping.
+//
+// `bench-scale` on its built-in synthetic set says sub-pixel refinement is worth
+// 3.91 dB AND 30% fewer bytes (20.87 against 16.96 at 3.902x, 20,180 B against
+// 28,690). Since this limit turns refinement off on most real artwork — logo-tux
+// measures 0.653, vector-tiger 0.456 — that looked like the limit was costing
+// nearly 4 dB on exactly the pictures it was built for, and like it should rise.
+//
+// It should not. Re-run against three REAL vector sources, each JPEG-compressed at
+// six qualities so only noise varies, scored edge-weighted at 3.902x against the
+// vector original the tracer never sees:
+//
+//   subject                noise range   subpixel delta   bytes
+//   vector-tiger           1.54 - 2.84   +0.11 to +0.19   2.01x
+//   vector-source          0.34 - 1.28   -0.10 to -0.17   1.94x
+//   vector-comparison      1.05 - 1.68   -0.11 to -0.15   2.10x
+//
+// On two of three it is worse on BOTH axes; on the third it buys under 0.2 dB for
+// double the bytes. Four synthetic shapes and three real ones answer the same
+// question in opposite directions, which is this project's recurring lesson about
+// corpus size, arriving again.
+//
+// The sharper point: the delta does not track noise AT ALL. vector-tiger stays
+// positive from 1.54 to 2.84; vector-source stays negative from 0.34 to 1.28. So
+// `interiorNoise` does not predict the sign of the trade on this material, and the
+// limit is not separating "refinement helps" from "refinement hurts" the way its
+// name implies. It happens to land on the conservative side, which is the right
+// call, for a reason other than the stated one.
+//
+// What would justify moving it: a corpus where the delta actually changes sign
+// with noise. That has not been found, and until it is, the honest description of
+// this constant is "a conservative default that keeps refinement off unless a
+// preset asks for it", not "the noise level above which refinement stops paying".
+
 function resolveMode(
   input: VectorizeInput,
   opts: VectorizeOptions,
