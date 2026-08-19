@@ -137,6 +137,18 @@ export interface TraceOptions {
    */
   smooth?: number;
   /**
+   * Smooth each traced boundary before fitting, inside the pixel grid's own
+   * uncertainty. Number of passes; 0 (default) skips it.
+   *
+   * Distinct from {@link smooth}, and the pair is easy to confuse: `smooth` changes
+   * which pixels belong to which region, this changes only where the boundary
+   * between them is drawn. A staircase is not evidence of a staircase — it is the
+   * grid's way of saying "somewhere within half a pixel of here".
+   */
+  regularise?: number;
+  /** How far a boundary vertex may move from the lattice. Default 0.75px. */
+  regulariseBand?: number;
+  /**
    * Simplify boundaries with a quantisation-aware straightness test instead of
    * Douglas–Peucker.
    *
@@ -440,6 +452,7 @@ export const TRACE_DEFAULTS = {
   //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
   segment: 0,
   smooth: 0,
+  regularise: 0,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -775,6 +788,8 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     latticeBand: opts.latticeBand,
+    regularise: o.regularise,
+    regulariseBand: o.regulariseBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,

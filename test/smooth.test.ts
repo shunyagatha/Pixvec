@@ -127,3 +127,81 @@ describe('the refinement noise gate reaches explicitly chosen presets', () => {
     expect(PRESETS.clean.smooth).toBe(1);
   });
 });
+
+describe('contour regularisation moves vertices only inside the grid uncertainty', () => {
+  /**
+   * The mechanism works — on the reported sticker it takes the fitter from 7 curve
+   * segments to 233. It defaults to OFF because it smooths each region's loop
+   * independently, so shared boundaries drift apart and the subject falls to pieces.
+   * See the note on `regulariseClosed` in fit.ts for the two rendered failures.
+   */
+  const staircase = () => {
+    // A 45-degree staircase: the case a band below 0.707 cannot flatten.
+    const pts: number[] = [];
+    for (let i = 0; i < 20; i++) { pts.push(i, i); pts.push(i + 1, i); }
+    for (let i = 20; i > 0; i--) { pts.push(i, i + 6); pts.push(i - 1, i + 6); }
+    return pts;
+  };
+
+  it('never moves a vertex further than the band allows', async () => {
+    // Tested on `regulariseClosed` directly, per index, because the obvious
+    // version of this assertion was BLIND: checking that each output point is
+    // near SOME input vertex passes even with the constraint deleted, since a
+    // staircase's vertices are dense enough that everything is near one of them.
+    // The invariant is per-vertex — point i stays within the band of point i.
+    const { regulariseClosed } = await import('../src/vectorize/fit.js');
+    const pts = staircase();
+    const n = pts.length / 2;
+    const px = new Float64Array(n);
+    const py = new Float64Array(n);
+    for (let i = 0; i < n; i++) { px[i] = pts[i * 2]; py[i] = pts[i * 2 + 1]; }
+    const ox = Float64Array.from(px);
+    const oy = Float64Array.from(py);
+    const band = 0.75;
+    regulariseClosed(px, py, n, band, 40);
+    for (let i = 0; i < n; i++) {
+      const moved = Math.hypot(px[i] - ox[i], py[i] - oy[i]);
+      expect(moved, `vertex ${i} moved ${moved.toFixed(3)}px, past the ${band}px band`)
+        .toBeLessThanOrEqual(band + 1e-9);
+    }
+  });
+
+  it('shortens a staircase toward the line it approximates', async () => {
+    // Perimeter is the honest measure here. A 45-degree staircase is sqrt(2) times
+    // longer than its own diagonal, and flattening it toward that diagonal has to
+    // shorten it. (An earlier version of this assertion used mean |x - y|, which is
+    // meaningless once `regulariseClosed` wraps index 0 to index n-1.)
+    const { regulariseClosed } = await import('../src/vectorize/fit.js');
+    const n = 40;
+    const px = new Float64Array(n);
+    const py = new Float64Array(n);
+    for (let i = 0; i < n; i++) { const s = Math.floor(i / 2); px[i] = s + (i % 2); py[i] = s; }
+    const perimeter = () => {
+      let t = 0;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        t += Math.hypot(px[j] - px[i], py[j] - py[i]);
+      }
+      return t;
+    };
+    const before = perimeter();
+    regulariseClosed(px, py, n, 0.75, 20);
+    expect(perimeter()).toBeLessThan(before);
+  });
+
+  it('does nothing at all when off', async () => {
+    const { fitLoop } = await import('../src/vectorize/fit.js');
+    const pts = staircase();
+    const off = fitLoop(pts, { tolerance: 0.4, fitError: 0.4, cornerAngle: 75, optimize: false });
+    const zero = fitLoop(pts, { tolerance: 0.4, fitError: 0.4, cornerAngle: 75, optimize: false, regularise: 0 });
+    expect(JSON.stringify(zero)).toBe(JSON.stringify(off));
+  });
+
+  it('actually changes the geometry when on, or it is not doing anything', async () => {
+    const { fitLoop } = await import('../src/vectorize/fit.js');
+    const pts = staircase();
+    const off = fitLoop(pts, { tolerance: 0.4, fitError: 0.4, cornerAngle: 75, optimize: false });
+    const on = fitLoop(pts, { tolerance: 0.4, fitError: 0.4, cornerAngle: 75, optimize: false, regularise: 8 });
+    expect(JSON.stringify(on)).not.toBe(JSON.stringify(off));
+  });
+});

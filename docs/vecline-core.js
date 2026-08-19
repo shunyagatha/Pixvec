@@ -1947,6 +1947,9 @@ function fitLoop(pts, opts) {
     px[i] = pts[i * 2];
     py[i] = pts[i * 2 + 1];
   }
+  if (opts.regularise && opts.regularise > 0) {
+    regulariseClosed(px, py, n2, opts.regulariseBand ?? 0.75, opts.regularise);
+  }
   let tolerance = opts.tolerance;
   let anchors = opts.latticeSimplify ? simplifyLattice(px, py, n2, opts.latticeBand ?? 0.75) : simplifyClosed(px, py, n2, tolerance);
   while (!opts.latticeSimplify && anchors.length < 3 && tolerance > 0) {
@@ -1979,6 +1982,34 @@ function fitLoop(pts, opts) {
   }
   if (segments.length === 0) return null;
   return { start: { x: px[breaks[0].index], y: py[breaks[0].index] }, segments };
+}
+function regulariseClosed(px, py, n2, band, passes) {
+  if (n2 < 4 || passes <= 0 || band <= 0) return;
+  const ox = Float64Array.from(px);
+  const oy = Float64Array.from(py);
+  const tx = new Float64Array(n2);
+  const ty = new Float64Array(n2);
+  const band2 = band * band;
+  for (let pass = 0; pass < passes; pass++) {
+    for (let i = 0; i < n2; i++) {
+      const a = i === 0 ? n2 - 1 : i - 1;
+      const b = i === n2 - 1 ? 0 : i + 1;
+      tx[i] = (px[i] + (px[a] + px[b]) / 2) / 2;
+      ty[i] = (py[i] + (py[a] + py[b]) / 2) / 2;
+    }
+    for (let i = 0; i < n2; i++) {
+      let dx = tx[i] - ox[i];
+      let dy = ty[i] - oy[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > band2) {
+        const k = band / Math.sqrt(d2);
+        dx *= k;
+        dy *= k;
+      }
+      px[i] = ox[i] + dx;
+      py[i] = oy[i] + dy;
+    }
+  }
 }
 function simplifyLattice(px, py, n2, band = 0.75) {
   if (n2 <= 3) return Array.from({ length: n2 }, (_, i2) => i2);
@@ -4420,6 +4451,7 @@ var TRACE_DEFAULTS = {
   //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
   segment: 0,
   smooth: 0,
+  regularise: 0,
   // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
   // in this module says size is the wrong criterion — it was the dominant cost
   // here, not the merge policy it sits beside.
@@ -4611,6 +4643,8 @@ function trace(source, opts = {}) {
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     latticeBand: opts.latticeBand,
+    regularise: o.regularise,
+    regulariseBand: o.regulariseBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,
