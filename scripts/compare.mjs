@@ -319,6 +319,30 @@ const vtracerBin = process.env.VECLINE_VTRACER && existsSync(process.env.VECLINE
  *   vecline preset logo    54,471  19,638   1,082   0.8747
  *   vecline logo +reg 6    22,370   8,872     165   0.8586
  *
+ * CORRECTED TWICE, and the second correction is the one to keep, because the first
+ * traded one cherry-picked number for another.
+ *
+ * THE WHOLE FRONTIER ON logo-tux, rendered and looked at, not just scored:
+ *
+ *   vecline auto     18,862 gz   SSIM 0.9913   looks good; 1.6x the rival's size
+ *   the paid tool    11,936 gz        0.9483   smooth
+ *   vecline clean     3,780 gz        0.9390   small, but the feet step visibly
+ *
+ * WE CAN BE ACCURATE AND LARGE, OR SMALL AND ROUGH. THEY ARE BOTH. That is the gap,
+ * stated in a way that does not depend on which of our configurations gets quoted.
+ *
+ * Neither earlier summary said this. The first ("0.07 SSIM behind at matched size")
+ * came from `logo` and overstated the gap roughly sevenfold. The second ("3.2x
+ * smaller for 0.009 SSIM") came from `clean` and was true as arithmetic while
+ * ignoring that `clean` renders rougher than `auto` on the same image. Both were
+ * one number chosen from a frontier and presented as the position.
+ *
+ * Content-dependence, from rendering auto against clean on three subjects:
+ *   logo-tux            auto is smoother; clean steps on the feet
+ *   vector-comparison   clean is smoother; auto pixelates the gradient swoosh
+ *   photo-parrots       auto keeps feather detail clean flattens away
+ * So neither is the better default, and `auto` should not simply become `clean`.
+ *
  * CORRECTED: that table asked the WRONG PRESET. `clean` was never scored on flat
  * art, and it holds a far better point than `logo` does:
  *
