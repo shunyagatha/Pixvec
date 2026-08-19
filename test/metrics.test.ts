@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compareImages, ssimPlane } from '../src/metrics/index.js';
+import { measureFlatness } from '../src/api.js';
 import { premultiply } from '../src/image.js';
 import { createImage, mulberry32, photoLike, setPixel } from './fixtures.js';
 
@@ -219,4 +220,110 @@ describe('ssimPlane border/interior split', () => {
       expect(got).toBeLessThan(0.999);
     });
   }
+});
+
+describe('SSIM scores alpha when alpha is what carries the artwork', () => {
+  /**
+   * SSIM ran over R, G and B alone. Under premultiplied compositing a dark shape
+   * on transparency has all-zero RGB, so alpha is the only channel holding the
+   * picture — and the one channel SSIM could not see.
+   *
+   * An EMPTY SVG scored SSIM 1.000000 against a black disc on transparency, with
+   * 38% of pixels differing, PSNR 10.18 dB and CIEDE2000 max 100. `verify
+   * --fail-under 0.99` — the CI gate the README recommends — exited 0 on it.
+   */
+  const disc = (alphaInside: number) => {
+    const img = createImage(64, 64);
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const inside = (x - 32) ** 2 + (y - 32) ** 2 < 20 * 20;
+        setPixel(img, x, y, 0, 0, 0, inside ? alphaInside : 0);
+      }
+    }
+    return img;
+  };
+
+  it('does not score a blank frame as perfect against alpha-carried artwork', () => {
+    const blank = createImage(64, 64);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) setPixel(blank, x, y, 0, 0, 0, 0);
+    const r = compareImages(disc(255), blank);
+    expect(r.ssim).toBeLessThan(0.99);
+    // The other metrics always saw this; the point is that SSIM now agrees.
+    expect(r.exactRatio).toBeLessThan(1);
+  });
+
+  it('still returns 1 for a genuinely identical image', () => {
+    expect(compareImages(disc(255), disc(255)).ssim).toBeCloseTo(1, 12);
+  });
+
+  it('leaves fully opaque comparisons untouched, so published numbers do not move', () => {
+    // Both alpha planes are a constant 255. Averaging a free 1.0 into the score
+    // would lift every opaque result toward 1 while measuring nothing, so alpha
+    // is only included when at least one side varies.
+    const a = photoLike(48, 36, 5);
+    const b = photoLike(48, 36, 9);
+    const withAlpha = compareImages(a, b);
+    // Recompute over only the three colour planes and require an exact match.
+    const planes = (img: ReturnType<typeof photoLike>) => {
+      const n = img.width * img.height;
+      const out = [new Float64Array(n), new Float64Array(n), new Float64Array(n)];
+      for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) out[c][i] = img.data[i * 4 + c];
+      return out;
+    };
+    const pa = planes(a), pb = planes(b);
+    const rgbOnly = pa.reduce((s, _, c) => s + ssimPlane(pa[c], pb[c], a.width, a.height), 0) / 3;
+    expect(withAlpha.ssim).toBeCloseTo(rgbOnly, 12);
+  });
+});
+
+describe('interiorNoise ignores pixels nobody can see', () => {
+  /**
+   * `measureFlatness`'s second pass read RGB only, so the colour left behind under
+   * fully transparent pixels — whatever the encoder happened to write — voted on
+   * `interiorNoise`, which is the only gate on sub-pixel refinement and lattice
+   * simplification. The FIRST pass of the same function already neutralised them
+   * (`a === 0 ? 0 : packRgba(...)`), so the two halves disagreed with each other.
+   *
+   * On corpus/src/alpha-dice.png the shipped file and a render-identical copy with
+   * that hidden colour zeroed measured 1.1284 against 0.2474, with the 0.3 limit
+   * between them: two files drawing the same picture, traced differently, decided
+   * by 323,179 invisible pixels.
+   */
+  const withHidden = (hidden: [number, number, number]) => {
+    const img = createImage(48, 48);
+    const rand = mulberry32(11);
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        const inside = x >= 12 && x < 36 && y >= 12 && y < 36;
+        if (inside) setPixel(img, x, y, 120, 120, 120, 255);
+        // Outside is invisible; its RGB varies wildly between the two variants.
+        else setPixel(img, x, y,
+          hidden[0] === -1 ? Math.floor(rand() * 256) : hidden[0],
+          hidden[1] === -1 ? Math.floor(rand() * 256) : hidden[1],
+          hidden[2] === -1 ? Math.floor(rand() * 256) : hidden[2], 0);
+      }
+    }
+    return img;
+  };
+
+  it('measures the same noise for two images that render the same', () => {
+    const noisyHidden = measureFlatness(withHidden([-1, -1, -1]));
+    const cleanHidden = measureFlatness(withHidden([0, 0, 0]));
+    expect(noisyHidden.interiorNoise).toBeCloseTo(cleanHidden.interiorNoise, 10);
+  });
+
+  it('still reports real noise in the VISIBLE part of the image', () => {
+    const flat = createImage(48, 48);
+    const grainy = createImage(48, 48);
+    const rand = mulberry32(4);
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        setPixel(flat, x, y, 120, 120, 120, 255);
+        const n = Math.floor(rand() * 60) - 30;
+        setPixel(grainy, x, y, 120 + n, 120 + n, 120 + n, 255);
+      }
+    }
+    expect(measureFlatness(flat).interiorNoise).toBeLessThan(0.01);
+    expect(measureFlatness(grainy).interiorNoise).toBeGreaterThan(1);
+  });
 });

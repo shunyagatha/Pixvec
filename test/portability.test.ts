@@ -45,6 +45,7 @@ const CORE_MODULES = [
   'metrics/ssim.ts',
   'vectorize/quantize.ts',
   'vectorize/components.ts',
+  'vectorize/merge.ts',
   'vectorize/contour.ts',
   'vectorize/subpixel.ts',
   'vectorize/fit.ts',

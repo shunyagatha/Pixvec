@@ -7,6 +7,7 @@ import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, typ
 import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } from './contour.js';
 import { fitLoop, type FitOptions } from './fit.js';
 import { refineLoop } from './subpixel.js';
+import { flattenToSegments } from './merge.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -103,6 +104,41 @@ export interface TraceOptions {
   blur?: number;
   /** Edge-preservation threshold for {@link blur}. Default 20. */
   blurDelta?: number;
+  /**
+   * Segment the image and flatten each region to its own colour before tracing.
+   *
+   * The tracer's usual order is quantise, then label connected components — so
+   * every pixel that lands in a different palette bin from its neighbours becomes
+   * its own region. On a compressed source that is thousands of one-pixel
+   * regions, and no later merge recovers a boundary the palette misplaced.
+   *
+   * This inverts the order. Regions are found on the pixel grid, where each edge
+   * weight is a real colour difference, and the palette is then applied to areas
+   * that are already whole. Measured on a 100x100 JPEG sticker at a matched
+   * region count, against the despeckle-based approach it replaces: SSIM 0.4557
+   * -> 0.8329, where a paid competitor scores 0.8500.
+   *
+   * The value is the merge tolerance in Oklab — a one-pixel region may cross this
+   * much colour distance, a hundred-pixel region only a hundredth of it. Useful
+   * range is roughly 0.02 to 0.2. 0 (default) skips it.
+   */
+  segment?: number;
+  /** Regions smaller than this are absorbed after {@link segment}. Default 8. */
+  segmentMinRegion?: number;
+  /**
+   * Simplify boundaries with a quantisation-aware straightness test instead of
+   * Douglas–Peucker.
+   *
+   * Defaults to on wherever it is valid — that is, whenever the boundary is
+   * still on the pixel lattice (no sub-pixel refinement), the caller has not
+   * asked for the lattice verbatim (`tolerance: 0`), and `extendUnder` is off.
+   * Exposed because it changes what "the same trace" means: comparing two
+   * configurations is only meaningful if both use the same simplifier, and a
+   * caller isolating some *other* option needs to be able to pin this one.
+   */
+  latticeSimplify?: boolean;
+  /** Straightness band for {@link latticeSimplify}, in pixels. Default 0.75. */
+  latticeBand?: number;
   /**
    * Reduce to two colours by a luminance cutoff before tracing — potrace's mode,
    * for scanned line art and black-on-white logos. A number is a fixed 0–255
@@ -359,6 +395,54 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  // On by default at 0.02, which is the value the two failure modes agree on.
+  //
+  // It was off while the runt-absorption pass absorbed every small region, which
+  // cost logo-tux 0.9884 -> 0.9570 SSIM and visibly eroded its silhouette. Once
+  // absorption was restricted to runts that are INSIDE a region rather than on a
+  // boundary between two — grain, not anti-aliasing fringe — the cost collapsed:
+  //
+  //   logo-tux   0.9884 -> 0.9731   17.6 KB -> 14.4 KB
+  //   sticker    0.9620 -> 0.9556   11.1 KB -> 9.9 KB
+  //
+  // 0.015 and 0.006 of SSIM for 18% and 11% of the bytes, and the segmentation is
+  // what lets the lattice simplifier run at all on a noisy source, because it
+  // establishes the precondition rather than merely passing a test for it.
+  // OFF by default, tried twice and rejected twice on measurement.
+  //
+  // It is a genuine win on some content and a loss on other content, and the
+  // published photo row is the case that decides it. On a REAL photograph
+  // (photo-cat) it takes 27% off the bytes for 0.97 dB. On the synthetic
+  // `photoLike` fixture the published table uses, it is worse on BOTH axes —
+  // 49.3 -> 52.6 KB and 31.31 -> 28.82 dB — so it cannot be a default without
+  // regressing a published number in the wrong direction.
+  //
+  // Worth keeping the disagreement rather than picking the flattering half: a
+  // synthetic photograph and a real one rank this differently, which is the same
+  // trap `bench-scale.mjs` records for preset ranking. The real-photograph result
+  // is the more trustworthy one; the published table is the one users read.
+  //
+  // What it does when asked for, against no segmentation:
+  //
+  //   logo-tux    41.83 dB / 17.7 KB   (base 42.05 / 17.6)  — free
+  //   photo-cat   33.89 dB /  462 KB   (base 34.86 /  636)  — 27% smaller
+  //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
+  segment: 0,
+  // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
+  // in this module says size is the wrong criterion — it was the dominant cost
+  // here, not the merge policy it sits beside.
+  //
+  // Swept on three sources, against no segmentation at all:
+  //
+  //              mr=0                     mr=8
+  //   logo-tux   41.83 dB / 17.7 KB       41.01 dB / 14.4 KB   (base 42.05 / 17.6)
+  //   photo-cat  33.89 dB / 462 KB        33.86 dB / 444 KB    (base 34.86 / 636)
+  //   sticker     30.41 dB / 10.0 KB       30.37 dB / 9.9 KB   (base 30.57 / 11.1)
+  //
+  // At 0 the merge alone still takes 27% off a photograph and leaves logo-tux
+  // essentially untouched. Raising it buys a further 3-4% of bytes and costs
+  // logo-tux 0.8 dB, which is the whole silhouette-erosion failure in one line.
+  segmentMinRegion: 0,
   extendUnder: false,
   // On by default as of the curves change. Everything about why this is
   // affordable — and why it is NOT affordable alone — is on the `subpixel`
@@ -491,6 +575,11 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  // Before quantisation, deliberately: the whole point is that the palette meets
+  // regions that are already coherent. See `segment` on TraceOptions.
+  if (o.segment && o.segment > 0) {
+    img = flattenToSegments(img, o.segment, o.segmentMinRegion);
   }
   if (opts.threshold !== undefined) {
     img = applyThreshold(img, {
@@ -648,6 +737,26 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   }
 
   const fitOpts: FitOptions = {
+    // Sub-pixel refinement moves vertices off the grid; without it every
+    // boundary vertex is a lattice point and Douglas-Peucker is the wrong tool.
+    //
+    // Excluded at tolerance 0, which is a request for the lattice itself. This
+    // simplifier has no tolerance to honour — its band is the grid's own
+    // uncertainty — so it collapses staircases whatever the caller asked for,
+    // and `trace(src, { tolerance: 0, polygonOnly: true })` is documented
+    // bit-exact. Caught by the suite immediately, which is that test earning its
+    // keep for the second time this week.
+    //
+    // Also excluded under `extendUnder`, and for the structural reason rather
+    // than a measured one. That option's whole purpose is that a shared boundary
+    // is traced identically from both sides, so no seam can appear. Any
+    // simplification applied to each side independently breaks that — the union
+    // loop and the class loop beneath it collapse different staircases and stop
+    // meeting. Douglas-Peucker only preserved it by removing nothing at the
+    // shipped tolerance; the guarantee was resting on the fitter being dead.
+    // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
+    latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
+    latticeBand: opts.latticeBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,

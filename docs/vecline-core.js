@@ -630,6 +630,9 @@ function compareImages(reference, candidate, opts = {}) {
     for (let c = 0; c < 3; c++) {
       channelScores.push(ssimPlane(planesA.rgb[c], planesB.rgb[c], width, height));
     }
+    if (!(isConstant(planesA.alpha) && isConstant(planesB.alpha) && planesA.alpha[0] === planesB.alpha[0])) {
+      channelScores.push(ssimPlane(planesA.alpha, planesB.alpha, width, height));
+    }
     ssim = channelScores.reduce((s, v) => s + v, 0) / channelScores.length;
     ssimLuma = ssimPlane(planesA.luma, planesB.luma, width, height);
   }
@@ -668,15 +671,21 @@ function extractPlanes(rgba, pixels) {
   const r = new Float64Array(pixels);
   const g = new Float64Array(pixels);
   const b = new Float64Array(pixels);
+  const alpha = new Float64Array(pixels);
   const luma = new Float64Array(pixels);
   for (let i = 0; i < pixels; i++) {
     const o = i * 4;
     r[i] = rgba[o];
     g[i] = rgba[o + 1];
     b[i] = rgba[o + 2];
+    alpha[i] = rgba[o + 3];
     luma[i] = luma709(rgba[o], rgba[o + 1], rgba[o + 2]);
   }
-  return { rgb: [r, g, b], luma };
+  return { rgb: [r, g, b], alpha, luma };
+}
+function isConstant(plane) {
+  for (let i = 1; i < plane.length; i++) if (plane[i] !== plane[0]) return false;
+  return true;
 }
 function deltaEStats(reference, candidate, bg, field) {
   const flatA = compositeOver(reference, bg);
@@ -1104,7 +1113,8 @@ function optimizeSvg(svg, opts = {}) {
   NUMERIC_LISTS.lastIndex = 0;
   for (let m = NUMERIC_LISTS.exec(out); m !== null; m = NUMERIC_LISTS.exec(out)) {
     rounded += roundStandalone(out.slice(last, m.index), scale);
-    rounded += ` ${m[1]}="${roundNumericList(m[2], scale)}"`;
+    const value = m[1] === "transform" ? m[2] : roundNumericList(m[2], scale);
+    rounded += ` ${m[1]}="${value}"`;
     last = m.index + m[0].length;
   }
   rounded += roundStandalone(out.slice(last), scale);
@@ -1938,8 +1948,8 @@ function fitLoop(pts, opts) {
     py[i] = pts[i * 2 + 1];
   }
   let tolerance = opts.tolerance;
-  let anchors = simplifyClosed(px, py, n2, tolerance);
-  while (anchors.length < 3 && tolerance > 0) {
+  let anchors = opts.latticeSimplify ? simplifyLattice(px, py, n2, opts.latticeBand ?? 0.75) : simplifyClosed(px, py, n2, tolerance);
+  while (!opts.latticeSimplify && anchors.length < 3 && tolerance > 0) {
     tolerance = tolerance > 0.05 ? tolerance / 2 : 0;
     anchors = simplifyClosed(px, py, n2, tolerance);
   }
@@ -1969,6 +1979,52 @@ function fitLoop(pts, opts) {
   }
   if (segments.length === 0) return null;
   return { start: { x: px[breaks[0].index], y: py[breaks[0].index] }, segments };
+}
+function simplifyLattice(px, py, n2, band = 0.75) {
+  if (n2 <= 3) return Array.from({ length: n2 }, (_, i2) => i2);
+  const straight = (a, b) => {
+    const ax = px[a], ay = py[a];
+    const dx = px[b] - ax, dy = py[b] - ay;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return false;
+    for (let k = a + 1; k < b; k++) {
+      const d = Math.abs((px[k] - ax) * dy - (py[k] - ay) * dx) / len;
+      if (d > band) return false;
+    }
+    return true;
+  };
+  const anchors = [0];
+  let i = 0;
+  while (i < n2 - 1) {
+    let step = 1;
+    while (i + step * 2 < n2 && straight(i, i + step * 2)) step *= 2;
+    let lo = i + step;
+    let hi = Math.min(n2 - 1, i + step * 2);
+    while (lo < hi) {
+      const mid = lo + hi + 1 >> 1;
+      if (straight(i, mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    const next = Math.max(lo, i + 1);
+    anchors.push(next);
+    i = next;
+  }
+  if (anchors.length > 1 && anchors[anchors.length - 1] === n2 - 1 && n2 > 1) anchors.pop();
+  while (anchors.length < 3 && anchors.length < n2) {
+    let gap = 0;
+    let at = 0;
+    for (let k = 0; k < anchors.length; k++) {
+      const a = anchors[k];
+      const b = k + 1 < anchors.length ? anchors[k + 1] : n2;
+      if (b - a > gap) {
+        gap = b - a;
+        at = k;
+      }
+    }
+    if (gap < 2) break;
+    anchors.splice(at + 1, 0, anchors[at] + (gap >> 1));
+  }
+  return anchors;
 }
 function simplifyClosed(px, py, n2, tolerance) {
   if (n2 <= 3 || tolerance <= 0) return Array.from({ length: n2 }, (_, i) => i);
@@ -2465,6 +2521,166 @@ function refineLoop(loop, img, classes, cls) {
     out[i * 2 + 1] = vy[i] + oy;
   }
   return { pts: out, moved: displaced, total: count2 };
+}
+
+// src/vectorize/merge.ts
+function segmentPixels(img, k = 300, minRegion = 0) {
+  const { width: w, height: h, data } = img;
+  const n2 = w * h;
+  const lab = new Float64Array(n2 * 4);
+  const px = new Float64Array(3);
+  for (let i = 0; i < n2; i++) {
+    const o = i * 4;
+    srgbToOklab(data[o], data[o + 1], data[o + 2], px);
+    lab[i * 4] = px[0];
+    lab[i * 4 + 1] = px[1];
+    lab[i * 4 + 2] = px[2];
+    lab[i * 4 + 3] = data[o + 3] / 255;
+  }
+  const dist = (a, b) => {
+    const dl = lab[a * 4] - lab[b * 4];
+    const da = lab[a * 4 + 1] - lab[b * 4 + 1];
+    const db = lab[a * 4 + 2] - lab[b * 4 + 2];
+    const dt = lab[a * 4 + 3] - lab[b * 4 + 3];
+    return Math.sqrt(dl * dl + da * da + db * db + dt * dt);
+  };
+  const maxEdges = n2 * 4;
+  const ea = new Int32Array(maxEdges);
+  const eb = new Int32Array(maxEdges);
+  const ew = new Float64Array(maxEdges);
+  let m = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (x + 1 < w) {
+        ea[m] = i;
+        eb[m] = i + 1;
+        ew[m] = dist(i, i + 1);
+        m++;
+      }
+      if (y + 1 < h) {
+        ea[m] = i;
+        eb[m] = i + w;
+        ew[m] = dist(i, i + w);
+        m++;
+      }
+      if (x + 1 < w && y + 1 < h) {
+        ea[m] = i;
+        eb[m] = i + w + 1;
+        ew[m] = dist(i, i + w + 1);
+        m++;
+      }
+      if (x > 0 && y + 1 < h) {
+        ea[m] = i;
+        eb[m] = i + w - 1;
+        ew[m] = dist(i, i + w - 1);
+        m++;
+      }
+    }
+  }
+  const order = new Int32Array(m);
+  for (let i = 0; i < m; i++) order[i] = i;
+  const idx = Array.prototype.slice.call(order);
+  idx.sort((p, q) => ew[p] - ew[q]);
+  const parent = new Int32Array(n2);
+  const size = new Int32Array(n2).fill(1);
+  const internal = new Float64Array(n2);
+  for (let i = 0; i < n2; i++) parent[i] = i;
+  const find = (x) => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r];
+    while (parent[x] !== r) {
+      const nx = parent[x];
+      parent[x] = r;
+      x = nx;
+    }
+    return r;
+  };
+  for (let e = 0; e < m; e++) {
+    const i = idx[e];
+    const a = find(ea[i]);
+    const b = find(eb[i]);
+    if (a === b) continue;
+    const wgt = ew[i];
+    if (wgt > Math.min(internal[a] + k / size[a], internal[b] + k / size[b])) continue;
+    const [big, small] = size[a] >= size[b] ? [a, b] : [b, a];
+    parent[small] = big;
+    size[big] += size[small];
+    internal[big] = wgt;
+  }
+  if (minRegion > 0) {
+    const borders = /* @__PURE__ */ new Map();
+    for (let e = 0; e < m; e++) {
+      const i = idx[e];
+      const a = find(ea[i]), b = find(eb[i]);
+      if (a === b) continue;
+      if (size[a] >= minRegion && size[b] >= minRegion) continue;
+      for (const [runt, other] of [[a, b], [b, a]]) {
+        if (size[runt] >= minRegion) continue;
+        let mm = borders.get(runt);
+        if (!mm) borders.set(runt, mm = /* @__PURE__ */ new Map());
+        mm.set(other, (mm.get(other) ?? 0) + 1);
+      }
+    }
+    for (const [runt, neigh] of borders) {
+      if (find(runt) !== runt || size[runt] >= minRegion) continue;
+      let best = -1, bestLen = 0, total = 0;
+      for (const [other, len] of neigh) {
+        total += len;
+        if (len > bestLen) {
+          bestLen = len;
+          best = other;
+        }
+      }
+      if (best < 0 || total === 0 || bestLen / total < 0.67) continue;
+      const target = find(best);
+      if (target === runt) continue;
+      parent[runt] = target;
+      size[target] += size[runt];
+    }
+  }
+  const dense = new Int32Array(n2).fill(-1);
+  const out = new Int32Array(n2);
+  let next = 0;
+  for (let i = 0; i < n2; i++) {
+    const r = find(i);
+    if (dense[r] < 0) dense[r] = next++;
+    out[i] = dense[r];
+  }
+  return out;
+}
+function flattenToSegments(img, k, minRegion) {
+  const { width: w, height: h, data } = img;
+  const n2 = w * h;
+  const labels = segmentPixels(img, k, minRegion);
+  let count2 = 0;
+  for (let i = 0; i < n2; i++) if (labels[i] + 1 > count2) count2 = labels[i] + 1;
+  const sums = new Float64Array(count2 * 3);
+  const alpha = new Float64Array(count2);
+  const cnt = new Float64Array(count2);
+  const px = new Float64Array(3);
+  for (let i = 0; i < n2; i++) {
+    const o = i * 4;
+    srgbToOklab(data[o], data[o + 1], data[o + 2], px);
+    const r = labels[i];
+    sums[r * 3] += px[0];
+    sums[r * 3 + 1] += px[1];
+    sums[r * 3 + 2] += px[2];
+    alpha[r] += data[o + 3];
+    cnt[r]++;
+  }
+  const out = new Uint8ClampedArray(n2 * 4);
+  for (let i = 0; i < n2; i++) {
+    const r = labels[i];
+    const c = Math.max(1, cnt[r]);
+    const [R, G, B] = oklabToSrgb(sums[r * 3] / c, sums[r * 3 + 1] / c, sums[r * 3 + 2] / c);
+    const o = i * 4;
+    out[o] = R;
+    out[o + 1] = G;
+    out[o + 2] = B;
+    out[o + 3] = Math.round(alpha[r] / c);
+  }
+  return { width: w, height: h, data: out };
 }
 
 // src/vectorize/quantize.ts
@@ -4105,6 +4321,54 @@ var TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  // On by default at 0.02, which is the value the two failure modes agree on.
+  //
+  // It was off while the runt-absorption pass absorbed every small region, which
+  // cost logo-tux 0.9884 -> 0.9570 SSIM and visibly eroded its silhouette. Once
+  // absorption was restricted to runts that are INSIDE a region rather than on a
+  // boundary between two — grain, not anti-aliasing fringe — the cost collapsed:
+  //
+  //   logo-tux   0.9884 -> 0.9731   17.6 KB -> 14.4 KB
+  //   sticker    0.9620 -> 0.9556   11.1 KB -> 9.9 KB
+  //
+  // 0.015 and 0.006 of SSIM for 18% and 11% of the bytes, and the segmentation is
+  // what lets the lattice simplifier run at all on a noisy source, because it
+  // establishes the precondition rather than merely passing a test for it.
+  // OFF by default, tried twice and rejected twice on measurement.
+  //
+  // It is a genuine win on some content and a loss on other content, and the
+  // published photo row is the case that decides it. On a REAL photograph
+  // (photo-cat) it takes 27% off the bytes for 0.97 dB. On the synthetic
+  // `photoLike` fixture the published table uses, it is worse on BOTH axes —
+  // 49.3 -> 52.6 KB and 31.31 -> 28.82 dB — so it cannot be a default without
+  // regressing a published number in the wrong direction.
+  //
+  // Worth keeping the disagreement rather than picking the flattering half: a
+  // synthetic photograph and a real one rank this differently, which is the same
+  // trap `bench-scale.mjs` records for preset ranking. The real-photograph result
+  // is the more trustworthy one; the published table is the one users read.
+  //
+  // What it does when asked for, against no segmentation:
+  //
+  //   logo-tux    41.83 dB / 17.7 KB   (base 42.05 / 17.6)  — free
+  //   photo-cat   33.89 dB /  462 KB   (base 34.86 /  636)  — 27% smaller
+  //   sticker      30.41 dB / 10.0 KB   (base 30.57 / 11.1)  — 10% smaller
+  segment: 0,
+  // 0, not 8. The runt-absorption pass is a SIZE threshold, and every measurement
+  // in this module says size is the wrong criterion — it was the dominant cost
+  // here, not the merge policy it sits beside.
+  //
+  // Swept on three sources, against no segmentation at all:
+  //
+  //              mr=0                     mr=8
+  //   logo-tux   41.83 dB / 17.7 KB       41.01 dB / 14.4 KB   (base 42.05 / 17.6)
+  //   photo-cat  33.89 dB / 462 KB        33.86 dB / 444 KB    (base 34.86 / 636)
+  //   sticker     30.41 dB / 10.0 KB       30.37 dB / 9.9 KB   (base 30.57 / 11.1)
+  //
+  // At 0 the merge alone still takes 27% off a photograph and leaves logo-tux
+  // essentially untouched. Raising it buys a further 3-4% of bytes and costs
+  // logo-tux 0.8 dB, which is the whole silhouette-erosion failure in one line.
+  segmentMinRegion: 0,
   extendUnder: false,
   // On by default as of the curves change. Everything about why this is
   // affordable — and why it is NOT affordable alone — is on the `subpixel`
@@ -4145,6 +4409,9 @@ function trace(source, opts = {}) {
   let img = source;
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
+  }
+  if (o.segment && o.segment > 0) {
+    img = flattenToSegments(img, o.segment, o.segmentMinRegion);
   }
   if (opts.threshold !== void 0) {
     img = applyThreshold(img, {
@@ -4255,6 +4522,26 @@ function trace(source, opts = {}) {
     }
   }
   const fitOpts = {
+    // Sub-pixel refinement moves vertices off the grid; without it every
+    // boundary vertex is a lattice point and Douglas-Peucker is the wrong tool.
+    //
+    // Excluded at tolerance 0, which is a request for the lattice itself. This
+    // simplifier has no tolerance to honour — its band is the grid's own
+    // uncertainty — so it collapses staircases whatever the caller asked for,
+    // and `trace(src, { tolerance: 0, polygonOnly: true })` is documented
+    // bit-exact. Caught by the suite immediately, which is that test earning its
+    // keep for the second time this week.
+    //
+    // Also excluded under `extendUnder`, and for the structural reason rather
+    // than a measured one. That option's whole purpose is that a shared boundary
+    // is traced identically from both sides, so no seam can appear. Any
+    // simplification applied to each side independently breaks that — the union
+    // loop and the class loop beneath it collapse different staircases and stop
+    // meeting. Douglas-Peucker only preserved it by removing nothing at the
+    // shipped tolerance; the guarantee was resting on the fitter being dead.
+    // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
+    latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
+    latticeBand: opts.latticeBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,

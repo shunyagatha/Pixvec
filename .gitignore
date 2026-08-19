@@ -28,3 +28,8 @@ extensions/*/out/
 extensions/*/*.vsix
 .bench-scale/
 bench-scale.json
+
+# Local comparison references (third-party outputs — never commit)
+.refs/
+.out/
+.audit-tmp/

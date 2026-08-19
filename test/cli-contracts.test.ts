@@ -457,3 +457,168 @@ describe.skipIf(!built)('CLI: vectorize refuses a non-SVG output name', () => {
     expect(existsSync(join(dir, 'out.svg'))).toBe(true);
   });
 });
+
+describe.skipIf(!built)('CLI: an argument no command asked for is an error, not a shrug', () => {
+  /**
+   * `vectorize` takes ONE positional and writes to `-o`; `convert` takes TWO. So
+   * the natural-looking `vectorize in.jpg out.svg` parsed as an input plus one
+   * ignored word, and the SVG went to the DEFAULT path — `<input>.svg`, beside
+   * the source — at exit 0 with nothing printed about it.
+   *
+   * That is silent data loss dressed as success: the file lands somewhere the
+   * user did not name, and overwrites whatever was already there. It cost a
+   * reference file sitting next to the input.
+   */
+  let dir: string;
+  let src: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vecline-excess-'));
+    src = join(dir, 'in.png');
+    await writeFile(src, await encode(flatArtwork(64, 48), 'png'));
+  });
+
+  it('rejects a second positional on a single-input command', async () => {
+    const r = await cli(['vectorize', src, join(dir, 'out.svg'), '--mode', 'trace']);
+    expect(r.code).not.toBe(0);
+    expect(`${r.stderr}${r.stdout}`).toMatch(/too many arguments/i);
+  });
+
+  it('does not write the default-path file when it rejects', async () => {
+    // The whole point: the rejected form must not have already written somewhere.
+    await cli(['vectorize', src, join(dir, 'ignored.svg'), '--mode', 'trace']);
+    expect(existsSync(join(dir, 'in.svg'))).toBe(false);
+    expect(existsSync(join(dir, 'in.png.svg'))).toBe(false);
+  });
+
+  it('still accepts the correct single-input form', async () => {
+    const out = join(dir, 'ok.svg');
+    const r = await cli(['vectorize', src, '-o', out, '--mode', 'trace']);
+    expect(r.code).toBe(0);
+    expect(existsSync(out)).toBe(true);
+  });
+
+  it('still accepts two positionals where the command declares two', async () => {
+    const out = join(dir, 'converted.svg');
+    const r = await cli(['convert', src, out]);
+    expect(r.code).toBe(0);
+    expect(existsSync(out)).toBe(true);
+  });
+
+  it('still accepts many positionals where the command is variadic', async () => {
+    const out = join(dir, 'sheet.svg');
+    const r = await cli(['sprite', src, src, '-o', out]);
+    expect(r.code).toBe(0);
+    expect(existsSync(out)).toBe(true);
+  });
+});
+
+describe.skipIf(!built)('CLI: the measured sub-pixel auto-off reaches the flagship command', () => {
+  /**
+   * `--no-subpixel` was declared alone, and commander gives a lone `--no-x` a
+   * DEFAULT of `true`. `subpixel: o.subpixel` therefore forwarded an explicit
+   * `true` on every run, `stripUndefined` kept it because it is not undefined,
+   * and it overrode `autoTracePreset`'s measured `subpixel = false`.
+   *
+   * So `vectorize` refined every noisy photograph while printing a note saying it
+   * had not: photo-cat came out 7.50 MB against `convert`'s 3.04 MB from the same
+   * input and the same message on screen. The library, `convert`, `batch` and the
+   * MCP server all took the auto-off; the flagship command was the one arm that
+   * did not, and it is the arm the README's numbers are not measured on.
+   *
+   * Declaring the pair makes "neither flag" mean undefined again, and gives the
+   * printed note a `--subpixel` to name that actually exists.
+   */
+  let dir: string;
+  let noisy: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vecline-subpixel-'));
+    noisy = join(dir, 'noisy.png');
+    const { photoLike } = await import('./fixtures.js');
+    await writeFile(noisy, await encode(photoLike(96, 72), 'png'));
+  });
+
+  const bytes = async (p: string) => (await import('node:fs/promises')).readFile(p);
+
+  it('agrees with convert when neither flag is passed', async () => {
+    const a = join(dir, 'a.svg');
+    const b = join(dir, 'b.svg');
+    expect((await cli(['vectorize', noisy, '-o', a, '--mode', 'trace'])).code).toBe(0);
+    expect((await cli(['convert', noisy, b])).code).toBe(0);
+    expect((await bytes(a)).equals(await bytes(b))).toBe(true);
+  });
+
+  it('offers the --subpixel the note tells the user to pass', async () => {
+    const help = await cli(['vectorize', '--help']);
+    expect(help.stdout).toMatch(/--subpixel\b/);
+  });
+
+  it('--subpixel overrides the auto-off, which is the point of having it', async () => {
+    const auto = join(dir, 'auto.svg');
+    const forced = join(dir, 'forced.svg');
+    await cli(['vectorize', noisy, '-o', auto, '--mode', 'trace']);
+    expect((await cli(['vectorize', noisy, '-o', forced, '--mode', 'trace', '--subpixel'])).code).toBe(0);
+    // Refinement produces materially more geometry; equal bytes would mean the
+    // flag did nothing.
+    expect((await bytes(forced)).length).toBeGreaterThan((await bytes(auto)).length);
+  });
+
+  it('--no-subpixel is still honoured', async () => {
+    const off = join(dir, 'off.svg');
+    expect((await cli(['vectorize', noisy, '-o', off, '--mode', 'trace', '--no-subpixel'])).code).toBe(0);
+    expect(existsSync(off)).toBe(true);
+  });
+});
+
+describe.skipIf(!built)('CLI: the savings figure points the way the bytes actually went', () => {
+  /**
+   * `optimize` can legitimately GROW a file: already-compact path data like `.25`
+   * abutting its neighbour re-emits as `0.25` plus a separator, which is exactly
+   * what SVGO-style minified output looks like going in.
+   *
+   * The CLI printed a fixed `−` in front of an already-negative percentage, so a
+   * 21.9% growth rendered as `(−-21.9%)` — at a glance, a reduction. The MCP
+   * server substituted the string literal `'0.0'` whenever nothing was saved and
+   * interpolated it into `(x% smaller)`, announcing growth as "0.0% smaller": a
+   * constant formatted as a measurement, pointing the opposite way from the byte
+   * counts printed beside it.
+   */
+  let dir: string;
+  let grows: string;
+  let shrinks: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vecline-pct-'));
+    const seg = (fn: (i: number) => string) =>
+      Array.from({ length: 300 }, (_, i) => fn(i)).join(' ');
+    grows = join(dir, 'grows.svg');
+    await writeFile(grows,
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0 0 ' +
+      seg((i) => `l.${String((i * 7) % 90 + 10)}.${String((i * 13) % 90 + 10)}`) + 'z"/></svg>');
+    shrinks = join(dir, 'shrinks.svg');
+    await writeFile(shrinks,
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0 0 ' +
+      seg((i) => `l${i % 9 + 1}.${String((i * 37) % 1000).padStart(3, '0')}67 2.${String((i * 53) % 1000).padStart(3, '0')}89`) + 'z"/></svg>');
+  });
+
+  it('says "larger" when the file got larger', async () => {
+    const r = await cli(['optimize', grows, '-o', join(dir, 'a.svg')]);
+    expect(r.code).toBe(0);
+    const text = r.stdout + r.stderr;
+    expect(text).toMatch(/larger/i);
+    // The old output. A minus sign in front of a negative number is not a report.
+    expect(text).not.toContain('−-');
+  });
+
+  it('still reports a real reduction as a reduction', async () => {
+    const r = await cli(['optimize', shrinks, '-o', join(dir, 'b.svg')]);
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/larger/i);
+  });
+
+  it('reports the growth in --json too, with a sign', async () => {
+    const r = await cli(['optimize', grows, '-o', join(dir, 'c.svg'), '--json']);
+    expect(r.code).toBe(0);
+    const j = JSON.parse(r.stdout);
+    expect(j.after).toBeGreaterThan(j.before);
+    expect(j.savedPct).toBeLessThan(0);
+  });
+});

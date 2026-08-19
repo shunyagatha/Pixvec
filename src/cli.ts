@@ -373,6 +373,8 @@ interface VectorizeCliOptions {
   turnPolicy?: string;
   extendUnder?: boolean;
   subpixel?: boolean;
+  segment?: number;
+  latticeSimplify?: boolean;
   maxRectsPerPixel?: number;
   fillStrategy?: string;
   rightAngle?: boolean;
@@ -504,8 +506,12 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       polygonOnly: o.polygon,
       primitives: o.primitives,
       primitiveError: o.primitiveError,
-      // commander stores --no-optimize as optimize:false; leave undefined when
-      // the flag was never passed so the default stays in force.
+      // NOT undefined when the flag is absent, as this comment used to claim:
+      // commander gives a lone --no-x a default of `true`. That is harmless here
+      // only because `autoTracePreset` never computes `optimize`, so there is no
+      // auto value for the explicit true to override. `subpixel` was not so lucky
+      // and is declared as an explicit --subpixel/--no-subpixel pair for that
+      // reason.
       optimize: o.optimize,
       optimizeError: o.optTolerance,
       refineIterations: o.refineIterations,
@@ -521,6 +527,8 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       turnPolicy: o.turnPolicy as never,
       extendUnder: o.extendUnder,
       subpixel: o.subpixel,
+      segment: o.segment,
+      latticeSimplify: o.latticeSimplify,
       fillStrategy: o.fillStrategy as never,
       rightAngleEnhance: o.rightAngle,
       rightAngleThreshold: o.rightAngleThreshold,
@@ -1712,11 +1720,16 @@ async function runOptimize(
 
   const saved = Buffer.byteLength(before) - Buffer.byteLength(after);
   const pct = ((saved / Buffer.byteLength(before)) * 100).toFixed(1);
+  // The optimiser can legitimately GROW a file: already-compact path data like
+  // `.25` abutting its neighbour re-emits as `0.25` plus a separator. Printing a
+  // fixed `−` in front of an already-negative number rendered a 21.9% growth as
+  // `(−-21.9%)`, which at a glance reads as a reduction.
+  const delta = saved >= 0 ? `−${pct}%` : `+${Math.abs(+pct).toFixed(1)}% larger`;
   if (o.json) {
     emitJson({ input, output: outPath, before: Buffer.byteLength(before), after: Buffer.byteLength(after), savedPct: +pct });
     return;
   }
-  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${formatBytes(Buffer.byteLength(before))} → ${formatBytes(Buffer.byteLength(after))}  (−${pct}%)`)}`);
+  info(`${green('✓')} ${bold(basename(outPath))}  ${dim(`${formatBytes(Buffer.byteLength(before))} → ${formatBytes(Buffer.byteLength(after))}  (${delta})`)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2148,7 +2161,29 @@ program
   .option('--layers', 'emit one named Inkscape/Illustrator layer per colour (editable, screen-print/vinyl separation-ready)')
   .option('--palette <colors>', 'trace to exactly these comma-separated colours (brand/spot colours), e.g. "#fff,#e4002b,#000"', paletteArg)
   .option('--extend-under', 'run each colour under the ones painted after it: no seams, and smaller on flat art')
+  .option(
+    '--subpixel',
+    'force sub-pixel boundary placement even when the source measures too noisy for it. Declared as a pair with --no-subpixel so that passing NEITHER leaves the value undefined: commander gives a lone --no-x a default of true, and that explicit true overrode the measured auto-off, so `vectorize` refined every photograph while printing a note saying it had not.',
+  )
   .option('--no-subpixel', 'keep boundary vertices on the pixel lattice instead of where the antialiasing says the edge fell. Sub-pixel placement is on by default and is what lets the curve fitter engage at all; turning it off returns the older staircase output at roughly a third of the gzipped bytes. No effect on hard-edged art, where the lattice is already exact.')
+  .option(
+    '--segment <k>',
+    'find regions on the pixel grid and flatten each to its own colour BEFORE quantising, '
+      + 'instead of quantising first and labelling what falls out. On a compressed source the '
+      + 'usual order makes one region per pixel that landed in a different palette bin — 4,438 '
+      + 'regions with a median area of one pixel on a 100x100 JPEG — and no later merge recovers '
+      + 'a boundary the palette misplaced. The value is the merge tolerance in Oklab; useful '
+      + 'range is about 0.02 to 0.2, and 0.02 is the measured sweet spot. Off by default.',
+    floatArg('--segment', 0, 5),
+  )
+  .option(
+    '--lattice-simplify',
+    'simplify boundaries with a straightness test rather than a distance budget. '
+      + 'Douglas-Peucker cannot tell the staircase the pixel grid forced on a diagonal from real '
+      + 'curvature, so below tolerance 0.44 it removes nothing and above it removes both. On '
+      + 'quantised boundaries this emits about nine times the curves at equal accuracy. Applied '
+      + 'automatically when the input is clean enough to have quantised edges; this forces it.',
+  )
   .optionsGroup('Pixel mode:')
   .option(
     '--max-rects-per-pixel <ratio>',
@@ -2679,6 +2714,20 @@ function isCommanderExit(err: unknown): err is CommanderExit {
     && typeof (err as CommanderExit).code === 'string'
     && (err as CommanderExit).code.startsWith('commander.');
 }
+
+// Reject arguments no command asked for, rather than dropping them on the floor.
+//
+// commander 12 accepts excess positionals silently. `vectorize` takes ONE
+// positional and writes to `-o`, while `convert` takes TWO — so the natural
+// `vectorize in.jpg out.svg` was parsed as an input plus one ignored word, and
+// the SVG went to the DEFAULT path, `<input>.svg`, next to the source. Exit 0,
+// no warning, and a file written somewhere the user did not name. That is how a
+// reference file next to the input got overwritten.
+//
+// Commands taking `<inputs...>` are variadic and absorb their own arguments, so
+// this only fires on genuinely unwanted words.
+for (const command of program.commands) command.allowExcessArguments(false);
+program.allowExcessArguments(false);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   if (isCommanderExit(err)) {

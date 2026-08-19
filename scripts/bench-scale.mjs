@@ -164,6 +164,24 @@ const CANDIDATES = [
   { id: 'preset-lineart', opts: { mode: 'trace', preset: 'lineart' } },
   { id: 'preset-poster', opts: { mode: 'trace', preset: 'poster' } },
   { id: 'preset-detailed', opts: { mode: 'trace', preset: 'detailed' } },
+  // Region segmentation, scored here because the published accuracy table cannot
+  // judge it. That table's photograph is synthesised with structure at two scales
+  // — whole-frame gradients and per-pixel grain — and reports `segment` as -2.49 dB
+  // at 1.12x the bytes, while all six real photographs in corpus/src report a mean
+  // -0.65 dB at 0.84x, every one of them smaller. A row that ranks a change
+  // opposite to six real examples is the wrong instrument for that change.
+  //
+  // This harness is the right one: the ground truth is a vector original the
+  // tracer never sees, so nothing here rewards reproducing a bitmap's own noise.
+  // Two values because the useful range is narrow and the difference between them
+  // is mostly region count rather than accuracy.
+  { id: 'segment.02', opts: { mode: 'trace', trace: { segment: 0.02 } } },
+  { id: 'segment.05', opts: { mode: 'trace', trace: { segment: 0.05 } } },
+  // Segmentation plus the quantisation-aware simplifier, which is the only
+  // configuration that emits curves on a noisy source. Measured on 1x fidelity it
+  // loses badly — 72 -> 196 KB on a photograph — but 1x fidelity is precisely what
+  // this harness exists to distrust, so it gets a row rather than an assumption.
+  { id: 'segment+lattice', opts: { mode: 'trace', trace: { segment: 0.02, latticeSimplify: true } } },
 ];
 
 // ------------------------------------------------------------------- rendering

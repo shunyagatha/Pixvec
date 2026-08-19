@@ -164,14 +164,30 @@ describe('optimizeSvg', () => {
       expect(compareImages(before.image, after.image).ssim).toBeGreaterThan(0.999);
     });
 
-    it('rounds numbers inside transform and viewBox without fusing them', () => {
+    it('rounds numbers inside viewBox without fusing them', () => {
       const svg =
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12.004 8.006" width="20" height="20">' +
-        '<g transform="translate(3.004.517)"><path d="M0 0h1z"/></g></svg>';
+        '<path d="M0 0h1z"/></svg>';
+      expect(optimizeSvg(svg)).toMatch(/viewBox="0 0 12 8\.01"/);
+    });
+
+    it('leaves transform alone rather than rounding it', () => {
+      // This assertion used to say the opposite, on the fixture
+      // `transform="translate(3.004.517)"`, and it was wrong twice over.
+      //
+      // The fixture is not valid SVG: abutting numbers are path-data grammar, and
+      // a transform requires comma-wsp between its arguments. And the assertion
+      // pulled the numbers out with a regex and compared only those, so it could
+      // not see that the optimiser was deleting the parentheses around them —
+      // which is how `matrix(...)` shipped as `matrix1.77 0 0 ...` for so long.
+      //
+      // Transform numbers are multipliers. Rounding one rescales the whole subtree,
+      // so they are copied through untouched; see the note in svg/optimize.ts.
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">' +
+        '<g transform="translate(3.004, 0.517) scale(1.7656463)"><path d="M0 0h1z"/></g></svg>';
       const out = optimizeSvg(svg);
-      expect(out).toMatch(/viewBox="0 0 12 8\.01"/);
-      const t = out.match(/transform="([^"]*)"/)![1];
-      expect(t.match(/-?(?:\d+\.?\d*|\.\d+)/g)!.map(Number)).toEqual([3, 0.52]);
+      expect(out).toContain('transform="translate(3.004, 0.517) scale(1.7656463)"');
     });
   });
 });
