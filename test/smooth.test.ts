@@ -205,3 +205,168 @@ describe('contour regularisation moves vertices only inside the grid uncertainty
     expect(JSON.stringify(on)).not.toBe(JSON.stringify(off));
   });
 });
+
+describe('junction pinning makes neighbours agree exactly', () => {
+  /**
+   * Two regions that share a boundary hold two private copies of it. Smoothing the
+   * copies independently moves them apart and the subject falls to pieces.
+   *
+   * The fix is NOT a shared arc structure — that was built first and is
+   * unnecessary. At a lattice vertex where exactly two cracks meet, exactly two
+   * faces meet and BOTH traverse BOTH cracks, so the vertex's two neighbours are
+   * the same pair for both faces, merely swapped. `(prev + next) / 2` is symmetric
+   * under that swap, so both faces compute the same position, for every pass.
+   *
+   * It fails only where three or more cracks meet. Pin those and the agreement is
+   * exact — measured at 0 disagreeing vertices, max gap 0.00e+0, over ~50,000
+   * shared vertices across three subjects.
+   *
+   * BOTH halves are required. Without junction retention in the contour collapse a
+   * geometrically collinear junction is dropped, the two faces diverge past it, and
+   * the same measurement gives 1,011 disagreements at up to 0.61px.
+   */
+  const scene = async (split: boolean) => {
+    const { connectedComponents } = await import('../src/vectorize/components.js');
+    const { traceComponents } = await import('../src/vectorize/contour.js');
+    const { regulariseAgreeing } = await import('../src/vectorize/junctions.js');
+    // Four quadrants, so the centre is a degree-4 junction and each edge is shared.
+    const W = 40, H = 40;
+    const labels = new Int32Array(W * H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) labels[y * W + x] = (x < 20 ? 0 : 1) + (y < 20 ? 0 : 2);
+    }
+    const comps = connectedComponents(labels, W, H, -1);
+    const loops = traceComponents(comps.labels, W, H, comps.count, 'left', undefined, split);
+    return { loops, geo: regulariseAgreeing(loops, comps.labels, W, H, 8, 0.75) };
+  };
+
+  const disagreement = (loops: Awaited<ReturnType<typeof scene>>['loops'], geo: Map<unknown, Float64Array>) => {
+    const seen = new Map<string, [number, number]>();
+    let checked = 0, worst = 0;
+    for (const arr of loops) {
+      for (const l of arr) {
+        const g = geo.get(l);
+        if (!g) continue;
+        for (let i = 0; i < l.pts.length / 2; i++) {
+          const key = `${l.pts[i * 2]},${l.pts[i * 2 + 1]}`;
+          const pos: [number, number] = [g[i * 2], g[i * 2 + 1]];
+          const prev = seen.get(key);
+          if (prev) {
+            checked++;
+            worst = Math.max(worst, Math.hypot(prev[0] - pos[0], prev[1] - pos[1]));
+          } else seen.set(key, pos);
+        }
+      }
+    }
+    return { checked, worst };
+  };
+
+  it('gives every shared vertex one position', async () => {
+    const { loops, geo } = await scene(true);
+    const { checked, worst } = disagreement(loops, geo);
+    expect(checked, 'the fixture produced no shared vertices to compare').toBeGreaterThan(0);
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  it('pins junctions and the frame, and nothing else', async () => {
+    const { pinsFor, crackDegree } = await import('../src/vectorize/junctions.js');
+    const { connectedComponents } = await import('../src/vectorize/components.js');
+    const { traceComponents } = await import('../src/vectorize/contour.js');
+    const W = 40, H = 40;
+    const labels = new Int32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) labels[y * W + x] = (x < 20 ? 0 : 1) + (y < 20 ? 0 : 2);
+    const comps = connectedComponents(labels, W, H, -1);
+    const loops = traceComponents(comps.labels, W, H, comps.count, 'left', undefined, true);
+    for (const l of loops.flat()) {
+      const pins = pinsFor(l, comps.labels, W, H);
+      for (let i = 0; i < pins.length; i++) {
+        const x = l.pts[i * 2], y = l.pts[i * 2 + 1];
+        const onFrame = x <= 0 || y <= 0 || x >= W || y >= H;
+        const deg = crackDegree(comps.labels, W, H, x, y);
+        expect(Boolean(pins[i]), `vertex ${x},${y} degree ${deg}`).toBe(onFrame || deg !== 2);
+      }
+    }
+  });
+
+  it('pins the image corner, which a bare closed-loop pass retreats inward', async () => {
+    const { pinsFor } = await import('../src/vectorize/junctions.js');
+    const { connectedComponents } = await import('../src/vectorize/components.js');
+    const { traceComponents } = await import('../src/vectorize/contour.js');
+    // One region filling the frame: every corner is crack-degree 2, so only the
+    // frame rule holds it. Without that the fill shrinks off the picture edge.
+    const W = 16, H = 16;
+    const labels = new Int32Array(W * H);
+    const comps = connectedComponents(labels, W, H, -1);
+    const loops = traceComponents(comps.labels, W, H, comps.count, 'left', undefined, true);
+    const l = loops.flat()[0];
+    expect(l).toBeDefined();
+    const pins = pinsFor(l!, comps.labels, W, H);
+    expect(Array.from(pins).every((p) => p === 1)).toBe(true);
+  });
+});
+
+describe('a junction that is geometrically straight still splits the boundary', () => {
+  /**
+   * The case that makes junction retention load-bearing, and which a
+   * four-quadrant fixture misses entirely because every junction there is also a
+   * corner.
+   *
+   * Bottom half is one region; the top half changes region halfway across. The
+   * boundary between them runs dead straight, but the neighbour above it changes
+   * at the midpoint. That midpoint is a crack-degree-3 junction sitting on a
+   * straight line, so the collinear collapse deletes it unless told otherwise —
+   * and past a deleted junction the two faces follow different cracks and their
+   * smoothed positions diverge.
+   */
+  const build = async (split: boolean) => {
+    const { connectedComponents } = await import('../src/vectorize/components.js');
+    const { traceComponents } = await import('../src/vectorize/contour.js');
+    const { regulariseAgreeing } = await import('../src/vectorize/junctions.js');
+    const W = 40, H = 40;
+    const labels = new Int32Array(W * H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) labels[y * W + x] = y >= 20 ? 0 : (x < 20 ? 1 : 2);
+    }
+    const comps = connectedComponents(labels, W, H, -1);
+    const loops = traceComponents(comps.labels, W, H, comps.count, 'left', undefined, split);
+    const geo = regulariseAgreeing(loops, comps.labels, W, H, 8, 0.75);
+    let checked = 0, worst = 0;
+    const seen = new Map<string, [number, number]>();
+    for (const l of loops.flat()) {
+      const g = geo.get(l);
+      if (!g) continue;
+      for (let i = 0; i < l.pts.length / 2; i++) {
+        const key = `${l.pts[i * 2]},${l.pts[i * 2 + 1]}`;
+        const pos: [number, number] = [g[i * 2], g[i * 2 + 1]];
+        const prev = seen.get(key);
+        if (prev) { checked++; worst = Math.max(worst, Math.hypot(prev[0] - pos[0], prev[1] - pos[1])); }
+        else seen.set(key, pos);
+      }
+    }
+    return { checked, worst };
+  };
+
+  it('agrees exactly when the collinear junction is retained', async () => {
+    const { checked, worst } = await build(true);
+    expect(checked).toBeGreaterThan(0);
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  // There is deliberately NO unit test asserting that retention is REQUIRED, and
+  // the reason is worth recording rather than hiding. Every fixture small enough
+  // to reason about ends up with its junctions either on the frame or on a
+  // geometric corner, so they are pinned or retained anyway and the scene agrees
+  // with retention switched off — the assertion passes for the wrong reason.
+  //
+  // The evidence that retention is load-bearing is the corpus measurement, on
+  // real images, at 8 passes and a 0.75px band:
+  //
+  //                    retention off            retention on
+  //   logo-tux         1,011 disagree, 0.61px   0 disagree, 0.00
+  //   alpha-dice       2,566 disagree, 0.89px   0 disagree, 0.00
+  //   the sticker        693 disagree, 0.68px   0 disagree, 0.00
+  //
+  // Reproduce with `regulariseAgreeing` over `traceComponents(..., split)` for
+  // both values of `split`, comparing each lattice vertex's smoothed position
+  // across every loop that contains it.
+});

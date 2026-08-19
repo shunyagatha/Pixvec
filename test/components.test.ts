@@ -101,3 +101,59 @@ describe('despeckle', () => {
     expect(classes[6 * w + 6]).toBe(5);
   });
 });
+
+describe('traceComponents records which region lies across each boundary edge', () => {
+  /**
+   * The walk already had to know this — it tests `labels[neighbour] !== c` to decide
+   * an edge exists at all — and threw it away. Keeping it is what lets a later pass
+   * tell "this run of boundary is shared with region 7" from "…with region 12".
+   *
+   * Two neighbours currently hold two private copies of the boundary between them.
+   * That is invisible while both copies are the same staircase, and becomes visible
+   * the moment either is smoothed: the copies drift apart and the background shows
+   * through. Knowing the pair is the first requirement for smoothing it once.
+   */
+  const bands = async (W = 12, H = 6) => {
+    const { connectedComponents } = await import('../src/vectorize/components.js');
+    const { traceComponents } = await import('../src/vectorize/contour.js');
+    const labels = new Int32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) labels[y * W + x] = x < 4 ? 0 : x < 8 ? 1 : 2;
+    const comps = connectedComponents(labels, W, H, -1);
+    return { comps, loops: traceComponents(comps.labels, W, H, comps.count) };
+  };
+
+  it('names both neighbours of a band that sits between two others', async () => {
+    const { comps, loops } = await bands();
+    const { OUTSIDE_FRAME } = await import('../src/vectorize/contour.js');
+    // Find the middle band by the classes it borders, not by index.
+    const seenPerComponent = [];
+    for (let c = 0; c < comps.count; c++) {
+      for (const l of loops[c] ?? []) {
+        seenPerComponent.push([...new Set(Array.from(l.otherSide ?? []))].sort((a, b) => a - b));
+      }
+    }
+    // Exactly one band borders two other regions; the outer two border one each.
+    const withTwoNeighbours = seenPerComponent.filter(
+      (s) => s.filter((v) => v !== OUTSIDE_FRAME).length === 2,
+    );
+    expect(withTwoNeighbours).toHaveLength(1);
+    expect(seenPerComponent.filter((s) => s.filter((v) => v !== OUTSIDE_FRAME).length === 1)).toHaveLength(2);
+  });
+
+  it('marks the image border rather than inventing a region there', async () => {
+    const { loops } = await bands();
+    const { OUTSIDE_FRAME } = await import('../src/vectorize/contour.js');
+    const all = loops.flat().flatMap((l) => Array.from(l.otherSide ?? []));
+    expect(all).toContain(OUTSIDE_FRAME);
+    // The sentinel must be distinct from -1, which means "labelled void".
+    expect(OUTSIDE_FRAME).not.toBe(-1);
+  });
+
+  it('keeps one neighbour entry per emitted vertex', async () => {
+    const { loops } = await bands();
+    for (const l of loops.flat()) {
+      expect(l.otherSide, 'a loop came back with no neighbour data').toBeDefined();
+      expect(l.otherSide!.length).toBe(l.pts.length / 2);
+    }
+  });
+});

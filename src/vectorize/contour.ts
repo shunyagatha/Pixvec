@@ -18,7 +18,25 @@ export interface Loop {
   pts: Int32Array;
   /** Positive for an outer boundary, negative for a hole. */
   signedArea: number;
+  /**
+   * For each retained vertex, the label of the region on the OTHER side of the
+   * boundary edge leaving it. {@link OUTSIDE_FRAME} where that edge is the image
+   * border, and `-1` where the neighbour is unlabelled void.
+   *
+   * The walk already had to know this to decide an edge existed at all — it tests
+   * `labels[neighbour] !== c` — and threw it away. Keeping it is what lets a later
+   * pass tell "this run of boundary is shared with region 7" from "…with region
+   * 12", which is the difference between two neighbours agreeing about where their
+   * shared edge lies and each holding a private copy of it.
+   *
+   * Optional so every existing consumer ignores it and nothing about the emitted
+   * geometry changes.
+   */
+  otherSide?: Int32Array;
 }
+
+/** `otherSide` value for a boundary edge that runs along the image border. */
+export const OUTSIDE_FRAME = -2;
 
 /**
  * How to resolve a diagonal self-touch (the checkerboard saddle), mirroring
@@ -78,6 +96,7 @@ export function traceComponents(
   componentCount: number,
   turnPolicy: TurnPolicy = 'left',
   budget?: LoopBudgetGuard,
+  splitAtJunctions = false,
 ): Loop[][] {
   const VW = width + 1; // vertices per row
   const vertexCount = VW * (height + 1);
@@ -99,15 +118,19 @@ export function traceComponents(
   const edgeFrom = new Int32Array(edgeCount);
   const edgeTo = new Int32Array(edgeCount);
   const edgeComp = new Int32Array(edgeCount);
+  // Which region lies across each edge. Free: every call site below already had
+  // to compute it to decide the edge exists.
+  const edgeOther = new Int32Array(edgeCount);
   const edgeNext = new Int32Array(edgeCount);
   const used = new Uint8Array(edgeCount);
   const head = new Int32Array(vertexCount).fill(-1);
 
   let e = 0;
-  const emit = (from: number, to: number, comp: number): void => {
+  const emit = (from: number, to: number, comp: number, other: number): void => {
     edgeFrom[e] = from;
     edgeTo[e] = to;
     edgeComp[e] = comp;
+    edgeOther[e] = other;
     edgeNext[e] = head[from];
     head[from] = e;
     e++;
@@ -124,10 +147,18 @@ export function traceComponents(
       const bl = (y + 1) * VW + x;     // (x,   y+1)
       const br = bl + 1;               // (x+1, y+1)
 
-      if (y === 0 || labels[row + x - width] !== c) emit(tl, tr, c);           // top, →
-      if (x === width - 1 || labels[row + x + 1] !== c) emit(tr, br, c);       // right, ↓
-      if (y === height - 1 || labels[row + x + width] !== c) emit(br, bl, c);  // bottom, ←
-      if (x === 0 || labels[row + x - 1] !== c) emit(bl, tl, c);               // left, ↑
+      if (y === 0 || labels[row + x - width] !== c) {
+        emit(tl, tr, c, y === 0 ? OUTSIDE_FRAME : labels[row + x - width]);           // top, →
+      }
+      if (x === width - 1 || labels[row + x + 1] !== c) {
+        emit(tr, br, c, x === width - 1 ? OUTSIDE_FRAME : labels[row + x + 1]);       // right, ↓
+      }
+      if (y === height - 1 || labels[row + x + width] !== c) {
+        emit(br, bl, c, y === height - 1 ? OUTSIDE_FRAME : labels[row + x + width]);  // bottom, ←
+      }
+      if (x === 0 || labels[row + x - 1] !== c) {
+        emit(bl, tl, c, x === 0 ? OUTSIDE_FRAME : labels[row + x - 1]);               // left, ↑
+      }
     }
   }
 
@@ -146,7 +177,7 @@ export function traceComponents(
     if (used[start]) continue;
     const loop = walkLoop(
       start, edgeComp[start], edgeFrom, edgeTo, edgeComp, edgeNext, head, used,
-      VW, width, height, labels, turnPolicy,
+      VW, width, height, labels, turnPolicy, edgeOther, splitAtJunctions,
     );
     if (loop) result[edgeComp[start]].push(loop);
   }
@@ -168,9 +199,13 @@ function walkLoop(
   height: number,
   labels: Int32Array,
   turnPolicy: TurnPolicy,
+  edgeOther: Int32Array,
+  splitAtJunctions: boolean,
 ): Loop | null {
   const xs: number[] = [];
   const ys: number[] = [];
+  // Neighbour across the edge LEAVING each vertex, collected alongside the walk.
+  const os: number[] = [];
 
   let current = startEdge;
   let dx = 0;
@@ -186,6 +221,7 @@ function walkLoop(
 
     xs.push(fx);
     ys.push(fy);
+    os.push(edgeOther[current]);
 
     dx = tx - fx;
     dy = ty - fy;
@@ -205,20 +241,30 @@ function walkLoop(
   // arrive as 500 collinear points.
   const kx: number[] = [];
   const ky: number[] = [];
+  const ko: number[] = [];
   const n = xs.length;
   for (let i = 0; i < n; i++) {
     const p = (i - 1 + n) % n;
     const q = (i + 1) % n;
     const ax = xs[i] - xs[p], ay = ys[i] - ys[p];
     const bx = xs[q] - xs[i], by = ys[q] - ys[i];
-    if (ax * by - ay * bx !== 0) {
+    // A vertex where the neighbour CHANGES is a junction — the point where three
+    // regions meet — and it has to survive even when it is geometrically
+    // collinear, or the two boundary runs either side of it merge into one and
+    // stop matching the runs the neighbouring regions see. Off by default,
+    // because keeping it would add vertices to output that is otherwise pinned
+    // byte-for-byte.
+    const junction = splitAtJunctions && os[i] !== os[(i - 1 + n) % n];
+    if (ax * by - ay * bx !== 0 || junction) {
       kx.push(xs[i]);
       ky.push(ys[i]);
+      ko.push(os[i]);
     }
   }
   if (kx.length < 3) return null;
 
   const pts = new Int32Array(kx.length * 2);
+  const otherSide = Int32Array.from(ko);
   let area2 = 0;
   for (let i = 0; i < kx.length; i++) {
     pts[i * 2] = kx[i];
@@ -227,7 +273,7 @@ function walkLoop(
     area2 += kx[i] * ky[j] - kx[j] * ky[i];
   }
 
-  return { pts, signedArea: area2 / 2 };
+  return { pts, signedArea: area2 / 2, otherSide };
 }
 
 /**

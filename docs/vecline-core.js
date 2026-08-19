@@ -1539,8 +1539,9 @@ function tally(out, comps, classes, idx, inBounds, self, isSmall, voidClass) {
 }
 
 // src/vectorize/contour.ts
+var OUTSIDE_FRAME = -2;
 var BYTES_PER_EDGE = 72;
-function traceComponents(labels, width, height, componentCount, turnPolicy = "left", budget) {
+function traceComponents(labels, width, height, componentCount, turnPolicy = "left", budget, splitAtJunctions = false) {
   const VW = width + 1;
   const vertexCount = VW * (height + 1);
   let edgeCount = 0;
@@ -1558,14 +1559,16 @@ function traceComponents(labels, width, height, componentCount, turnPolicy = "le
   const edgeFrom = new Int32Array(edgeCount);
   const edgeTo = new Int32Array(edgeCount);
   const edgeComp = new Int32Array(edgeCount);
+  const edgeOther = new Int32Array(edgeCount);
   const edgeNext = new Int32Array(edgeCount);
   const used = new Uint8Array(edgeCount);
   const head = new Int32Array(vertexCount).fill(-1);
   let e = 0;
-  const emit2 = (from, to, comp) => {
+  const emit2 = (from, to, comp, other) => {
     edgeFrom[e] = from;
     edgeTo[e] = to;
     edgeComp[e] = comp;
+    edgeOther[e] = other;
     edgeNext[e] = head[from];
     head[from] = e;
     e++;
@@ -1579,10 +1582,18 @@ function traceComponents(labels, width, height, componentCount, turnPolicy = "le
       const tr = tl + 1;
       const bl = (y + 1) * VW + x;
       const br = bl + 1;
-      if (y === 0 || labels[row + x - width] !== c) emit2(tl, tr, c);
-      if (x === width - 1 || labels[row + x + 1] !== c) emit2(tr, br, c);
-      if (y === height - 1 || labels[row + x + width] !== c) emit2(br, bl, c);
-      if (x === 0 || labels[row + x - 1] !== c) emit2(bl, tl, c);
+      if (y === 0 || labels[row + x - width] !== c) {
+        emit2(tl, tr, c, y === 0 ? OUTSIDE_FRAME : labels[row + x - width]);
+      }
+      if (x === width - 1 || labels[row + x + 1] !== c) {
+        emit2(tr, br, c, x === width - 1 ? OUTSIDE_FRAME : labels[row + x + 1]);
+      }
+      if (y === height - 1 || labels[row + x + width] !== c) {
+        emit2(br, bl, c, y === height - 1 ? OUTSIDE_FRAME : labels[row + x + width]);
+      }
+      if (x === 0 || labels[row + x - 1] !== c) {
+        emit2(bl, tl, c, x === 0 ? OUTSIDE_FRAME : labels[row + x - 1]);
+      }
     }
   }
   if (budget) {
@@ -1605,15 +1616,18 @@ function traceComponents(labels, width, height, componentCount, turnPolicy = "le
       width,
       height,
       labels,
-      turnPolicy
+      turnPolicy,
+      edgeOther,
+      splitAtJunctions
     );
     if (loop) result[edgeComp[start]].push(loop);
   }
   return result;
 }
-function walkLoop(startEdge, comp, edgeFrom, edgeTo, edgeComp, edgeNext, head, used, VW, width, height, labels, turnPolicy) {
+function walkLoop(startEdge, comp, edgeFrom, edgeTo, edgeComp, edgeNext, head, used, VW, width, height, labels, turnPolicy, edgeOther, splitAtJunctions) {
   const xs = [];
   const ys = [];
+  const os = [];
   let current = startEdge;
   let dx = 0;
   let dy = 0;
@@ -1625,6 +1639,7 @@ function walkLoop(startEdge, comp, edgeFrom, edgeTo, edgeComp, edgeNext, head, u
     const tx = to % VW, ty = (to - tx) / VW;
     xs.push(fx);
     ys.push(fy);
+    os.push(edgeOther[current]);
     dx = tx - fx;
     dy = ty - fy;
     const next = pickNext(
@@ -1649,19 +1664,23 @@ function walkLoop(startEdge, comp, edgeFrom, edgeTo, edgeComp, edgeNext, head, u
   if (xs.length < 3) return null;
   const kx = [];
   const ky = [];
+  const ko = [];
   const n2 = xs.length;
   for (let i = 0; i < n2; i++) {
     const p = (i - 1 + n2) % n2;
     const q = (i + 1) % n2;
     const ax = xs[i] - xs[p], ay = ys[i] - ys[p];
     const bx = xs[q] - xs[i], by = ys[q] - ys[i];
-    if (ax * by - ay * bx !== 0) {
+    const junction = splitAtJunctions && os[i] !== os[(i - 1 + n2) % n2];
+    if (ax * by - ay * bx !== 0 || junction) {
       kx.push(xs[i]);
       ky.push(ys[i]);
+      ko.push(os[i]);
     }
   }
   if (kx.length < 3) return null;
   const pts = new Int32Array(kx.length * 2);
+  const otherSide = Int32Array.from(ko);
   let area2 = 0;
   for (let i = 0; i < kx.length; i++) {
     pts[i * 2] = kx[i];
@@ -1669,7 +1688,7 @@ function walkLoop(startEdge, comp, edgeFrom, edgeTo, edgeComp, edgeNext, head, u
     const j = (i + 1) % kx.length;
     area2 += kx[i] * ky[j] - kx[j] * ky[i];
   }
-  return { pts, signedArea: area2 / 2 };
+  return { pts, signedArea: area2 / 2, otherSide };
 }
 var DIRS = new Int32Array(8);
 var EDGES = new Int32Array(4);
@@ -2784,6 +2803,94 @@ function smoothPreservingEdges(img, strength, opts = {}) {
   for (let i = 0; i < out.length; i++) out[i] = cur[i];
   for (let i = 3; i < out.length; i += 4) out[i] = img.data[i];
   return { width: w, height: h, data: out };
+}
+
+// src/vectorize/junctions.ts
+function crackDegree(labels, width, height, vx, vy) {
+  const cell = (cx, cy) => cx < 0 || cy < 0 || cx >= width || cy >= height ? OUTSIDE : labels[cy * width + cx];
+  const tl = cell(vx - 1, vy - 1);
+  const tr = cell(vx, vy - 1);
+  const bl = cell(vx - 1, vy);
+  const br = cell(vx, vy);
+  let d = 0;
+  if (tl !== tr) d++;
+  if (bl !== br) d++;
+  if (tl !== bl) d++;
+  if (tr !== br) d++;
+  return d;
+}
+var OUTSIDE = -999;
+function pinsFor(loop, labels, width, height) {
+  const n2 = loop.pts.length / 2;
+  const pinned = new Uint8Array(n2);
+  for (let i = 0; i < n2; i++) {
+    const x = loop.pts[i * 2];
+    const y = loop.pts[i * 2 + 1];
+    if (x <= 0 || y <= 0 || x >= width || y >= height) {
+      pinned[i] = 1;
+      continue;
+    }
+    if (crackDegree(labels, width, height, x, y) !== 2) pinned[i] = 1;
+  }
+  return pinned;
+}
+function regularisePinned(loop, pinned, band, passes) {
+  const n2 = loop.pts.length / 2;
+  const out = new Float64Array(loop.pts.length);
+  for (let k = 0; k < loop.pts.length; k++) out[k] = loop.pts[k];
+  if (n2 < 4 || passes <= 0 || band <= 0) return out;
+  const ox = new Float64Array(n2);
+  const oy = new Float64Array(n2);
+  const px = new Float64Array(n2);
+  const py = new Float64Array(n2);
+  for (let i = 0; i < n2; i++) {
+    ox[i] = px[i] = loop.pts[i * 2];
+    oy[i] = py[i] = loop.pts[i * 2 + 1];
+  }
+  const tx = new Float64Array(n2);
+  const ty = new Float64Array(n2);
+  const band2 = band * band;
+  for (let pass = 0; pass < passes; pass++) {
+    for (let i = 0; i < n2; i++) {
+      if (pinned[i]) {
+        tx[i] = px[i];
+        ty[i] = py[i];
+        continue;
+      }
+      const a = i === 0 ? n2 - 1 : i - 1;
+      const b = i === n2 - 1 ? 0 : i + 1;
+      tx[i] = (px[i] + (px[a] + px[b]) / 2) / 2;
+      ty[i] = (py[i] + (py[a] + py[b]) / 2) / 2;
+    }
+    for (let i = 0; i < n2; i++) {
+      if (pinned[i]) continue;
+      let dx = tx[i] - ox[i];
+      let dy = ty[i] - oy[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > band2) {
+        const k = band / Math.sqrt(d2);
+        dx *= k;
+        dy *= k;
+      }
+      px[i] = ox[i] + dx;
+      py[i] = oy[i] + dy;
+    }
+  }
+  for (let i = 0; i < n2; i++) {
+    out[i * 2] = px[i];
+    out[i * 2 + 1] = py[i];
+  }
+  return out;
+}
+function regulariseAgreeing(loopsByComponent, labels, width, height, passes, band = 0.75) {
+  const geometry = /* @__PURE__ */ new Map();
+  if (passes <= 0) return geometry;
+  for (const loops of loopsByComponent) {
+    for (const loop of loops ?? []) {
+      geometry.set(loop, regularisePinned(loop, pinsFor(loop, labels, width, height), band, passes));
+    }
+  }
+  return geometry;
 }
 
 // src/vectorize/quantize.ts
@@ -4582,7 +4689,24 @@ function trace(source, opts = {}) {
     }
   }
   report("Tracing contours", 55);
-  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget);
+  const shareBoundaries = (o.regularise ?? 0) > 0;
+  const loopsByComponent = traceComponents(
+    comps.labels,
+    width,
+    height,
+    comps.count,
+    o.turnPolicy,
+    o.loopBudget,
+    shareBoundaries
+  );
+  const sharedGeometry = shareBoundaries ? regulariseAgreeing(
+    loopsByComponent,
+    comps.labels,
+    width,
+    height,
+    o.regularise ?? 0,
+    o.regulariseBand ?? 0.75
+  ) : void 0;
   const EMPTY_LOOPS = [];
   const extendedLoops = (rank, rankOfClass2) => {
     const mask = new Int32Array(width * height).fill(-1);
@@ -4650,7 +4774,11 @@ function trace(source, opts = {}) {
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     latticeBand: opts.latticeBand,
-    regularise: o.regularise,
+    // Deliberately NOT forwarded when shared-boundary regularisation ran: that
+    // already smoothed every run once, with junctions pinned. A second closed-loop
+    // pass in the fitter would move those junctions and undo the agreement the
+    // first pass exists to create.
+    regularise: shareBoundaries ? 0 : o.regularise,
     regulariseBand: o.regulariseBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
@@ -4685,7 +4813,8 @@ function trace(source, opts = {}) {
     const path = new PathBuilder(o.precision);
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue;
-      const refined = o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts;
+      const shared = sharedGeometry?.get(loop);
+      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
       const fitted = fitLoop(refined, fitOpts);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);

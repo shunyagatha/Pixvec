@@ -9,6 +9,7 @@ import { fitLoop, type FitOptions } from './fit.js';
 import { refineLoop } from './subpixel.js';
 import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
+import { regulariseAgreeing } from './junctions.js';
 import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -692,7 +693,21 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   }
 
   report('Tracing contours', 55);
-  const loopsByComponent = traceComponents(comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget);
+  // `regularise` needs junctions to survive the collinear collapse, or two runs
+  // either side of one merge and stop matching what the neighbour sees.
+  const shareBoundaries = (o.regularise ?? 0) > 0;
+  const loopsByComponent = traceComponents(
+    comps.labels, width, height, comps.count, o.turnPolicy, o.loopBudget, shareBoundaries,
+  );
+  // Smooth each shared boundary ONCE, before anything reads a loop's shape.
+  // Independent per-loop smoothing moves two neighbours' copies of the same edge
+  // apart and the background shows through; see arcs.ts.
+  const sharedGeometry = shareBoundaries
+    ? regulariseAgreeing(
+        loopsByComponent, comps.labels, width, height,
+        o.regularise ?? 0, o.regulariseBand ?? 0.75,
+      )
+    : undefined;
   /** Shared empty stand-in, so releasing a consumed entry allocates nothing. */
   const EMPTY_LOOPS: Loop[] = [];
 
@@ -788,7 +803,11 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // Measured when this was missed: SSIM 0.9895 against a required 0.9999.
     latticeSimplify: opts.latticeSimplify ?? (!o.subpixel && !o.extendUnder && o.tolerance > 0),
     latticeBand: opts.latticeBand,
-    regularise: o.regularise,
+    // Deliberately NOT forwarded when shared-boundary regularisation ran: that
+    // already smoothed every run once, with junctions pinned. A second closed-loop
+    // pass in the fitter would move those junctions and undo the agreement the
+    // first pass exists to create.
+    regularise: shareBoundaries ? 0 : o.regularise,
     regulariseBand: o.regulariseBand,
     tolerance: o.tolerance,
     fitError: o.fitError,
@@ -864,9 +883,12 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       // is refused above, so this can only be false when subpixel is off anyway.
       // It stays because the two conditions are independent and a future caller of
       // extendedLoops should not silently start refining a union boundary.
-      const refined = o.subpixel && !rankOfClass
+      // Shared-boundary geometry wins where it exists: it is the only version both
+      // neighbours agree on, and the per-loop paths below cannot produce that.
+      const shared = sharedGeometry?.get(loop);
+      const refined = shared ?? (o.subpixel && !rankOfClass
         ? refineLoop(loop, img, classes, cls).pts
-        : loop.pts;
+        : loop.pts);
       const fitted = fitLoop(refined, fitOpts);
       if (!fitted) continue;
       path.moveTo(fitted.start.x, fitted.start.y);
