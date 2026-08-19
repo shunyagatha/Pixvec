@@ -4,7 +4,7 @@ import { connectedComponents } from '../src/vectorize/components.js';
 import { decomposeToArcs, fitFaces, isInterior, reversePath } from '../src/vectorize/arcs.js';
 import { fitOpen, regulariseOpen } from '../src/vectorize/fit.js';
 import type { FittedPath } from '../src/vectorize/fit.js';
-import { vectorize } from '../src/api.js';
+import { PRESETS, vectorize } from '../src/api.js';
 import { createImage, setPixel } from './fixtures.js';
 // eslint-disable-next-line
 import { pathStats } from '../scripts/lib/path-stats.mjs';
@@ -238,5 +238,43 @@ describe('mosaic end to end', () => {
     const off = await vectorize({ image: img }, { mode: 'trace' });
     const explicitOff = await vectorize({ image: img }, { mode: 'trace', trace: { mosaic: false } });
     expect(off.svg).toBe(explicitOff.svg);
+  });
+});
+
+describe('the clean preset', () => {
+  it('declares the mosaic and the seam stroke, so overriding works normally', () => {
+    // In the preset rather than forced inside trace(): presets are merged before
+    // the caller's own `trace` block, so `--stroke-width 0` still wins.
+    expect(PRESETS.clean.mosaic).toBe(true);
+    expect(PRESETS.clean.strokeWidth).toBe(1);
+  });
+
+  it('emits curves on flat art, where it used to emit none', async () => {
+    const size = 72;
+    const img = createImage(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const d = Math.hypot(x - size / 2, y - size / 2);
+        const v = d < size / 3 ? 30 : 235;
+        setPixel(img, x, y, v, v, v, 255);
+      }
+    }
+    const out = await vectorize({ image: img }, { mode: 'trace', preset: 'clean' });
+    const stats = pathStats(out.svg) as { curves: number; curvePct: number };
+    expect(stats.curves).toBeGreaterThan(0);
+  });
+
+  it('lets a caller turn the seam stroke back off', async () => {
+    const size = 48;
+    const img = createImage(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) setPixel(img, x, y, x < size / 2 ? 20 : 240, 128, 128, 255);
+    }
+    const on = await vectorize({ image: img }, { mode: 'trace', preset: 'clean' });
+    const off = await vectorize({ image: img }, {
+      mode: 'trace', preset: 'clean', trace: { strokeWidth: 0 },
+    });
+    expect(on.svg).toContain('stroke-width');
+    expect(off.svg).not.toContain('stroke-width');
   });
 });

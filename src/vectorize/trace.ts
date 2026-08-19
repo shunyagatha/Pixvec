@@ -276,9 +276,27 @@ export interface TraceOptions {
    * above: 0.9791 / 0.9798 / 0.9736 / 0.9618 / 0.9462 across the same sweep,
    * peaking at 0.25 and negative by 0.5. Do not tune this on a simple figure.
    *
+   * WHAT DECIDES IT: whether the geometry is ON THE LATTICE. That was missing from
+   * every version of this note above, and it reconciles them.
+   *
+   * A polygon traced from crack-following has integer coordinates, so at integer
+   * magnification a join antialiases to nothing and there is no gap to fill — the
+   * stroke can only fatten the shape, which is why this measured NEGATIVE on 26 of
+   * 32 subjects as a global default. Curved output does not land on the lattice, so
+   * joins really do leave a hairline, and the stroke really does repaint it.
+   *
+   * Rendered with nothing painted beneath, so a seam shows rather than blending
+   * into a backing rect, `mosaic` leaks these pixels at 2.7x magnification:
+   *
+   *   logo-tux       943 -> 66      alpha-dice   32 -> 0      photo-parrots 284 -> 0
+   *
+   * for 1.9% more bytes and +0.0405 SSIM on logo-tux. `clean` therefore ships it on
+   * and nothing else does. On a noisy JPEG it still loses — photo-jpeg-artifacts
+   * goes 0.5597 -> 0.5363 — because there the boundary is noise and thickening
+   * noise is not an improvement.
+   *
    * 0 (default) emits fill-only paths. 0.5 is the value the corpus supports where
-   * the artwork is opaque; a value around 1 is typical elsewhere and was the old
-   * advice here.
+   * the artwork is opaque and lattice-aligned; 1 is what curved output wants.
    */
   strokeWidth?: number;
   /**

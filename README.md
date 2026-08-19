@@ -496,7 +496,7 @@ Regions are painted largest-first, so by the time a small shape is drawn the lar
 vecline vectorize chart.png --extend-under
 ```
 
-Two things follow. A boundary shared by two regions is normally traced *twice*, once as each one's edge; here it is traced once. And the hairline seam antialiasing can leave between two abutting shapes cannot appear, because there is no longer a join for it to open at — this is what `--stroke-width` exists to paint over — and, measured, it does more than cover a gap: repainting those half-covered boundary pixels is worth up to +0.085 SSIM on the corpus for under 3% more bytes. It is off by default because it also paints *outside* the silhouette, which haloes transparent artwork on a dark background.
+Two things follow. A boundary shared by two regions is normally traced *twice*, once as each one's edge; here it is traced once. And the hairline seam antialiasing can leave between two abutting shapes cannot appear, because there is no longer a join for it to open at — this is what `--stroke-width` exists to paint over — and, measured, it does more than cover a gap: repainting those half-covered boundary pixels is worth up to +0.085 SSIM on the corpus for under 3% more bytes. It is off by default everywhere except `--preset clean`, because it also paints *outside* the silhouette, which haloes transparent artwork on a dark background. What decides its value is whether the geometry sits on the pixel lattice: a lattice polygon's joins antialias to nothing so the stroke only fattens, while `clean`'s curves leave a real hairline — rendered with nothing beneath it, logo-tux leaks 943 pixels at 2.7x magnification and the stroke takes that to 66.
 
 It is **off by default, and the reason is measured rather than assumed**:
 

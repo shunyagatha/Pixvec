@@ -222,7 +222,56 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // boundaries that are still rough, and fitting a rough boundary produces a rough
   // curve. Smoothing the IMAGE is what earns curves later; forcing them earlier
   // just spends bytes on noise. Do not add them back without rendering the result.
-  clean: { colors: 16, minArea: 4, smooth: 1, segment: 0.02 },
+  //
+  // MOSAIC, added after the three overrides above were re-examined. The reason
+  // they failed is now known and it was never the tolerance: crack-following emits
+  // axis-aligned unit steps, so an untouched lattice vertex cannot deviate from a
+  // chord by less than 1/sqrt(5) = 0.4472136. Above the 0.4 tolerance, so
+  // Douglas-Peucker removed NOTHING, every loop took the polygon shortcut and the
+  // Schneider fitter never ran once. Raising the tolerance past the dead zone is
+  // what produced the 547 speckling curves: it let the fitter loose on a boundary
+  // that was still a staircase.
+  //
+  // `mosaic` fixes the input instead. Each shared boundary is smoothed once, off
+  // the lattice, with junctions pinned, and fitted once for both neighbours —
+  // which is required, because the fitter is not reversal-symmetric and two faces
+  // fitting private copies land up to 2.94px apart. Segment census against the
+  // shipped preset and a paid rival:
+  //
+  //                     clean        mosaic+stroke      rival
+  //   logo-tux      0.0% / 6,234    75.8% /  1,714   84.8% /  1,350
+  //   alpha-dice   23.9% / 47,044   71.7% / 13,425   78.6% / 11,198
+  //
+  // WHAT IT COSTS, which is not nothing. On flat art it is a clear win —
+  // alpha-dice improves on every axis at once (342,118 -> 225,324 bytes, SSIM
+  // 0.8913 -> 0.8974). On PHOTOGRAPHS it is worse on both: over six photographic
+  // subjects SSIM falls and gzip roughly doubles, because a photograph has no
+  // staircase to remove, only detail. `auto` and `photo` remain the right choice
+  // there, and this preset does not claim otherwise.
+  //
+  // `strokeWidth: 1` is here for a measured reason and not by analogy with the
+  // rival. Curved boundaries no longer land on the lattice, so a join antialiases
+  // and can leave a hairline: rendered with nothing painted beneath, logo-tux
+  // leaks 943 pixels at 2.7x magnification and the stroke takes it to 66,
+  // alpha-dice 32 to 0, photo-parrots 284 to 0. It costs 1.9% of bytes and gains
+  // 0.0405 SSIM on logo-tux. This is why the same option measured NEGATIVE as a
+  // global default: on lattice-aligned polygons there is no gap to fill and the
+  // stroke only fattens the shape.
+  //
+  // The rival solves the same problem with a separate pass of open stroked paths
+  // whose colour is the exact mean of the two fills either side — 100% of its
+  // segments duplicate fill geometry, and it costs 35-45% of its file. Not built:
+  // a same-colour stroke already takes the leak to zero for about 2%. Their
+  // version is the more correct one — a mean-coloured cover does not move the
+  // boundary, whereas a per-region stroke widens each region by half its width —
+  // so revisit this if the fattening ever shows. Measured bleed into transparent
+  // pixels on logo-tux: 217 -> 765.
+  //
+  // Colour count stays at 16. The rival describes logo-tux with ten fills and it
+  // was worth checking whether that was the advantage; swept at 8, 10, 12 and 16
+  // it is an ordinary size-for-fidelity trade and not a free win — mean SSIM over
+  // eight subjects runs 0.7406 (16), 0.7357 (12), 0.7327 (10), 0.7316 (8).
+  clean: { colors: 16, minArea: 4, smooth: 1, segment: 0.02, mosaic: true, strokeWidth: 1 },
   // `photo` carries no minArea/tolerance/cornerAngle overrides on purpose. It
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake
   // `autoTracePreset` documents having removed — and `npm run compare` caught
