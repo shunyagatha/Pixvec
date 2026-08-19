@@ -974,6 +974,20 @@ var SvgDoc = class {
     return this;
   }
   /**
+   * Claim a place in child order now and supply the markup later, for a layer
+   * whose CONTENT depends on children emitted after it but whose POSITION must
+   * be before them. An unfilled slot serialises as nothing.
+   */
+  reserve() {
+    this.children.push("");
+    return this.children.length - 1;
+  }
+  /** Fill a slot from {@link reserve}. */
+  fill(slot, markup) {
+    this.children[slot] = markup;
+    return this;
+  }
+  /**
    * Wrap markup in a named `<g>` that Inkscape and Illustrator recognise as an
    * editable **layer**, so a traced document opens as organised colour layers
    * rather than one flattened blob. Using this once declares the `inkscape`
@@ -1007,11 +1021,12 @@ var SvgDoc = class {
     );
   }
   toString() {
-    const { width, height, generator, shapeRendering, emitDimensions = true, title } = this.opts;
+    const { width, height, generator, shapeRendering, emitDimensions = true, title, rootAttrs } = this.opts;
     const attrs = [
       'xmlns="http://www.w3.org/2000/svg"',
       `viewBox="0 0 ${width} ${height}"`
     ];
+    if (rootAttrs?.length) attrs.push(...rootAttrs);
     if (this.inkscapeNs) {
       attrs.push('xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"');
     }
@@ -1029,7 +1044,7 @@ var SvgDoc = class {
 `;
   }
   get childCount() {
-    return this.children.length;
+    return this.children.reduce((n2, c) => n2 + (c === "" ? 0 : 1), 0);
   }
 };
 function opacityValue(a) {
@@ -4912,6 +4927,96 @@ function round3(value, precision) {
   return Math.round(value * f) / f;
 }
 
+// src/vectorize/interpolate.ts
+function classAdjacency(classes, width, height) {
+  const adj = /* @__PURE__ */ new Map();
+  const bump = (a, b) => {
+    const lo = a < b ? a : b;
+    const hi = a < b ? b : a;
+    let inner = adj.get(lo);
+    if (inner === void 0) {
+      inner = /* @__PURE__ */ new Map();
+      adj.set(lo, inner);
+    }
+    inner.set(hi, (inner.get(hi) ?? 0) + 1);
+  };
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const c = classes[row + x];
+      if (c < 0) continue;
+      if (x + 1 < width) {
+        const r = classes[row + x + 1];
+        if (r >= 0 && r !== c) bump(c, r);
+      }
+      if (y + 1 < height) {
+        const d = classes[row + x + width];
+        if (d >= 0 && d !== c) bump(c, d);
+      }
+    }
+  }
+  return adj;
+}
+function blendPair(a, b) {
+  const sum = a.a + b.a;
+  if (sum === 0) return { r: 0, g: 0, b: 0, a: 0 };
+  const wa = a.a / sum;
+  const wb = b.a / sum;
+  return {
+    r: Math.round(a.r * wa + b.r * wb),
+    g: Math.round(a.g * wa + b.g * wb),
+    b: Math.round(a.b * wa + b.b * wb),
+    a: Math.round(sum / 2)
+  };
+}
+function interpolationLayer(input) {
+  const { adjacency, pathId, colorOf, backgroundClass, width, minLength = 8 } = input;
+  const clipClasses = /* @__PURE__ */ new Set();
+  const background = [];
+  const byClip = /* @__PURE__ */ new Map();
+  const paint = (fromId, colour) => `<use href="#${fromId}" stroke="${shortHex(colour.r, colour.g, colour.b)}"${opacity(colour.a)}/>`;
+  const los = [...adjacency.keys()].sort((x, y) => x - y);
+  for (const lo of los) {
+    const inner = adjacency.get(lo);
+    for (const hi of [...inner.keys()].sort((x, y) => x - y)) {
+      if (inner.get(hi) < minLength) continue;
+      const blend = blendPair(colorOf(lo), colorOf(hi));
+      if (lo === backgroundClass || hi === backgroundClass) {
+        const other = lo === backgroundClass ? hi : lo;
+        const id = pathId.get(other);
+        if (id !== void 0) background.push(paint(id, blend));
+        continue;
+      }
+      const loId = pathId.get(lo);
+      const hiId = pathId.get(hi);
+      if (loId === void 0 || hiId === void 0) continue;
+      for (const [clip, fromId] of [[hi, loId], [lo, hiId]]) {
+        clipClasses.add(clip);
+        let list = byClip.get(clip);
+        if (list === void 0) {
+          list = [];
+          byClip.set(clip, list);
+        }
+        list.push(paint(fromId, blend));
+      }
+    }
+  }
+  if (background.length === 0 && byClip.size === 0) return { markup: "", clipClasses };
+  const groups = [...byClip.keys()].sort((x, y) => x - y).map((clip) => `<g clip-path="url(#c${pathId.get(clip)})">${byClip.get(clip).join("")}</g>`);
+  return {
+    markup: `<g fill="none" stroke-width="${width}" stroke-linejoin="round">${background.join("")}${groups.join("")}</g>`,
+    clipClasses
+  };
+}
+function clipPathDef(pathIdOfClass) {
+  return `<clipPath id="c${pathIdOfClass}"><use href="#${pathIdOfClass}"/></clipPath>`;
+}
+function opacity(a) {
+  if (a >= 255) return "";
+  const v = (a / 255).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return ` stroke-opacity="${v.startsWith("0.") ? v.slice(1) : v}"`;
+}
+
 // src/vectorize/trace.ts
 var TRACE_DEFAULTS = {
   colors: 16,
@@ -5020,6 +5125,11 @@ var TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
+  // Off everywhere, `clean` included. It is worth +0.0187 mean SSIM for +5.5%
+  // gzip over the corpus, which is a good trade on flat art (+0.0502 on logo-tux)
+  // and a thin one on a clean JPEG (+0.0026 on photo-jpeg-source) — a decision a
+  // caller should make, not a default.
+  interpolate: false,
   // OFF by default, tried twice and rejected twice on measurement.
   //
   // A second block used to sit above this one opening "On by default at 0.02",
@@ -5253,11 +5363,17 @@ function trace(source, opts = {}) {
   const orderedClasses = [...classArea.keys()].sort(
     (a, b) => (classArea.get(b) ?? 0) - (classArea.get(a) ?? 0) || a - b
   );
+  const interpolate = o.interpolate === true && !o.extendUnder && !o.groupByColor;
   const doc = new SvgDoc({
     width,
     height,
     generator: o.generator,
-    title: o.title
+    title: o.title,
+    // Inherited, so one attribute serves every `<clipPath>` the pass adds; stating
+    // it is not optional, because neither resvg nor librsvg falls back to the
+    // referenced path's own `fill-rule` when clipping. Harmless when the pass
+    // ends up adding no clip path at all — the property reaches nothing else.
+    rootAttrs: interpolate ? ['clip-rule="evenodd"'] : void 0
   });
   const backgroundClass = o.background && !hasVoid && orderedClasses.length > 1 && orderedClasses[0] < GRAD_BASE ? orderedClasses[0] : -1;
   if (backgroundClass >= 0) {
@@ -5272,6 +5388,8 @@ function trace(source, opts = {}) {
       doc.addBackground(bg);
     }
   }
+  const interpSlot = interpolate ? doc.reserve() : -1;
+  const interpPathId = /* @__PURE__ */ new Map();
   const fitOpts = {
     // Sub-pixel refinement moves vertices off the grid; without it every
     // boundary vertex is a lattice point and Douglas-Peucker is the wrong tool.
@@ -5322,7 +5440,7 @@ function trace(source, opts = {}) {
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold
   };
-  const strokeFor = (c) => strokeAttrs(c, o.strokeWidth);
+  const strokeFor = (c) => strokeAttrs(c, interpolate ? 0 : o.strokeWidth);
   let regions = 0;
   let rankOfClass = null;
   if (o.extendUnder) {
@@ -5384,7 +5502,14 @@ function trace(source, opts = {}) {
       const stroke = strokeFor(color);
       const attrs = `${fillAttrs(color)}${stroke}`;
       const shapes = prims.filter((p) => p !== null).map((p) => primitiveSvg(p, attrs, o.precision)).join("");
-      markup = path.isEmpty() ? shapes : `${shapes}<path fill-rule="evenodd" d="${path.toString()}"${attrs}/>`;
+      const referenceable = interpolate && primCount === 0 && !path.isEmpty();
+      if (referenceable) {
+        const id = `i${interpPathId.size}`;
+        interpPathId.set(cls, id);
+        markup = `<g${attrs}><path id="${id}" fill-rule="evenodd" d="${path.toString()}"/></g>`;
+      } else {
+        markup = path.isEmpty() ? shapes : `${shapes}<path fill-rule="evenodd" d="${path.toString()}"${attrs}/>`;
+      }
       label = color.a < 255 ? `${shortHex(color.r, color.g, color.b)}@${color.a}` : shortHex(color.r, color.g, color.b);
     }
     if (o.groupByColor) {
@@ -5392,6 +5517,18 @@ function trace(source, opts = {}) {
     } else {
       doc.add(markup);
     }
+  }
+  if (interpolate && interpPathId.size > 1) {
+    const translucent = [...alphaLevels].some((a) => a > 0 && a < 255);
+    const layer = interpolationLayer({
+      adjacency: classAdjacency(classes, width, height),
+      pathId: interpPathId,
+      colorOf: (cls) => classColor(cls, palette, alphaLevels, levelCount),
+      backgroundClass,
+      width: o.interpolateWidth ?? (translucent ? 1 : 1.5)
+    });
+    for (const cls of layer.clipClasses) doc.addDef(clipPathDef(interpPathId.get(cls)));
+    doc.fill(interpSlot, layer.markup);
   }
   return {
     svg: doc.toString(),

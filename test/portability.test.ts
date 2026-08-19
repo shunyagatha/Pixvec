@@ -54,6 +54,7 @@ const CORE_MODULES = [
   'vectorize/fit.ts',
   'vectorize/gradient.ts',
   'vectorize/primitives.ts',
+  'vectorize/interpolate.ts',
   'vectorize/centerline.ts',
   'vectorize/pixel.ts',
   'vectorize/exact.ts',

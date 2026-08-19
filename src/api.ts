@@ -253,10 +253,22 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // rival. Curved boundaries no longer land on the lattice, so a join antialiases
   // and can leave a hairline: rendered with nothing painted beneath, logo-tux
   // leaks 943 pixels at 2.7x magnification and the stroke takes it to 66,
-  // alpha-dice 32 to 0, photo-parrots 284 to 0. It costs 1.9% of bytes and gains
-  // 0.0405 SSIM on logo-tux. This is why the same option measured NEGATIVE as a
-  // global default: on lattice-aligned polygons there is no gap to fill and the
-  // stroke only fattens the shape.
+  // alpha-dice 32 to 0, photo-parrots 284 to 0. This is why the same option
+  // measured NEGATIVE as a global default: on lattice-aligned polygons there is no
+  // gap to fill and the stroke only fattens the shape.
+  //
+  // IT IS NOT A CLEAN WIN, AND THE FIRST VERSION OF THIS NOTE SAID IT WAS. That
+  // was measured on three subjects, all of which gain. At N=9 it HARMS three:
+  //
+  //   logo-tux    +0.0444   photo-cat        +0.0454   photo-portrait  +0.0136
+  //   alpha-dice  +0.0076   photo-parrots    +0.0083   jpeg-source     +0.0068
+  //   lighthouse  -0.0215   jpeg-artifacts   -0.0218   motorcycles     -0.0217
+  //
+  // Mean +0.0068. It stays because the mean is positive and the three it hurts are
+  // photographs, which this preset already documents itself as wrong for — but a
+  // reader deciding whether to keep it deserves the whole table, not the half that
+  // flatters it. Textbook corpus-size trap: the same question answers yes at N=3
+  // and "yes, mostly" at N=9.
   //
   // THE RIVAL'S STROKE PASS IS NOT A SEAM COVER, and this comment said it was.
   //
@@ -289,9 +301,31 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // bleed into transparent pixels of 217 -> 765 — but it is not the equivalent of
   // theirs and must not be recorded as one.
   //
-  // Building the real thing is the largest single item left. The geometry is
-  // already in hand: every Arc in arcs.ts records the two regions it separates, so
-  // the blend colour is available without tracing anything new.
+  // BUILT, as `interpolate`, and off by default everywhere — including here. See
+  // src/vectorize/interpolate.ts. What it is worth, against this preset as shipped:
+  //
+  //   logo-tux   0.9174 -> 0.9232   alpha-dice  0.8971 -> 0.9182
+  //   lighthouse 0.6633 -> 0.6912   motorcycles 0.5728 -> 0.6008
+  //   jpeg-source 0.9276 -> 0.9235  photo-cat   0.8234 -> 0.8202
+  //
+  // Only logo-tux earns the claim, and the reason is the blur control below: on
+  // every other subject a free Gaussian blur scores HIGHER than this pass does, so
+  // those gains are not evidence of anything a viewer would see. On logo-tux blur
+  // loses by 0.035 and the pass wins, which is what makes that one real.
+  //
+  // THE BLUR CONTROL, which is a constraint on every fidelity number in this
+  // project and not just on this option. Wrapping our own output in one ~150-byte
+  // `<feGaussianBlur>` gains more SSIM than anything shipped here, on 8 of 9
+  // subjects, for 1.00-1.02x gzip — jpeg-artifacts +0.1161, motorcycles +0.1037,
+  // portrait +0.0944. Rendered, it is visibly WORSE: the whole image is smeared.
+  // logo-tux is the only subject where blur loses, which is exactly why this is a
+  // flat-art preset and why its claims stop at flat art.
+  //
+  // `npm run blur:control` runs it against any candidate. A photographic gain
+  // smaller than that subject's blur delta has not been shown to be visible, and
+  // that includes how we score the RIVAL: their advantage on photographs is
+  // measured in the same regime, so "+0.2223 on motorcycles" is partly this effect
+  // and must not be quoted as recovered detail.
   //
   // Colour count stays at 16. The rival describes logo-tux with ten fills and it
   // was worth checking whether that was the advantage; swept at 8, 10, 12 and 16
