@@ -80,6 +80,29 @@ export interface FittedPath {
   segments: Segment[];
 }
 
+/**
+ * WHERE THE FLAT-ART GAP IS NOT, so the next attempt starts somewhere new.
+ *
+ * A paid rival describes logo-tux with 551 curves at SSIM 0.9483. This fitter uses
+ * 1,082 at 0.8747 — more curves, worse fit — which looks like over-subdivision.
+ * It is not, and the following have each been swept and found not to move it:
+ *
+ *   cornerAngle 45..160        SSIM flat at 0.871-0.877 across the whole range
+ *   tolerance/fitError 0.3     +0.007, and 0.4 is a documented dead-zone edge
+ *   colours 16 -> 32 -> 64     WORSE (0.8747 -> 0.8526 -> 0.8390)
+ *   minArea 0                  +0.015, at 2.4x the bytes
+ *   MAX_HANDLE_RATIO 1..4      nothing, +-0.0001
+ *   NEWTON_BAND 4 -> 12        nothing
+ *   strokeWidth                +0.054, but paints outside the silhouette
+ *   segmentation, image-space smoothing, contour regularisation — all measured
+ *   elsewhere and none of them close it
+ *
+ * Throwing bytes at it caps out around 0.89 while the rival holds 0.9483 at 54 KB.
+ * So the limit is not a parameter in this file, and it is not the palette either —
+ * the rival uses TEN distinct fills against our sixteen and still wins. What
+ * remains untested is where the region boundaries are decided in the first place,
+ * which is quantisation and region formation, not curve fitting. Look there.
+ */
 const MAX_NEWTON_ITERATIONS = 6;
 /** Controls how far Béziers may be from a line before they stop being one. */
 const COLLINEAR_EPSILON = 0.05;
@@ -933,6 +956,20 @@ function generateBezier(
   // back. No cubic that stays near its chord needs a handle longer than the
   // chord itself — a quarter circle, the tightest common case, uses about 0.55 —
   // so clamping there discards only garbage.
+  //
+  // CHALLENGED AND CONFIRMED. The argument above was written for staircase input,
+  // and sub-pixel refinement no longer produces one, so the clamp looked like it
+  // might have outlived its reason and be forcing splits on long smooth spans.
+  // Swept on logo-tux at `preset: logo`, against a paid rival scoring 0.9483 with
+  // 551 curves:
+  //
+  //   MAX_HANDLE_RATIO   1      2      3      4
+  //   curves          1,082  1,091  1,091  1,091
+  //   SSIM           0.8747 0.8747 0.8748 0.8747
+  //
+  // and NEWTON_BAND 4 against 12 changes nothing either. Both constants are
+  // correct as they stand: the fitter is neither over-clamping nor starved of
+  // reparameterisation. "Discards only garbage" is measured, not assumed.
   const maxAlpha = segLength * MAX_HANDLE_RATIO;
   if (alphaL > maxAlpha) alphaL = maxAlpha;
   if (alphaR > maxAlpha) alphaR = maxAlpha;
