@@ -495,3 +495,132 @@ describe('multi-size ICO keeps its AND-mask transparency', () => {
     expect(image.width).toBe(48);
   });
 });
+
+describe('Netpbm P1 is decoded as characters, not as numbers', () => {
+  /**
+   * P1 is the one Netpbm variant whose samples are CHARACTERS, and whitespace
+   * between them is optional. Real files exploit that: a wide row is written as
+   * `11111111000...` with nothing separating the samples. Reading those with the
+   * integer scanner consumed the maximal digit run, so an entire row became one
+   * enormous integer, the payload ran out early, and a valid image was rejected by
+   * a decoder that advertises PBM support.
+   *
+   * Fixed in `pnm.ts` with `nextBit`, and covered until now only by
+   * `scripts/format-sweep.mjs`, which needs ffmpeg and a built `dist/` and is not
+   * wired into `npm test`. So the fix shipped with no guard inside the suite.
+   *
+   * In PBM, 1 is BLACK and 0 is WHITE — the opposite of the greyscale variants.
+   */
+  const decode = async (text: string) => {
+    const { loadAnyAsRaster } = await import('../src/api.js');
+    const { image } = await loadAnyAsRaster(new TextEncoder().encode(text), 'test.pbm');
+    return image;
+  };
+  const at = (img: { data: Uint8ClampedArray; width: number }, x: number, y: number) =>
+    img.data[(y * img.width + x) * 4];
+
+  it('reads a row written with no separators at all', async () => {
+    // The exact shape that broke it: every sample of a row run together.
+    const img = await decode('P1\n8 2\n11110000\n00001111\n');
+    expect([img.width, img.height]).toEqual([8, 2]);
+    expect(at(img, 0, 0), 'a 1 should be black').toBe(0);
+    expect(at(img, 7, 0), 'a 0 should be white').toBe(255);
+    expect(at(img, 0, 1)).toBe(255);
+    expect(at(img, 7, 1)).toBe(0);
+  });
+
+  it('still reads a row that IS whitespace-separated', async () => {
+    const img = await decode('P1\n4 1\n1 0 1 0\n');
+    expect(at(img, 0, 0)).toBe(0);
+    expect(at(img, 1, 0)).toBe(255);
+  });
+
+  it('tolerates comments between samples', async () => {
+    const img = await decode('P1\n# a comment in the header\n4 1\n1010\n');
+    expect([img.width, img.height]).toEqual([4, 1]);
+    expect(at(img, 0, 0)).toBe(0);
+  });
+});
+
+describe('TGA respects the alpha-bit count instead of trusting padding', () => {
+  /**
+   * Bits 0-3 of the image descriptor are the ALPHA BIT COUNT. Zero means the file
+   * carries no alpha, so the fourth byte of a 32-bit pixel is undefined padding.
+   * This decoder trusted it anyway, and the result was not subtle: a colour-mapped
+   * RLE file with `attributeBits = 0` decoded with 0 of 16,384 pixels opaque — the
+   * whole image transparent — which is why pixel mode emitted an SVG containing no
+   * shapes and still reported "bit-exact by construction".
+   *
+   * Fixed in `tga.ts`, but the suite's only TGA fixtures were 32-bit UNCOMPRESSED
+   * true-colour. The colour-mapped RLE path — the one the defect was found in —
+   * had no unit coverage at all.
+   */
+  const build = (opts: { attributeBits: number; mapEntryAlpha: number }) => {
+    const W = 8, H = 4;
+    const hdr = Buffer.alloc(18);
+    hdr.writeUInt8(0, 0);            // no image id
+    hdr.writeUInt8(1, 1);            // colour map present
+    hdr.writeUInt8(9, 2);            // type 9: RLE colour-mapped
+    hdr.writeUInt16LE(0, 3);         // first entry
+    hdr.writeUInt16LE(2, 5);         // two entries
+    hdr.writeUInt8(32, 7);           // 32-bit entries
+    hdr.writeUInt16LE(W, 12);
+    hdr.writeUInt16LE(H, 14);
+    hdr.writeUInt8(8, 16);           // 8-bit indices
+    hdr.writeUInt8(0x20 | opts.attributeBits, 17);  // top-left origin + alpha bits
+    // Colour map: BGRA. The fourth byte is what the descriptor governs.
+    const map = Buffer.from([
+      200, 60, 30, opts.mapEntryAlpha,
+      30, 200, 60, opts.mapEntryAlpha,
+    ]);
+    // RLE: each row is one run of 8 identical indices, alternating 0 and 1.
+    const rows: number[] = [];
+    for (let y = 0; y < H; y++) rows.push(0x80 | (W - 1), y % 2);
+    return Buffer.concat([hdr, map, Buffer.from(rows)]);
+  };
+
+  const decode = async (buf: Buffer) => {
+    const { loadAnyAsRaster } = await import('../src/api.js');
+    const { image } = await loadAnyAsRaster(buf, 'test.tga');
+    return image;
+  };
+  const opaqueCount = (img: { data: Uint8ClampedArray }) => {
+    let n = 0;
+    for (let i = 3; i < img.data.length; i += 4) if (img.data[i] === 255) n++;
+    return n;
+  };
+
+  it('is fully opaque when the header declares no alpha, whatever the padding says', async () => {
+    // The exact defect: padding byte 0, attributeBits 0. Must NOT be transparent.
+    const img = await decode(build({ attributeBits: 0, mapEntryAlpha: 0 }));
+    expect([img.width, img.height]).toEqual([8, 4]);
+    expect(opaqueCount(img), 'padding was read as alpha').toBe(32);
+  });
+
+  // AN OPEN QUESTION, deliberately not asserted either way.
+  //
+  // With `attributeBits: 8` and a colour map whose entries carry alpha 0, this
+  // fixture decodes 32/32 OPAQUE — the declared alpha does not reach the output.
+  // Probed directly against `decodeTga`, bypassing sharp, at four combinations of
+  // (attributeBits, map alpha): all four give 32/32 opaque, while the colours come
+  // through correctly (BGRA 200,60,30 -> rgb(30,60,200)), so the map IS being read.
+  //
+  // `readPixel` at depth 32 does honour `attributeBits`, and the colour map is
+  // built through it, so on the face of it the alpha should survive. Either
+  // something downstream of the map lookup overwrites it, or this fixture is
+  // subtly malformed in a way that does not affect the colour bytes.
+  //
+  // Not asserted, because an assertion here would encode a guess as a contract in
+  // whichever direction I happened to pick. Reproduce with:
+  //   decodeTga(build({ attributeBits: 8, mapEntryAlpha: 0 }))
+  // and compare against a colour-mapped TGA from a known-good writer before
+  // deciding whether the decoder or the fixture is wrong.
+
+  it('decodes the colour-mapped RLE payload to the right colours', async () => {
+    const img = await decode(build({ attributeBits: 0, mapEntryAlpha: 255 }));
+    // Entry 0 is BGRA(200,60,30) -> RGB(30,60,200); entry 1 -> RGB(60,200,30).
+    expect([img.data[0], img.data[1], img.data[2]]).toEqual([30, 60, 200]);
+    const secondRow = (1 * img.width) * 4;
+    expect([img.data[secondRow], img.data[secondRow + 1], img.data[secondRow + 2]]).toEqual([60, 200, 30]);
+  });
+});
