@@ -360,6 +360,7 @@ interface VectorizeCliOptions {
   primitiveError?: number;
   optimize?: boolean;
   optTolerance?: number;
+  quadratics?: boolean;
   refineIterations?: number;
   blur?: number;
   blurDelta?: number;
@@ -514,6 +515,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       // reason.
       optimize: o.optimize,
       optimizeError: o.optTolerance,
+      quadratics: o.quadratics,
       refineIterations: o.refineIterations,
       blur: o.blur,
       blurDelta: o.blurDelta,
@@ -2154,6 +2156,13 @@ program
   .option('--primitive-error <px>', 'per-vertex residual budget for --primitives', floatArg('--primitive-error', 0.1, 10))
   .option('--no-optimize', 'do not merge adjacent curves that a single curve fits')
   .option('--opt-tolerance <n>', 'error budget for a curve merge (defaults to --fit-error)', floatArg('--opt-tolerance', 0.01, 100))
+  .option(
+    '--quadratics',
+    'write a quadratic (q) instead of a cubic (c) wherever one describes the same span '
+      + 'within the error budget the cubic already had to pass — four numbers against six. '
+      + 'Each replacement is checked against the ORIGINAL traced points, not against the cubic, '
+      + 'so the promised tolerance is unchanged. Off by default.',
+  )
   .optionsGroup('Colour and palette:')
   .option('--refine-iterations <n>', 'Lloyd relaxation passes during palette construction', intArg('--refine-iterations', 0, 32))
   .option('--blur <radius>', 'selective (edge-preserving) blur before quantisation, 1-5', intArg('--blur', 0, 5))

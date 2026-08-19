@@ -12,7 +12,7 @@
  */
 
 import type { TraceGeometry } from './geometry.js';
-import { rgbToCmyk, n } from './shared.js';
+import { rgbToCmyk, n, elevateQuad } from './shared.js';
 
 export interface EpsOptions {
   /** Emit CMYK colours (prepress) instead of RGB. */
@@ -60,14 +60,23 @@ export function toEps(geometry: TraceGeometry, opts: EpsOptions = {}): string {
       }
 
       out.push(`${n(sub.start.x)} ${n(fy(sub.start.y))} moveto`);
+      // The current point, tracked because PostScript has no quadratic operator
+      // and elevating one to a cubic needs the segment's start.
+      let cur = { x: sub.start.x, y: sub.start.y };
       for (const seg of sub.segments) {
         if (seg.kind === 'line') {
           out.push(`${n(seg.x)} ${n(fy(seg.y))} lineto`);
+        } else if (seg.kind === 'quad') {
+          const { c1, c2 } = elevateQuad(cur, { x: seg.x1, y: seg.y1 }, { x: seg.x, y: seg.y });
+          out.push(
+            `${n(c1.x)} ${n(fy(c1.y))} ${n(c2.x)} ${n(fy(c2.y))} ${n(seg.x)} ${n(fy(seg.y))} curveto`,
+          );
         } else {
           out.push(
             `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} curveto`,
           );
         }
+        cur = { x: seg.x, y: seg.y };
       }
       out.push('closepath');
     });

@@ -68,6 +68,19 @@ function replay(tokens: Array<string | number>): number[] {
         cx = nx; cy = ny;
         break;
       }
+      case 'Q': {
+        const a = next(), b = next();
+        cx = next(); cy = next();
+        pts.push(a, b, cx, cy);
+        break;
+      }
+      case 'q': {
+        const a = cx + next(), b = cy + next();
+        const nx = cx + next(), ny = cy + next();
+        pts.push(a, b, nx, ny);
+        cx = nx; cy = ny;
+        break;
+      }
       case 'z': case 'Z': cx = sx; cy = sy; break;
       default: throw new Error(`Unsupported command ${cmd}`);
     }
@@ -157,6 +170,63 @@ describe('PathBuilder separators', () => {
 
     let abs = 'M 24 8';
     for (const s of segments) abs += ` C ${s.map((v) => v.toFixed(3)).join(' ')}`;
+    abs += ' Z';
+
+    const render = async (d: string) => {
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56">` +
+        `<path d="${d}" fill="#000"/></svg>`;
+      const { image } = await rasterizeSvg(svg, { shapeRendering: 'crispEdges' });
+      return image.data;
+    };
+
+    const [relative, absolute] = await Promise.all([render(pb.toString()), render(abs)]);
+    expect(Buffer.from(relative.buffer as ArrayBuffer)).toEqual(
+      Buffer.from(absolute.buffer as ArrayBuffer),
+    );
+  });
+});
+
+/**
+ * `q` is four numbers where `c` is six, and it arrives in runs — degree
+ * reduction converts about nine emitted cubics in ten — so both hazards this
+ * file exists for apply to it at once: an elided repeated letter, and a
+ * relative encoding that must describe exactly the absolute curve.
+ */
+describe('PathBuilder.quadTo encoding', () => {
+  it('round-trips a run of quadratics through a strict parser', () => {
+    const pb = new PathBuilder(3);
+    pb.moveTo(24, 8);
+    pb.quadTo(32.992, 8.045, 44, 15);
+    pb.quadTo(44.416, 15.521, 44, 17);
+    pb.quadTo(46.878, 19.084, 47, 20);
+    pb.close();
+
+    const d = pb.toString();
+    // One letter for three commands, and the numbers still separated.
+    expect(d.match(/q/g)).toHaveLength(1);
+    const points = replay(tokenize(d));
+    expect(points.slice(0, 2)).toEqual([24, 8]);
+    expect(points[points.length - 2]).toBeCloseTo(47, 6);
+    expect(points[points.length - 1]).toBeCloseTo(20, 6);
+  });
+
+  it('produces identical geometry to an absolute-coordinate encoding', async () => {
+    const segments = [
+      [32.992, 8, 44, 15],
+      [44.416, 15.521, 44, 17],
+      [44.469, 17.704, 47, 20],
+      [48.341, 30.054, 41, 44],
+      [40.479, 44.416, 39, 44],
+    ];
+
+    const pb = new PathBuilder(3);
+    pb.moveTo(24, 8);
+    for (const s of segments) pb.quadTo(s[0], s[1], s[2], s[3]);
+    pb.close();
+
+    let abs = 'M 24 8';
+    for (const s of segments) abs += ` Q ${s.map((v) => v.toFixed(3)).join(' ')}`;
     abs += ' Z';
 
     const render = async (d: string) => {

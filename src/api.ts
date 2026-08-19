@@ -258,14 +258,40 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // global default: on lattice-aligned polygons there is no gap to fill and the
   // stroke only fattens the shape.
   //
-  // The rival solves the same problem with a separate pass of open stroked paths
-  // whose colour is the exact mean of the two fills either side — 100% of its
-  // segments duplicate fill geometry, and it costs 35-45% of its file. Not built:
-  // a same-colour stroke already takes the leak to zero for about 2%. Their
-  // version is the more correct one — a mean-coloured cover does not move the
-  // boundary, whereas a per-region stroke widens each region by half its width —
-  // so revisit this if the fattening ever shows. Measured bleed into transparent
-  // pixels on logo-tux: 217 -> 765.
+  // THE RIVAL'S STROKE PASS IS NOT A SEAM COVER, and this comment said it was.
+  //
+  // The earlier reading here — "a separate pass whose colour is the mean of the
+  // two fills, duplicating fill geometry, so a same-colour stroke is the cheap
+  // equivalent at 2% of the bytes" — got the mechanism wrong and therefore priced
+  // it wrong. It is a COLOUR-INTERPOLATION pass: it reconstructs the antialiased
+  // blend along every region boundary, which is information the fills do not
+  // carry. A same-colour stroke covers a gap and adds no colour at all, so the two
+  // are not substitutes.
+  //
+  // Measured by deleting only the stroke-only group and asserting the filled
+  // element count is unchanged, so this is the pass and not geometry removal:
+  //
+  //   subject          fills  strokes  strokes that are also a fill   with -> without
+  //   logo-tux            10       30          0                      0.9483 -> 0.8994
+  //   alpha-dice          40      125          1                      0.9126 -> 0.8962
+  //   photo-parrots      124      788          0                      0.8669 -> 0.7077
+  //   photo-motorcycles  145     3048          3                      0.8498 -> 0.6275
+  //
+  // Worth +0.0164 to +0.2223 SSIM across nine subjects, for 25-45% of their bytes.
+  // Almost none of their stroke colours appear as a fill anywhere in the file —
+  // they are blends, which is the whole point.
+  //
+  // WHAT THAT MEANS FOR US, stated plainly because it reverses the standing
+  // conclusion. Strip their pass and their filled partition scores 0.8994 against
+  // our 0.9174: we are 0.0180 AHEAD on regions and colour, and the entire deficit
+  // on logo-tux is this one rendering pass. Our `strokeWidth: 1` remains correct
+  // for what it does — it takes leaks 943 -> 66 for 1.9% of bytes, and costs
+  // bleed into transparent pixels of 217 -> 765 — but it is not the equivalent of
+  // theirs and must not be recorded as one.
+  //
+  // Building the real thing is the largest single item left. The geometry is
+  // already in hand: every Arc in arcs.ts records the two regions it separates, so
+  // the blend colour is available without tracing anything new.
   //
   // Colour count stays at 16. The rival describes logo-tux with ten fills and it
   // was worth checking whether that was the advantage; swept at 8, 10, 12 and 16

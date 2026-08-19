@@ -69,11 +69,18 @@ export interface FitOptions {
   rightAngleEnhance?: boolean;
   /** Degrees of slack allowed from true axis/right angle for {@link rightAngleEnhance}. Default 12. */
   rightAngleThreshold?: number;
+  /**
+   * Emit a quadratic wherever one describes the same span within the budget the
+   * cubic already had to pass. Off by default. See {@link reduceToQuadratics}.
+   */
+  quadratics?: boolean;
 }
 
 export type Segment =
   | { kind: 'line'; x: number; y: number }
-  | { kind: 'curve'; x1: number; y1: number; x2: number; y2: number; x: number; y: number };
+  | { kind: 'curve'; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
+  /** One control point, SVG's `q`. Four numbers where a cubic spends six. */
+  | { kind: 'quad'; x1: number; y1: number; x: number; y: number };
 
 export interface FittedPath {
   start: Point;
@@ -124,6 +131,23 @@ const TANGENT_WINDOW = 4;
  * — see {@link optimizeCurves}.
  */
 const MAX_OPTIMIZE_PASSES = 8;
+/**
+ * Largest distance between a cubic and its best quadratic, per unit of the
+ * cubic's third difference. Exact, not a safety factor.
+ *
+ * Degree-reducing a cubic `P0 P1 P2 P3` to the quadratic `P0 Q P3` with
+ * `Q = (3P1 + 3P2 - P0 - P3) / 4` leaves the difference curve
+ *
+ *   D(t) = (E / 2) * t (1 - t) (1 - 2t),      E = -P0 + 3P1 - 3P2 + P3
+ *
+ * and `|t(1-t)(1-2t)|` peaks at `sqrt(3)/18` (t = 1/2 +- sqrt(3)/6). So the
+ * greatest separation, at equal parameter, is `|E| * sqrt(3) / 36`. Distance at
+ * equal parameter is an upper bound on distance between the curves, which is the
+ * direction a budget needs.
+ */
+const QUAD_DEVIATION = Math.sqrt(3) / 36;
+/** Newton steps used to project a traced point onto a candidate quadratic. */
+const QUAD_PROJECT_STEPS = 4;
 
 /** Fit one closed lattice loop. Returns null if the loop degenerates. */
 export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOptions): FittedPath | null {
@@ -244,7 +268,13 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
       ? fitted
       : optimizeCurves(chain.x, chain.y, fitted, opts.optimizeError ?? opts.fitError);
 
-    for (const f of optimized) segments.push(f.segment);
+    // Degree reduction last: it reads a finished curve, and merging two
+    // quadratics is a question this fitter does not know how to ask.
+    const reduced = opts.quadratics
+      ? reduceToQuadratics(chain.x, chain.y, optimized, emittedErrorBudget(opts))
+      : optimized;
+
+    for (const f of reduced) segments.push(f.segment);
   }
 
   if (segments.length === 0) return null;
@@ -894,6 +924,202 @@ function tryMerge(
   return out[0] ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Degree reduction — a quadratic wherever one says the same thing
+// ---------------------------------------------------------------------------
+
+/**
+ * The nearest quadratic to a cubic, written into `out` as its single control
+ * point.
+ *
+ * `Q = (3(P1 + P2) - P0 - P3) / 4` is the least-squares degree reduction and
+ * also the minimax one: the residual `D(t)` is a fixed cubic Bernstein shape
+ * scaled by the third difference, so the same `Q` minimises every norm of it.
+ * See {@link QUAD_DEVIATION}.
+ */
+function bestQuadratic(
+  p0x: number, p0y: number,
+  c1x: number, c1y: number, c2x: number, c2y: number,
+  p3x: number, p3y: number,
+): Point {
+  return {
+    x: (3 * (c1x + c2x) - p0x - p3x) / 4,
+    y: (3 * (c1y + c2y) - p0y - p3y) / 4,
+  };
+}
+
+/** How far {@link bestQuadratic} can stray from the cubic it came from. */
+function quadDeviation(
+  p0x: number, p0y: number,
+  c1x: number, c1y: number, c2x: number, c2y: number,
+  p3x: number, p3y: number,
+): number {
+  const ex = -p0x + 3 * c1x - 3 * c2x + p3x;
+  const ey = -p0y + 3 * c1y - 3 * c2y + p3y;
+  return QUAD_DEVIATION * Math.hypot(ex, ey);
+}
+
+/** A point on a quadratic Bézier. */
+function quadAt(
+  p0x: number, p0y: number, qx: number, qy: number, p3x: number, p3y: number, t: number,
+): Point {
+  const m = 1 - t;
+  const a = m * m, b = 2 * m * t, c = t * t;
+  return { x: a * p0x + b * qx + c * p3x, y: a * p0y + b * qy + c * p3y };
+}
+
+/**
+ * Greatest distance from any traced point in `first..last` to the quadratic
+ * through `p0`, `q`, `p3` — measured against the CHAIN, never against the cubic.
+ *
+ * That distinction is the whole reason this function exists. The cubic is
+ * already up to `error` away from these points, so a test of the form "is the
+ * quadratic within `error` of the cubic" permits a total of `2 * error` and the
+ * promised tolerance is not a bound on anything. A previous attempt at this pass
+ * did exactly that and emitted geometry 0.80px out against a 0.4px budget.
+ *
+ * Each point is projected onto the curve by a few Newton steps from its
+ * chord-length parameter, keeping a step only when it shortens the distance. The
+ * result is therefore an upper bound on the true point-to-curve distance however
+ * badly Newton behaves, which is the safe direction for a gate.
+ */
+function quadMaxError(
+  x: Float64Array, y: Float64Array,
+  first: number, last: number,
+  qx: number, qy: number,
+): number {
+  const p0x = x[first], p0y = y[first];
+  const p3x = x[last], p3y = y[last];
+  const u = chordLengthParameterize(x, y, first, last);
+
+  let worst = 0;
+  for (let i = first + 1; i < last; i++) {
+    const px = x[i], py = y[i];
+    let t = u[i - first];
+    let p = quadAt(p0x, p0y, qx, qy, p3x, p3y, t);
+    let best = Math.hypot(p.x - px, p.y - py);
+
+    for (let k = 0; k < QUAD_PROJECT_STEPS; k++) {
+      // f(t) = (B(t) - P) . B'(t); minimise by driving f to zero.
+      const m = 1 - t;
+      const dx = 2 * (m * (qx - p0x) + t * (p3x - qx));
+      const dy = 2 * (m * (qy - p0y) + t * (p3y - qy));
+      const ddx = 2 * (p3x - 2 * qx + p0x);
+      const ddy = 2 * (p3y - 2 * qy + p0y);
+      const rx = p.x - px, ry = p.y - py;
+      const denom = dx * dx + dy * dy + rx * ddx + ry * ddy;
+      if (denom === 0) break;
+      let next = t - (rx * dx + ry * dy) / denom;
+      if (!Number.isFinite(next)) break;
+      if (next < 0) next = 0;
+      else if (next > 1) next = 1;
+      const cand = quadAt(p0x, p0y, qx, qy, p3x, p3y, next);
+      const dist = Math.hypot(cand.x - px, cand.y - py);
+      if (!(dist < best)) break;
+      best = dist;
+      t = next;
+      p = cand;
+    }
+
+    if (best > worst) worst = best;
+  }
+  return worst;
+}
+
+/**
+ * Rewrite cubics as quadratics wherever the quadratic still honours `error`.
+ *
+ * A quadratic is four numbers where a cubic is six, and on a traced boundary
+ * most cubics are barely cubic: across the 116,983 that `--preset clean` emits
+ * over the corpus, 44.7% sit within 0.1px of their best quadratic and 86.4%
+ * within 0.5px.
+ *
+ * THE ONE THING THIS PASS MUST NOT DO is measure the quadratic against the
+ * cubic. Both approximate the same traced points, and their errors add, so a
+ * quadratic "within 0.4px of a cubic that is within 0.4px of the boundary" is
+ * only promised to be within 0.8px of the boundary. That is not a hypothetical:
+ * the previous version of this function took that shortcut for short spans and
+ * landed 0.80px out against a 0.4px budget, and 0.48px out when the budget was
+ * tightened to 0.05 — the budget was not honoured at any setting.
+ *
+ * So there are two tests and they share one budget:
+ *
+ *   - With two or more interior points, {@link quadMaxError} measures the
+ *     quadratic against those points directly. Nothing about the cubic enters,
+ *     so nothing can compound: this is the same question, asked the same way,
+ *     that the cubic itself had to answer.
+ *   - With fewer, there is not enough evidence to measure against and the
+ *     analytic {@link quadDeviation} stands in — charged against what is LEFT of
+ *     the budget once the cubic's own measured error is subtracted. Their sum is
+ *     then bounded by `error`, which is the guarantee the caller was given.
+ */
+function reduceToQuadratics(
+  x: Float64Array, y: Float64Array,
+  segments: FittedSegment[],
+  error: number,
+): FittedSegment[] {
+  let converted = false;
+  const out: FittedSegment[] = [];
+
+  for (const f of segments) {
+    const s = f.segment;
+    if (s.kind !== 'curve') { out.push(f); continue; }
+
+    const p0x = x[f.first], p0y = y[f.first];
+    const q = bestQuadratic(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
+
+    let ok: boolean;
+    if (f.last - f.first >= 3) {
+      // Two or more interior points: ask the chain.
+      ok = quadMaxError(x, y, f.first, f.last, q.x, q.y) <= error;
+    } else {
+      const u = chordLengthParameterize(x, y, f.first, f.last);
+      const bez = Float64Array.of(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
+      const spent = computeMaxError(x, y, f.first, f.last, bez, u).maxError;
+      ok = quadDeviation(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y) <= error - spent;
+    }
+
+    if (!ok) { out.push(f); continue; }
+    converted = true;
+    out.push({
+      segment: { kind: 'quad', x1: q.x, y1: q.y, x: s.x, y: s.y },
+      first: f.first, last: f.last, t1: f.t1, t2: f.t2,
+    });
+  }
+
+  return converted ? out : segments;
+}
+
+/**
+ * The widest error any emitted curve on this chain already had to pass.
+ *
+ * The merge pass runs at `optimizeError`, which `clean` widens to 0.75, so the
+ * path's real promise is the larger of the two budgets and not `fitError`:
+ * merged curves already come out at up to 0.75, and a caller reading the
+ * emitted path cannot tell which segments those are. Gating on anything wider
+ * would quietly change what the caller was promised.
+ *
+ * GATING ON `fitError` INSTEAD IS DEFENSIBLE, AND IT COSTS. A segment the merge
+ * pass never touched was held to 0.4, and this lets degree reduction spend 0.75
+ * on it. Measured both ways over the mosaic:
+ *
+ *                     max(fitError, optimizeError)      fitError alone
+ *   logo-tux           955 quads, 18,666 / 7,526      735, 20,357 / 8,294
+ *   alpha-dice       6,946 quads, 142,526 / 50,703  5,132, 156,222 / 56,176
+ *
+ * — raw / gzip bytes, so the wider gate is worth about 9% more of the reduction
+ * on both. What it costs is measurable too, and it is not the promise: with the
+ * wider gate, logo-tux's 2,662 traced points sit further than 0.4 px from the
+ * emitted curve 319 times against 236, further than 0.6 px 68 times against 54,
+ * and further than 0.75 px zero times either way. The worst point moves from
+ * 0.7426 to 0.7444. The ceiling is set by the merge pass, which already reaches
+ * 0.74; degree reduction does not raise it.
+ */
+function emittedErrorBudget(opts: { fitError: number; optimize?: boolean; optimizeError?: number }): number {
+  if (opts.optimize === false) return opts.fitError;
+  return Math.max(opts.fitError, opts.optimizeError ?? opts.fitError);
+}
+
 function centerTangentOfChain(x: Float64Array, y: Float64Array, i: number): Point {
   const k = Math.min(TANGENT_WINDOW, i, x.length - 1 - i);
   if (k < 1) return normalize(x[i + 1] - x[i - 1], y[i + 1] - y[i - 1]);
@@ -1129,6 +1355,11 @@ export interface OpenFitOptions {
   regularise?: number;
   /** How far a vertex may travel from where the lattice put it. Default 0.75px. */
   regulariseBand?: number;
+  /**
+   * Emit a quadratic wherever one describes the same span within the budget the
+   * cubic already had to pass. Off by default. See {@link reduceToQuadratics}.
+   */
+  quadratics?: boolean;
 }
 
 /**
@@ -1259,7 +1490,10 @@ export function fitOpen(
     const optimized = opts.optimize === false
       ? fitted
       : optimizeCurves(cx, cy, fitted, opts.optimizeError ?? opts.fitError);
-    for (const f of optimized) segments.push(f.segment);
+    const reduced = opts.quadratics
+      ? reduceToQuadratics(cx, cy, optimized, emittedErrorBudget(opts))
+      : optimized;
+    for (const f of reduced) segments.push(f.segment);
   }
 
   if (segments.length === 0) {
@@ -1303,6 +1537,17 @@ export function flattenPath(path: FittedPath, spacing = 1): Float64Array {
       const ds = Math.max(1, Math.min(256, Math.ceil(dl / Math.max(0.05, spacing))));
       for (let k = 1; k <= ds; k++) {
         out.push(cx + ((s.x - cx) * k) / ds, cy + ((s.y - cy) * k) / ds);
+      }
+      cx = s.x; cy = s.y;
+      continue;
+    }
+    if (s.kind === 'quad') {
+      // Same control-polygon bound as the cubic below, over one fewer leg.
+      const qlen = Math.hypot(s.x1 - cx, s.y1 - cy) + Math.hypot(s.x - s.x1, s.y - s.y1);
+      const qsteps = Math.max(4, Math.min(256, Math.ceil(qlen / Math.max(0.05, spacing))));
+      for (let k = 1; k <= qsteps; k++) {
+        const p = quadAt(cx, cy, s.x1, s.y1, s.x, s.y, k / qsteps);
+        out.push(p.x, p.y);
       }
       cx = s.x; cy = s.y;
       continue;

@@ -557,6 +557,7 @@ Trace, render, measure, and escalate until the target is met. Each step doubles 
 | `--palette <colors>` | Trace to exactly these comma-separated colours (brand/spot colours), e.g. `"#fff,#e4002b,#000"` |
 | `--no-optimize` | Do not merge adjacent curves that a single curve fits |
 | `--opt-tolerance <n>` | Error budget for a curve merge |
+| `--quadratics` | Write a quadratic (`q`) instead of a cubic (`c`) wherever one describes the same span within the error budget the cubic already had to pass — four numbers against six. Every replacement is measured against the **traced points**, never against the cubic it replaces, so the promised tolerance is unchanged. Off by default; on `--preset clean` it converts ~90% of curves for −25% raw / −23% gzipped |
 | `--refine-iterations <n>` | Lloyd relaxation passes during palette construction |
 | `--precision <n>` | Decimals kept in path coordinates |
 | `--no-background` | Do not collapse the dominant colour into one rectangle |

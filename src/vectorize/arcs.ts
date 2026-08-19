@@ -353,6 +353,13 @@ export function verifyTwins(dec: ArcDecomposition): TwinReport {
  * traversal is the same curve to the last bit. That is the whole point of arcs:
  * the face on the other side gets geometry that agrees by construction rather
  * than by refitting and hoping.
+ *
+ * A QUADRATIC KEEPS ITS SINGLE CONTROL POINT, which is a claim rather than an
+ * assumption and is checked in the suite. `B(t) = (1-t)^2 P0 + 2(1-t)t Q + t^2
+ * P2`, so `B(1-t)` is the same expression with `P0` and `P2` exchanged and `Q`
+ * where it was — the Bernstein basis is symmetric and there is only one middle
+ * term to swap with itself. The cubic case swaps two, which is why it looks like
+ * the general rule and is not.
  */
 export function reversePath(path: FittedPath): FittedPath {
   const on: Point[] = [path.start];
@@ -363,7 +370,9 @@ export function reversePath(path: FittedPath): FittedPath {
     const s = path.segments[i];
     const target = on[i];
     if (s.kind === 'line') segments.push({ kind: 'line', x: target.x, y: target.y });
-    else {
+    else if (s.kind === 'quad') {
+      segments.push({ kind: 'quad', x1: s.x1, y1: s.y1, x: target.x, y: target.y });
+    } else {
       segments.push({
         kind: 'curve',
         x1: s.x2, y1: s.y2,
@@ -403,6 +412,7 @@ export function fitFaces(
       optimizeError: opts.optimizeError,
       regularise: opts.regularise,
       regulariseBand: opts.regulariseBand,
+      quadratics: opts.quadratics,
     });
     if (!loop) return null;
     // Make the cycle explicit so reversal and concatenation treat closed and open

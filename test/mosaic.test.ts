@@ -3,7 +3,7 @@ import { traceComponents } from '../src/vectorize/contour.js';
 import { connectedComponents } from '../src/vectorize/components.js';
 import { decomposeToArcs, fitFaces, isInterior, reversePath } from '../src/vectorize/arcs.js';
 import { fitOpen, regulariseOpen } from '../src/vectorize/fit.js';
-import type { FittedPath } from '../src/vectorize/fit.js';
+import type { FittedPath, Segment } from '../src/vectorize/fit.js';
 import { PRESETS, vectorize } from '../src/api.js';
 import { createImage, setPixel } from './fixtures.js';
 // eslint-disable-next-line
@@ -11,17 +11,65 @@ import { pathStats } from '../scripts/lib/path-stats.mjs';
 
 const FIT = { tolerance: 0.4, fitError: 0.4, cornerAngle: 75, regularise: 2, regulariseBand: 0.75 };
 
-/** Every on-curve and control point a path visits, rounded so ties are stable. */
+/**
+ * Every on-curve and control point a path visits, rounded so ties are stable.
+ *
+ * EXHAUSTIVE OVER SEGMENT KINDS, and the `never` check is the point of it. The
+ * first version tested `if (s.kind === 'curve')` and pushed only the endpoint for
+ * anything else, so when a third kind arrived this helper stopped seeing its
+ * control point — a quadratic whose control point was 405 units wrong produced a
+ * fingerprint identical to the correct one, while the same substitution on a cubic
+ * was caught. That silently blinded the test which proves the mosaic's defining
+ * property, in exactly the way this project's own rule about gates being able to
+ * fail is meant to prevent.
+ *
+ * Adding a fourth kind must now fail to compile here rather than quietly weaken
+ * the assertion.
+ */
 function points(p: FittedPath): string[] {
-  const out = [`${p.start.x.toFixed(9)},${p.start.y.toFixed(9)}`];
+  const n = (v: number): string => v.toFixed(9);
+  const out = [`${n(p.start.x)},${n(p.start.y)}`];
   for (const s of p.segments) {
-    if (s.kind === 'curve') {
-      out.push(`${s.x1.toFixed(9)},${s.y1.toFixed(9)}`, `${s.x2.toFixed(9)},${s.y2.toFixed(9)}`);
+    switch (s.kind) {
+      case 'line':
+        break;
+      case 'quad':
+        out.push(`${n(s.x1)},${n(s.y1)}`);
+        break;
+      case 'curve':
+        out.push(`${n(s.x1)},${n(s.y1)}`, `${n(s.x2)},${n(s.y2)}`);
+        break;
+      default: {
+        const unreachable: never = s;
+        throw new Error(`points() does not handle segment kind ${JSON.stringify(unreachable)}`);
+      }
     }
-    out.push(`${s.x.toFixed(9)},${s.y.toFixed(9)}`);
+    out.push(`${n(s.x)},${n(s.y)}`);
   }
   return out;
 }
+
+describe('the twin fingerprint itself', () => {
+  it('sees the control point of every segment kind', () => {
+    // Guards the helper above, because a blind fingerprint makes every assertion
+    // built on it vacuous and nothing else would notice.
+    const move = (seg: Segment): Segment => (
+      seg.kind === 'line' ? { ...seg, x: seg.x + 400 }
+        : seg.kind === 'quad' ? { ...seg, x1: seg.x1 + 400 }
+          : { ...seg, x1: seg.x1 + 400 });
+    const kinds: Segment[] = [
+      { kind: 'line', x: 10, y: 0 },
+      { kind: 'quad', x1: 5, y1: 5, x: 10, y: 0 },
+      { kind: 'curve', x1: 3, y1: 3, x2: 7, y2: 3, x: 10, y: 0 },
+    ];
+    for (const seg of kinds) {
+      const base: FittedPath = { start: { x: 0, y: 0 }, segments: [seg] };
+      const moved: FittedPath = { start: { x: 0, y: 0 }, segments: [move(seg)] };
+      expect(points(base), `kind ${seg.kind} is invisible to points()`)
+        .not.toEqual(points(moved));
+    }
+  });
+});
 
 function scene(rows: string[]) {
   const height = rows.length;

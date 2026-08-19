@@ -89,6 +89,10 @@ export function traceGeometry(source: RasterImage, opts: TraceOptions = {}): Tra
     polygonOnly: o.polygonOnly,
     optimize: o.optimize,
     optimizeError: o.optimizeError,
+    // Honoured here too, so DXF/EPS/PDF cannot silently disagree with the SVG
+    // about what geometry the same options produce. Every one of those writers
+    // handles a `quad` segment (elevated for EPS/PDF, sampled for DXF).
+    quadratics: o.quadratics,
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold,
   };

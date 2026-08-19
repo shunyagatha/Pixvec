@@ -10,7 +10,7 @@
  */
 
 import type { TraceGeometry } from './geometry.js';
-import { rgbToCmyk, n } from './shared.js';
+import { rgbToCmyk, n, elevateQuad } from './shared.js';
 
 export interface PdfOptions {
   /** Emit CMYK colours (print) instead of RGB. */
@@ -65,10 +65,25 @@ export function toPdf(geometry: TraceGeometry, opts: PdfOptions = {}): Uint8Arra
       : `${n(r / 255)} ${n(g / 255)} ${n(b / 255)} rg`);
     path.subpaths.forEach((sub, i) => {
       const flattened: string[] = [`${n(sub.start.x)} ${n(fy(sub.start.y))} m`];
+      // PDF's `v` takes the current point as its first control point, which is
+      // NOT what a quadratic means; there is no quadratic operator at all. So a
+      // `q` segment is elevated to the cubic that draws the identical curve,
+      // which needs the segment's start point tracked.
+      let cur = { x: sub.start.x, y: sub.start.y };
       for (const seg of sub.segments) {
-        flattened.push(seg.kind === 'line'
-          ? `${n(seg.x)} ${n(fy(seg.y))} l`
-          : `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} c`);
+        if (seg.kind === 'line') {
+          flattened.push(`${n(seg.x)} ${n(fy(seg.y))} l`);
+        } else if (seg.kind === 'quad') {
+          const { c1, c2 } = elevateQuad(cur, { x: seg.x1, y: seg.y1 }, { x: seg.x, y: seg.y });
+          flattened.push(
+            `${n(c1.x)} ${n(fy(c1.y))} ${n(c2.x)} ${n(fy(c2.y))} ${n(seg.x)} ${n(fy(seg.y))} c`,
+          );
+        } else {
+          flattened.push(
+            `${n(seg.x1)} ${n(fy(seg.y1))} ${n(seg.x2)} ${n(fy(seg.y2))} ${n(seg.x)} ${n(fy(seg.y))} c`,
+          );
+        }
+        cur = { x: seg.x, y: seg.y };
       }
       flattened.push('h');
 
