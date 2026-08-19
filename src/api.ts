@@ -160,6 +160,18 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // three strict wins and a visible improvement on the preset's namesake case
   // against one modest regression on a subject with far more real inks than a logo.
   //
+  // THE OTHER PRESETS WERE SWEPT THE SAME WAY AND MOSTLY LEFT ALONE, because the
+  // "tuned only from above" mistake is not universal:
+  //
+  //   lineart  ships 6   logo-tux prefers 8 (+0.009), vector-comparison prefers 6.
+  //                      Mixed, and 6 is right for its actual subject. Unchanged.
+  //   poster   ships 32  photo-parrots prefers 32 — correct for its purpose.
+  //                      vector-tiger prefers 8, but poster is not for flat art.
+  //   detailed ships 48  the auto palette beats every fixed value tried. Unchanged.
+  //   clean    ships 16  logo-tux prefers 16; the sticker prefers 6. Unchanged.
+  //
+  // Only `logo` was mistuned. Recorded so the sweep is not repeated on the rest.
+  //
   // A paid rival describes logo-tux with TEN fills, which is what prompted looking
   // down rather than up. Our peak is 8 and its gzip at 6 colours (11,929) lands
   // within seven bytes of theirs (11,936) — the palette was never the reason they
