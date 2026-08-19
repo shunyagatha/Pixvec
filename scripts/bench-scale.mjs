@@ -30,6 +30,14 @@
 //
 // Rivals: set VECLINE_VTRACER to vtracer's own binary to add its row. potrace is
 // a dev dependency and is included automatically when present.
+//
+// ON "ceiling:smooth-upscale". It is labelled a ceiling because a bicubic upscale
+// was expected to beat every tracer on raw fidelity while spending no anchors. On
+// the built-in synthetic set that is NOT what happens: `trace-default` scores
+// 20.87 dB against the upscale's 19.91 at 3.902x. Flat vector shapes are exactly
+// the case where a vector reproduction can be sharper than any resampling, so the
+// row is better read as a no-anchor REFERENCE than as an upper bound. Expect it to
+// behave like a real ceiling again on photographic corpora.
 
 import { mkdir, readFile, readdir, writeFile, rm, mkdtemp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -105,6 +113,18 @@ const CANDIDATES = [
   { id: 'trace-tol2', opts: { mode: 'trace', trace: { tolerance: 2 } } },
   // Sub-pixel refinement, at the shipped tolerance and at values where the
   // fitter can actually engage once its input is no longer a staircase.
+  //
+  // `sub-*` ASK FOR WHAT THEY ALREADY GET, and that is worth stating rather than
+  // quietly leaving. `subpixel` became the default after these rows were written,
+  // so on a corpus clean enough that the noise gate does not fire, `sub-default`
+  // and `trace-default` are the same configuration — measured, they agree to the
+  // digit on every column at both scales: 20.87 dB, 3,514 anchors, 268 curves,
+  // 20,180 bytes. A row that cannot differ from its own control is not evidence.
+  //
+  // `nosub-default` is the row that actually isolates the feature now. Keep the
+  // `sub-*` rows: on a corpus noisy enough to trip the gate they diverge again,
+  // and the pair then shows what forcing refinement past the gate costs.
+  { id: 'nosub-default', opts: { mode: 'trace', trace: { subpixel: false } } },
   { id: 'sub-default', opts: { mode: 'trace', trace: { subpixel: true } } },
   { id: 'sub-tol1.2', opts: { mode: 'trace', trace: { subpixel: true, tolerance: 1.2 } } },
   { id: 'sub-tol2', opts: { mode: 'trace', trace: { subpixel: true, tolerance: 2 } } },
