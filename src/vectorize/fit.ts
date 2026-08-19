@@ -35,6 +35,18 @@ export interface FitOptions {
    */
   latticeSimplify?: boolean;
   /**
+   * Laplacian passes over the contour before fitting, each vertex held inside the
+   * pixel grid's own uncertainty band. 0 (default) skips it.
+   *
+   * This is what lets the curve fitter engage on a boundary that came off a noisy
+   * raster. Smoothing the IMAGE does not do it — that changes which pixels are in
+   * the region; this changes only where the boundary between them is drawn, within
+   * the error bar the lattice already has.
+   */
+  regularise?: number;
+  /** How far a vertex may travel from where the lattice put it. Default 0.75px. */
+  regulariseBand?: number;
+  /**
    * Half-width of the band a run of vertices must fit inside to count as one
    * straight edge, in pixels. Must exceed 0.707 — the deviation of a 45-degree
    * staircase — or no diagonal is ever recognised. Default 0.75.
@@ -90,6 +102,22 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
   for (let i = 0; i < n; i++) {
     px[i] = pts[i * 2];
     py[i] = pts[i * 2 + 1];
+  }
+
+  // Regularise the polyline before anything reads its shape.
+  //
+  // The fitter was never short of tolerance. It was being fed a staircase, and a
+  // staircase fits a staircase-shaped curve: forcing curves on rough boundaries
+  // produced 547 speckling segments where 7 clean ones were wanted. Gating the
+  // fitter off was the wrong response to that, and this is the right one — fix the
+  // input, then let the existing fitter do its job.
+  //
+  // The move is licensed by the grid's own uncertainty. A lattice vertex says "the
+  // boundary passed within half a pixel of here" and nothing more, so every curve
+  // running inside that band is equally consistent with the evidence. Among those,
+  // pick the smoothest. Nothing is invented: no vertex leaves its band.
+  if (opts.regularise && opts.regularise > 0) {
+    regulariseClosed(px, py, n, opts.regulariseBand ?? 0.75, opts.regularise);
   }
 
   // Back off the tolerance rather than let a feature disappear.
@@ -224,6 +252,80 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
  * computes, and within a few percent of it on closed boundaries, without the
  * dynamic program.
  */
+/**
+ * Move each vertex toward the average of its neighbours, without letting any of
+ * them leave the band the pixel grid licenses.
+ *
+ * In place, on a closed loop. The band is a hard constraint rather than a penalty
+ * so the guarantee is exact and stateable: the returned polyline lies within
+ * `band` pixels of the traced one, everywhere. 0.75 is the same figure
+ * `simplifyLattice` uses, and for the same reason — a 45-degree staircase deviates
+ * 0.707px from its own chord, so a band below that cannot flatten one.
+ *
+ * Corners survive because they are consistent across passes: a real corner has the
+ * same neighbours pulling from the same two directions every time, so it reaches
+ * the edge of its band and stops. A staircase step has neighbours that disagree,
+ * and averaging cancels it.
+ *
+ * WHY THIS DEFAULTS TO OFF, which is the useful part of this comment.
+ *
+ * The mechanism works. On the reported sticker it takes the fitter from 7 curve
+ * segments to 233 — the fitter was never short of tolerance, it was being fed a
+ * staircase, and this is the fix for that.
+ *
+ * It is not shippable on its own, because every region is traced as its own closed
+ * loop and this smooths each one INDEPENDENTLY. Two neighbours share a boundary;
+ * smoothing their two copies of it moves them apart, and the background shows
+ * through the gap. Rendered, the subject visibly falls to pieces.
+ *
+ * `extendUnder` closes the holes — it extends fills beneath later regions, so
+ * there is no seam to open — and the result is solid and still wrong: the shapes
+ * stack over one another and the subject turns muddy, measurably worse than a
+ * classical tracer on the same input at 58,667 bytes against its 53,920.
+ *
+ * So the prerequisite is shared-boundary topology: trace each boundary between two
+ * regions ONCE, smooth that one copy, and have both faces reference it. Then there
+ * is no second copy to disagree with. That was deferred once on the grounds that
+ * `extendUnder` already covered the seam case; this measurement is the evidence
+ * that it does not cover THIS one, and the two failures are worth keeping so the
+ * next attempt starts from the topology rather than from the smoothing.
+ */
+export function regulariseClosed(
+  px: Float64Array, py: Float64Array, n: number, band: number, passes: number,
+): void {
+  if (n < 4 || passes <= 0 || band <= 0) return;
+  const ox = Float64Array.from(px);
+  const oy = Float64Array.from(py);
+  const tx = new Float64Array(n);
+  const ty = new Float64Array(n);
+  const band2 = band * band;
+
+  for (let pass = 0; pass < passes; pass++) {
+    for (let i = 0; i < n; i++) {
+      const a = i === 0 ? n - 1 : i - 1;
+      const b = i === n - 1 ? 0 : i + 1;
+      // Halfway to the midpoint of the neighbours: full weight overshoots and
+      // oscillates on a closed loop.
+      tx[i] = (px[i] + (px[a] + px[b]) / 2) / 2;
+      ty[i] = (py[i] + (py[a] + py[b]) / 2) / 2;
+    }
+    for (let i = 0; i < n; i++) {
+      let dx = tx[i] - ox[i];
+      let dy = ty[i] - oy[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > band2) {
+        // Outside the licence: project back onto the band rather than refuse to
+        // move, so a vertex still travels as far as the evidence allows.
+        const k = band / Math.sqrt(d2);
+        dx *= k;
+        dy *= k;
+      }
+      px[i] = ox[i] + dx;
+      py[i] = oy[i] + dy;
+    }
+  }
+}
+
 function simplifyLattice(
   // 0.75, and the value is forced rather than tuned: a 45-degree staircase
   // deviates from its own diagonal by 1/sqrt(2) = 0.707, so any band at or below
