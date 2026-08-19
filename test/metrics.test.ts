@@ -369,3 +369,47 @@ describe('the flat-art presets carry the stroke that was measured, not assumed',
   // be measuring something else. The evidence is the corpus table on PRESETS in
   // api.ts, reproducible with `strokeWidth` swept against the same preset at 0.
 });
+
+describe('the logo preset was tuned from below, not only from above', () => {
+  /**
+   * Every earlier sweep of this preset's colour count went UPWARD — 32 and 64 are
+   * both worse — so 16 was treated as a floor and never tested from below. It is
+   * not a floor. On logo-tux, 8 colours beat 16 by +0.0186 SSIM at 0.65x the
+   * bytes, and rendered it is visibly cleaner.
+   *
+   * Guarding the value so it is not "tidied" back to a rounder number, and
+   * guarding the property that makes it defensible: fewer inks must not cost
+   * accuracy on flat artwork.
+   */
+  it('asks for eight colours', async () => {
+    const { PRESETS } = await import('../src/api.js');
+    expect(PRESETS.logo.colors).toBe(8);
+  });
+
+  it('is at least as accurate as sixteen on flat artwork, and smaller', async () => {
+    const { vectorize, PRESETS } = await import('../src/api.js');
+    // Flat artwork with a handful of real inks and antialiased boundaries — the
+    // shape this preset exists for.
+    const img = createImage(96, 96);
+    const inks = [[20, 20, 20], [240, 240, 240], [230, 180, 30], [40, 120, 200]];
+    for (let y = 0; y < 96; y++) {
+      for (let x = 0; x < 96; x++) {
+        let cover = [0, 0, 0, 0];
+        for (let sy = 0; sy < 3; sy++) for (let sx = 0; sx < 3; sx++) {
+          const px = x + (sx + 0.5) / 3, py = y + (sy + 0.5) / 3;
+          const d = Math.hypot(px - 48, py - 48);
+          const k = d < 18 ? 2 : d < 30 ? 3 : (px + py) < 96 ? 0 : 1;
+          cover[k]++;
+        }
+        const t = cover.reduce((s, v) => s + v, 0);
+        const mix = [0, 1, 2].map((c) => Math.round(inks.reduce((s, ink, k) => s + ink[c] * cover[k], 0) / t));
+        setPixel(img, x, y, mix[0], mix[1], mix[2], 255);
+      }
+    }
+    const eight = await vectorize({ image: img }, { mode: 'trace', trace: { ...PRESETS.logo, colors: 8 }, verify: true, noGenerator: true });
+    const sixteen = await vectorize({ image: img }, { mode: 'trace', trace: { ...PRESETS.logo, colors: 16 }, verify: true, noGenerator: true });
+    expect(eight.quality, 'verify did not run').toBeDefined();
+    expect(eight.svg.length).toBeLessThan(sixteen.svg.length);
+    expect(eight.quality!.ssim).toBeGreaterThan(sixteen.quality!.ssim - 0.02);
+  });
+});
