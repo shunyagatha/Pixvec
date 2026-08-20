@@ -7282,7 +7282,7 @@ function traceGeometry(source, opts = {}) {
         const fitted = fitLoop(loop.pts, fitOpts);
         if (!fitted) continue;
         subpaths.push(fitted);
-        primitives.push(wantPrimitives ? detectPrimitive(loop.pts, { maxError: o.primitiveError }) : null);
+        primitives.push(wantPrimitives ? detectPrimitive(flattenPath(fitted), { maxError: o.primitiveError }) : null);
       }
     }
     if (subpaths.length === 0) continue;
