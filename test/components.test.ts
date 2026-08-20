@@ -157,3 +157,73 @@ describe('traceComponents records which region lies across each boundary edge', 
     }
   });
 });
+
+/**
+ * `--preset clean` ships `minArea: 4`, and lowering it to 2 was measured and
+ * REFUTED — see the recorded finding above `PRESETS.clean` in src/api.ts.
+ *
+ * These pin the two facts that finding rests on, because the argument for
+ * lowering it arrives as a table of 1x SSIM against each subject's own source,
+ * and that instrument cannot see either of them.
+ */
+describe('minArea 4 stays at 4 (recorded finding, src/api.ts)', () => {
+  /** Isolated components of class 5 with areas 1..5, five rows apart so none touch. */
+  function ladder(w = 40, h = 40): Int32Array {
+    const classes = new Int32Array(w * h); // class 0 everywhere
+    for (let area = 1; area <= 5; area++) {
+      const y = area * 5;
+      for (let i = 0; i < area; i++) classes[y * w + 5 + i] = 5;
+    }
+    return classes;
+  }
+
+  it('the gap between minArea 2 and minArea 4 is exactly the 2- and 3-pixel components', () => {
+    // `despeckle` absorbs components whose area is strictly BELOW the threshold,
+    // so 4 -> 2 is not a nudge along a smooth trade: it is the decision to keep
+    // every two- and three-pixel component in the picture, and nothing else.
+    // Stated as a test because the proposal was argued as a tuning step.
+    const w = 40, h = 40;
+    const at2 = ladder(w, h);
+    const merged2 = despeckle(at2, connectedComponents(at2, w, h, -1), w, h, 2, -1);
+    const at4 = ladder(w, h);
+    const merged4 = despeckle(at4, connectedComponents(at4, w, h, -1), w, h, 4, -1);
+
+    expect(merged2).toBe(1); // the single stray pixel
+    expect(merged4).toBe(3); // areas 1, 2 and 3
+
+    // Named individually, so a change to the comparison cannot pass on counts alone.
+    const survives = (classes: Int32Array, area: number) => classes[area * 5 * w + 5] === 5;
+    expect([1, 2, 3, 4, 5].filter((a) => survives(at2, a))).toEqual([2, 3, 4, 5]);
+    expect([1, 2, 3, 4, 5].filter((a) => survives(at4, a))).toEqual([4, 5]);
+  });
+
+  it('lowering the floor buys geometry, which the byte axis understates', async () => {
+    // Corpus-wide the proposal is 1.497x subpaths for 1.074x gzip, and gzip is
+    // the axis that got quoted. The direction is asserted here on a fixture so
+    // the cost is not lost when someone re-runs only the SSIM table.
+    const { vectorize, PRESETS } = await import('../src/api.js');
+    const { pathStats } = await import('../scripts/lib/path-stats.mjs');
+    const { createImage, mulberry32, setPixel } = await import('./fixtures.js');
+
+    // Flat artwork that arrived damaged — the input this preset exists for.
+    const size = 96;
+    const img = createImage(size, size);
+    const rand = mulberry32(11);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const c = x >= 12 && x < 44 && y >= 12 && y < 44
+          ? [200, 30, 40]
+          : Math.hypot(x - 60, y - 60) < 20 ? [30, 90, 190] : [245, 245, 245];
+        const n = Math.round((rand() * 2 - 1) * 20);
+        setPixel(img, x, y, c[0] + n, c[1] + n, c[2] + n, 255);
+      }
+    }
+
+    const count = async (minArea: number) => pathStats(
+      (await vectorize({ image: img }, { mode: 'trace', preset: 'clean', trace: { minArea } })).svg,
+    ).subpaths;
+
+    expect(PRESETS.clean.minArea).toBe(4);
+    expect(await count(2)).toBeGreaterThan(await count(4));
+  });
+});
