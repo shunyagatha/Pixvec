@@ -9,7 +9,7 @@
 import { quantize, NearestColor } from '../../vectorize/quantize.js';
 import { connectedComponents, despeckle } from '../../vectorize/components.js';
 import { traceComponents } from '../../vectorize/contour.js';
-import { fitLoop, type FittedPath, type FitOptions } from '../../vectorize/fit.js';
+import { fitLoop, flattenPath, type FittedPath, type FitOptions } from '../../vectorize/fit.js';
 import { detectPrimitive, type Primitive } from '../../vectorize/primitives.js';
 import { autoMinArea, TRACE_DEFAULTS, type TraceOptions } from '../../vectorize/trace.js';
 import type { RasterImage, Rgba } from '../../types.js';
@@ -112,7 +112,7 @@ export function traceGeometry(source: RasterImage, opts: TraceOptions = {}): Tra
         subpaths.push(fitted);
         // Detect per sub-path (holes included), so a ring becomes two circles —
         // exactly what a cutter wants. Aligned by index with `subpaths`.
-        primitives.push(wantPrimitives ? detectPrimitive(loop.pts, { maxError: o.primitiveError }) : null);
+        primitives.push(wantPrimitives ? detectPrimitive(flattenPath(fitted), { maxError: o.primitiveError }) : null);
       }
     }
     if (subpaths.length === 0) continue;
