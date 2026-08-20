@@ -1662,9 +1662,32 @@ async function runTrace(
   generator: string | undefined,
   notes: string[],
 ): Promise<VectorizeResult> {
-  const preset = opts.preset && opts.preset !== 'auto' && opts.preset in PRESETS
+  let preset = opts.preset && opts.preset !== 'auto' && opts.preset in PRESETS
     ? PRESETS[opts.preset as keyof typeof PRESETS]
     : autoTracePreset(input.image, notes);
+
+  // `clean`'s despeckle floor cannot be one constant — swept across 18 real
+  // subjects, tolerance for it is a property of CONTENT, not size: two
+  // subjects at the identical 393,216px resolution differ 10x in what
+  // minArea:60 costs (photo-motorcycles.png, real mechanical detail,
+  // -0.136 SSIM; photo-parrots.png, -0.014), so nothing below ~2,000,000px
+  // can safely move off the conservative default without a working content
+  // signal, which does not exist yet. At or above that size, every subject
+  // measured — including a real photograph — tolerated minArea:40 for
+  // <=0.005 SSIM (confirmed visually indistinguishable, not just by the
+  // number). That directly answers the reported defect: a 14.9-megapixel
+  // subject where minArea:4 let JPEG/paper-texture noise through as
+  // thousands of tiny subpaths (curve fraction 62.0%->99.0%, gzip -40%).
+  // A 100x100 icon with the SAME defect (minArea:4 fragmenting it into 268
+  // regions, 43% of shared boundaries collapsing to straight 2-point lines)
+  // is NOT fixed by this — every minArea tested above 4 visually destroyed
+  // real content on that specific subject. That is `fitOpen`'s 2-point
+  // segments only ever being able to express a line, not a despeckle-floor
+  // problem, and belongs to a separate investigation.
+  if (opts.preset === 'clean') {
+    const px = input.image.width * input.image.height;
+    preset = { ...preset, minArea: px >= 2_000_000 ? 40 : 4 };
+  }
 
   // The noise gate applies whichever preset was chosen, not only under `auto`.
   //
