@@ -298,7 +298,10 @@ describe('quadratics on the mosaic', () => {
     // quadratics does not throw and does not look wrong in isolation — it shows
     // up here, as edges that no longer match their twin.
     const img = petals();
-    const base = await vectorize({ image: img }, { preset: 'clean' });
+    // The baseline is pinned OFF explicitly. `clean` now defaults it on, so taking
+    // the preset bare would compare the feature against itself and the byte
+    // assertion below would be vacuous.
+    const base = await vectorize({ image: img }, { preset: 'clean', trace: { quadratics: false } });
     const quad = await vectorize({ image: img }, { preset: 'clean', trace: { quadratics: true } });
 
     const a = structure(base.svg) as { twinnedEdges: number; interiorEdges: number };
@@ -312,7 +315,10 @@ describe('quadratics on the mosaic', () => {
 
   it('changes the spelling, not the census', async () => {
     const img = petals();
-    const base = await vectorize({ image: img }, { preset: 'clean' });
+    // The baseline is pinned OFF explicitly. `clean` now defaults it on, so taking
+    // the preset bare would compare the feature against itself and the byte
+    // assertion below would be vacuous.
+    const base = await vectorize({ image: img }, { preset: 'clean', trace: { quadratics: false } });
     const quad = await vectorize({ image: img }, { preset: 'clean', trace: { quadratics: true } });
     const a = pathStats(base.svg) as { segments: number; curves: number; lines: number; subpaths: number };
     const b = pathStats(quad.svg) as { segments: number; curves: number; lines: number; subpaths: number };
@@ -323,15 +329,27 @@ describe('quadratics on the mosaic', () => {
     expect(Buffer.byteLength(quad.svg)).toBeLessThan(Buffer.byteLength(base.svg));
   });
 
-  it('is off unless asked for', async () => {
+  it('is on in clean, off everywhere else, and refusable', async () => {
     const img = petals();
-    const off = await vectorize({ image: img }, { preset: 'clean' });
-    const explicit = await vectorize({ image: img }, { preset: 'clean', trace: { quadratics: false } });
-    expect(off.svg).toBe(explicit.svg);
+    // On in `clean` — the default this preset now ships.
+    const on = await vectorize({ image: img }, { preset: 'clean' });
+    expect(on.svg).toMatch(/\sd="[^"]*q/);
+
+    // Still refusable, and refusing it really does remove them rather than just
+    // changing the spelling elsewhere.
+    const off = await vectorize({ image: img }, { preset: 'clean', trace: { quadratics: false } });
     expect(off.svg).not.toMatch(/\sd="[^"]*q/);
-    // And nothing outside `clean` picks it up by accident.
+    expect(off.svg).not.toBe(on.svg);
+
+    // And nothing outside `clean` picks it up by accident. This half is the point
+    // of the test: a default that leaks into other presets changes output nobody
+    // asked to change.
     const plain = await vectorize({ image: img }, { mode: 'trace' });
     expect(plain.svg).not.toMatch(/\sd="[^"]*q/);
+    for (const preset of ['logo', 'lineart', 'poster', 'photo'] as const) {
+      const other = await vectorize({ image: img }, { mode: 'trace', preset });
+      expect(other.svg, `${preset} picked up quadratics`).not.toMatch(/\sd="[^"]*q/);
+    }
   });
 });
 
