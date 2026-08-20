@@ -16,6 +16,58 @@ function disc(size: number): RasterImage {
   return img;
 }
 
+/**
+ * A disc with `frac` of its diameter sliced off by a flat chord. Chord
+ * endpoints sit exactly on the circle, so the raw crack-following loop loses
+ * no vertex that would give the cut away — only the interior of that long
+ * straight run is not circular. Named `chordDisc` to avoid colliding with the
+ * plain `disc` fixture above.
+ */
+function chordDisc(size: number, r: number, frac = 0): RasterImage {
+  const img = createImage(size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+    img.data[i + 3] = 255;
+  }
+  const c = size / 2;
+  const cut = c + r - 2 * r * frac;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if ((x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2 > r * r) continue;
+      if (frac > 0 && x + 0.5 > cut) continue;
+      setPixel(img, x, y, 40, 90, 200);
+    }
+  }
+  return img;
+}
+
+/**
+ * `traceGeometry` feeds the DXF/EPS/PDF/G-code exporters, and it has its own
+ * `detectPrimitive` call — separate from `trace()`'s SVG path covered in
+ * primitive-source.test.ts. Pin the same property here: primitive recognition
+ * must judge the curve that will actually be emitted (via `flattenPath` on the
+ * fitted geometry), not the raw lattice loop, whose crack-following stores a
+ * straight run as only its two endpoints and so cannot tell a chord-cut disc
+ * from an intact circle.
+ */
+describe('traceGeometry primitive recognition reads the fitted curve, not the lattice', () => {
+  const hasCircle = (g: ReturnType<typeof traceGeometry>): boolean =>
+    g.paths.some((p) => p.primitives?.some((prim) => prim?.kind === 'circle'));
+
+  it('promotes an intact disc to a circle primitive', () => {
+    expect(hasCircle(traceGeometry(chordDisc(200, 40), { colors: 2, primitives: true }))).toBe(true);
+  });
+
+  it('refuses a disc with a flat chord, which the raw lattice loop cannot tell from a circle', () => {
+    for (const frac of [0.06, 0.12, 0.2]) {
+      expect(
+        hasCircle(traceGeometry(chordDisc(200, 40, frac), { colors: 2, primitives: true })),
+        `frac ${frac} was wrongly promoted to a circle`,
+      ).toBe(false);
+    }
+  });
+});
+
 describe('traceGeometry', () => {
   it('returns per-colour Bézier geometry ordered by area', () => {
     const g = traceGeometry(flatArtwork(80, 60), { colors: 5 });
@@ -153,7 +205,15 @@ describe('EPS export', () => {
     // `arc` rather than a fitted curve. The curve path is still real and is
     // covered by the case below; splitting the two keeps both branches asserted
     // instead of quietly losing one.
-    const eps = toEps(traceGeometry(disc(96), { colors: 2, tolerance: 2, fitError: 2 }));
+    //
+    // tolerance/fitError of 1 (not the looser 2 used elsewhere in this file):
+    // detection reads the curve that will actually be emitted, and at fitError
+    // 2 that fitted curve is loose enough to land outside `primitiveError` of a
+    // true circle. `trace()`'s SVG path makes the same fitted-geometry
+    // judgement (confirmed directly with `background: false`, which bypasses
+    // this fixture's unrelated largest-class shortcut: it also refuses a
+    // circle at fitError 2, promoting a roundrect instead).
+    const eps = toEps(traceGeometry(disc(96), { colors: 2, tolerance: 1, fitError: 1 }));
     expect(eps.startsWith('%!PS-Adobe-3.0 EPSF-3.0')).toBe(true);
     expect(eps).toMatch(/%%BoundingBox: 0 0 96 96/);
     expect(eps).toContain('setrgbcolor');
@@ -163,7 +223,7 @@ describe('EPS export', () => {
   });
 
   it('still fits curves when primitive recognition is off', () => {
-    const eps = toEps(traceGeometry(disc(96), { colors: 2, tolerance: 2, fitError: 2, primitives: false }));
+    const eps = toEps(traceGeometry(disc(96), { colors: 2, tolerance: 1, fitError: 1, primitives: false }));
     expect(eps).toContain('curveto'); // the disc boundary is fitted to curves
     expect(eps).not.toMatch(/ 0 360 arc/);
   });
