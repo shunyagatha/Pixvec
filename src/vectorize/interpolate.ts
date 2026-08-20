@@ -9,23 +9,24 @@ import { shortHex } from '../color.js';
  * along every boundary in the source raster: where two regions meet, the source
  * has a one- or two-pixel ramp between their colours, and a partition of flat
  * shapes has a step. Painting the blend of the two fills into that band recovers
- * the RAMP, which is the whole of what this module does.
+ * the RAMP, which is what this pass is for.
  *
- * WHAT IT DOES NOT DO, corrected here because this docstring said otherwise and
- * an investigation of the interior hairline was sent the wrong way by it. Two
- * abutting antialiased fills do not in general cover their shared pixel — their
- * coverages sum to slightly less than one — so whatever is painted beneath shows
- * through as a hairline, and the sentence that used to stand here claimed this
- * band "recovers both: the ramp and the gap". It does not recover the gap.
- * Measured as alpha deficit against the source, which involves no fidelity metric
- * at all, logo-tux reads 175,892 bare / 75,634 at `strokeWidth: 0.5` / 68,350
- * with this pass / 23,770 at `strokeWidth: 1` / 22,971 for the paid rival. This
- * lands level with the 0.5 stroke it suppresses and three times short of a 1.0
- * stroke, and on the worst single pixel it is WORSE than the stroke — 0/255
- * against 32/255. The reason is already stated under WHAT IT GIVES UP below: a
- * class outline clipped to its neighbour reaches only the neighbour's own
- * antialiased coverage at the seam, which is the same coverage that left the gap.
- * The hairline is a stroke-width question, not a colour one.
+ * IT DOES NOT CLOSE THE GAP, and this note used to say it did. Two abutting
+ * antialiased fills do not in general cover their shared pixel — source-over on
+ * coverages `c` and `1 - c` gives `1 - c + c^2`, short of one — so whatever is
+ * beneath still shows through as a hairline. The band cannot repair that: it is
+ * clipped to a neighbour whose own clip mask is rasterised by the same
+ * compositing and carries the same deficit. Measured on `clean`, this pass
+ * removes 844 of logo-tux's 3,171 interior leaks and 2 of alpha-dice's 725, while
+ * SUPPRESSING the `strokeWidth` that was covering some of them on its own — as
+ * alpha deficit against the source (no fidelity metric involved), logo-tux reads
+ * 175,892 bare / 75,634 at `strokeWidth: 0.5` / 68,350 with this pass, landing
+ * level with the stroke it suppresses rather than ahead of it.
+ *
+ * `underpaint` in trace.ts is what actually closes the gap — an exact union of
+ * the opaque classes, painted once, below this layer — and the two compose: the
+ * ramp from here, full coverage from underneath. See its docstring for why a
+ * clip-based approach cannot do the same job.
  *
  * WHY IT IS NOT ONE STROKED PATH PER BOUNDARY. The obvious implementation walks
  * the arc decomposition and emits one open stroked path per interior arc, in the

@@ -407,6 +407,9 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // THE STROKE-1 NUMBERS AGAIN: any comparison that does not also measure the
   // stroke-0 corner is measuring the suppression, not the blend.
   //
+  // IT DOES NOT FIX THE INTERIOR HAIRLINE, whatever its docstring implies — see
+  // `underpaint` below, which does, and which composes with it.
+  //
   // THE BLUR CONTROL, and the correction that came with it. An earlier version of
   // this note said a free Gaussian blur outscored everything the project had
   // shipped, on 8 of 9 subjects, and concluded photographic SSIM was untrustworthy.
@@ -474,9 +477,60 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // It shipped opt-in first, deliberately: it adds a third `Segment` kind that
   // reaches the DXF, EPS and PDF writers, and that surface wanted a release of
   // exposure before becoming a default.
+  //
+  // `underpaint: true`, and it is the only preset that turns it on, because it is
+  // the only one aimed at artwork with transparency. What it fixes is a COUNT and
+  // not a score: pixels the SOURCE calls fully opaque that render see-through
+  // where two of our fills meet. Two abutting elements cover `c` and `1 - c` of
+  // the shared pixel and source-over leaves `1 - c + c^2`, which is 0.75 at
+  // `c = 0.5`. On opaque artwork the background rectangle hides it; on
+  // transparent artwork nothing does, and the leak traces every interior
+  // boundary in the picture.
+  //
+  // Leaks (source-opaque pixel rendered below alpha 250) / of those, INTERIOR
+  // ones more than a pixel from the silhouette, where the artwork's own edge
+  // cannot explain them / worst alpha / total alpha deficit:
+  //
+  //   subject      as shipped before          with underpaint        paid rival
+  //   logo-tux     3,621 / 3,171 / 32 / 75,466   319 / 0 / 32 / 12,270   387 / 17
+  //   alpha-dice   1,350 /   725 /222 / 22,142   243 / 16 /228 /  2,501  567 / 213
+  //   other seven      0 /     0            0 /  0                70 - 1,144
+  //
+  // The interior count goes to ZERO on logo-tux and to 16 on alpha-dice, and both
+  // subjects now beat the paid rival, which reaches its own number the same way
+  // (an unclipped opaque underlayer) rather than by clipping. The 319 and 243 that
+  // remain are all within one pixel of the silhouette, where partial coverage is
+  // the correct answer. The 16 interior stragglers on alpha-dice are opaque
+  // pixels bordering a TRANSLUCENT class, which the underpaint deliberately does
+  // not reach: painting under a translucent region would show through and repaint
+  // it. Measured by doing it anyway — alpha-dice's leaks fall to 19 and its SSIM
+  // falls with them, 0.9233 -> 0.8936, for 73% more gzip. Fewer leaks and a worse
+  // picture is what a gamed count looks like, which is why the renders decided
+  // this and not the table.
+  //
+  // COSTS, and where. gzip x1.040 logo-tux, x1.121 alpha-dice; RAW x1.92 and
+  // x1.12, since the `d` data is repeated and gzip eats the repeat only while the
+  // document fits its 32K window. Byte-IDENTICAL on the seven opaque subjects —
+  // sha1-checked, not assumed — so nothing a photograph does can be blamed on it.
+  // SSIM rises where it applies (logo-tux 0.9076 -> 0.9260, alpha-dice
+  // 0.9203 -> 0.9233) and moves nowhere else; the alpha-dice gain is inside what
+  // a free blur buys, which is why the case here rests on the count.
+  //
+  // WHY NOT THE CHEAPER-LOOKING VERSIONS. A clip cannot do this: a `<clipPath>`
+  // is rasterised into a mask by the same source-over arithmetic, so a mask built
+  // from abutting shapes carries the identical deficit, and an opaque band times
+  // a 0.75 mask is 0.75. `interpolate` is the clipped version already shipped
+  // here and it behaves exactly as that predicts: 844 of logo-tux's 3,171
+  // interior leaks, and 2 of alpha-dice's 725. `strokeWidth` only covers the seam once
+  // the stroke is wide in DEVICE pixels — which is why the shipped 0.5 looks
+  // innocent at 4x and leaks 7,733 interior pixels at 1.37x, the scale a viewer
+  // actually reads a logo at. Rendered at 1.37x and 3.902x, both non-integer on
+  // purpose: an integer scale puts every lattice edge on a pixel boundary and
+  // hides antialiasing entirely.
   clean: {
     colors: 16, minArea: 4, smooth: 1, segment: 0.02,
     mosaic: true, strokeWidth: 0.5, optimizeError: 0.75, quadratics: true,
+    underpaint: true,
   },
   // `photo` carries no minArea/tolerance/cornerAngle overrides on purpose. It
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake

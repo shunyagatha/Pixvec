@@ -5135,6 +5135,11 @@ var TRACE_DEFAULTS = {
   // already collecting +0.0159 of the same thing for a twentieth of the bytes.
   // The four-corner table, the blur floor and the render notes are in api.ts.
   interpolate: false,
+  // OFF here and ON in `clean`, which is the only preset that meets its
+  // precondition — artwork with transparency, where no background rectangle
+  // exists to hide an interior seam. It is a no-op on opaque input, so the
+  // default costs nothing to leave off; see the option's own note.
+  underpaint: false,
   // OFF by default, tried twice and rejected twice on measurement.
   //
   // A second block used to sit above this one opening "On by default at 0.02",
@@ -5393,6 +5398,10 @@ function trace(source, opts = {}) {
       doc.addBackground(bg);
     }
   }
+  const underpaint = o.underpaint === true && hasVoid && !o.groupByColor && !o.extendUnder;
+  const underSlot = underpaint ? doc.reserve() : -1;
+  const underParts = [];
+  let underFill = null;
   const interpSlot = interpolate ? doc.reserve() : -1;
   const interpPathId = /* @__PURE__ */ new Map();
   const fitOpts = {
@@ -5497,13 +5506,20 @@ function trace(source, opts = {}) {
     let markup;
     let label;
     const paint = gradientPaints?.get(cls);
+    const collectUnder = (a) => {
+      if (!underpaint || a < 255 || path.isEmpty()) return false;
+      underParts.push(path.toString());
+      return true;
+    };
     if (paint) {
+      collectUnder(Math.round(paint.alpha * 255));
       doc.addDef(paint.def);
       const op = paint.alpha < 1 ? ` fill-opacity="${+paint.alpha.toFixed(3)}"` : "";
       markup = `<path fill-rule="evenodd" d="${path.toString()}" fill="${paint.ref}"${op}/>`;
       label = paint.ref.replace(/^url\(#/, "").replace(/\)$/, "");
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
+      if (collectUnder(color.a) && underFill === null) underFill = color;
       const stroke = strokeFor(color);
       const attrs = `${fillAttrs(color)}${stroke}`;
       const shapes = prims.filter((p) => p !== null).map((p) => primitiveSvg(p, attrs, o.precision)).join("");
@@ -5522,6 +5538,12 @@ function trace(source, opts = {}) {
     } else {
       doc.add(markup);
     }
+  }
+  if (underpaint && underFill !== null) {
+    doc.fill(
+      underSlot,
+      `<path id="underpaint" fill-rule="evenodd" d="${underParts.join("")}"${fillAttrs(underFill)}/>`
+    );
   }
   if (interpolate && interpPathId.size > 1) {
     const translucent = [...alphaLevels].some((a) => a > 0 && a < 255);

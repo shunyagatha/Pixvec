@@ -410,6 +410,81 @@ export interface TraceOptions {
    */
   interpolateWidth?: number;
   /**
+   * Paint the opaque silhouette once, underneath everything, so an interior seam
+   * cannot be see-through.
+   *
+   * THE DEFECT. Two abutting fills are rasterised as two elements, so at their
+   * shared edge each covers a fraction `c` and `1 - c` of the pixel and
+   * source-over leaves `1 - c + c^2` — 0.75 at `c = 0.5`, never 1 except at the
+   * ends. Where a background rectangle lies beneath (any artwork with no
+   * transparency) nobody sees it. Where the artwork HAS transparency there is no
+   * rectangle, so pixels the source calls fully opaque render see-through, in a
+   * network tracing every interior boundary. Counted on `clean` — a pixel the
+   * SOURCE calls fully opaque that renders below alpha 250, of which the INTERIOR
+   * ones are more than a step from the silhouette so the artwork's own edge
+   * cannot explain them:
+   *
+   *   logo-tux    3,621 leaks / 3,171 interior     ->    319 / 0
+   *   alpha-dice  1,350 leaks /   725 interior     ->    243 / 16
+   *   paid rival  387 / 17 and 567 / 213           (we now beat it on both)
+   *
+   * The seven opaque corpus subjects are at 0 before and after; the rival leaks
+   * 163-1,146 on them, because it paints no background rectangle.
+   *
+   * WHY IT IS ONE PATH AND NOT A CLIP. Subpaths of a SINGLE path element do not
+   * composite against each other — the rasteriser resolves the whole path to one
+   * coverage value per pixel — so a path holding every opaque class's subpaths
+   * has no interior seams at all. A clip cannot do this: a `<clipPath>` is
+   * rasterised into a mask by the same source-over arithmetic, so a mask built
+   * from abutting shapes carries the identical deficit and multiplying an opaque
+   * band by a 0.75 mask gives 0.75. {@link interpolate}, which clips one class's
+   * outline to its neighbour, removes 844 of logo-tux's 3,171 interior leaks and
+   * 2 of alpha-dice's 725 — it reconstructs the colour ramp, which is a different
+   * job, and its own docstring should not be read as claiming this one.
+   *
+   * WHY THE UNION IS EXACT. Each class path is `fill-rule="evenodd"` and the
+   * classes are disjoint, so for any point the crossing parity of the
+   * concatenation is the sum, mod 2, of the per-class parities — which is 1
+   * exactly inside an opaque class and 0 everywhere else, holes and nesting
+   * included. The underpaint therefore cannot extend one sub-pixel beyond the
+   * fills it sits under: it is their outline, not an approximation of it, so it
+   * cannot halo. A union re-traced from the class map could not promise that.
+   *
+   * WHAT IT COSTS. The `d` data is repeated, and gzip eats the repeat only while
+   * the document fits its 32K window: logo-tux x1.040 gzipped but x1.93 RAW,
+   * alpha-dice x1.121 gzipped and x1.115 raw. Quote both — an editor holds the
+   * raw file.
+   *
+   * WHAT SCALE IT MATTERS AT, which is not the one you would check. A
+   * `strokeWidth` of 0.5 user units is 2 device pixels at 4x and covers the seam
+   * there, so the defect LOOKS absent under magnification and is at its worst at
+   * 1x-2x, where artwork is actually read: 3,171 interior leaks at 1x, 7,733 at
+   * 1.37x, 0 at 3.902x. Measured at non-integer scales on purpose — an integer
+   * scale puts every lattice edge on a pixel boundary and antialiases nothing.
+   * With the stroke removed the seam is there at every scale (6,597 interior at
+   * 3.902x), which is what says it is geometry and not a sampling accident.
+   *
+   * ONLY WHERE IT IS NEEDED. Refused unless the image has transparent pixels,
+   * because otherwise the background rectangle already does this job for nothing
+   * — so on the seven opaque corpus subjects the document is byte-identical.
+   * Refused under {@link groupByColor} (a separation must stand alone) and under
+   * {@link extendUnder} (which removes the seam by overlapping instead).
+   * Translucent classes are excluded, and that exclusion is measured rather than
+   * assumed: including them takes alpha-dice's leaks to 19 and its SSIM from
+   * 0.9233 to 0.8936, for 73% more gzip, because an opaque silhouette under a
+   * translucent region shows through and repaints it. Fewer leaks and a worse
+   * picture is the shape of a metric being gamed, so the count is not the only
+   * thing this is allowed to optimise. The 16 interior leaks left on alpha-dice
+   * are opaque pixels bordering a translucent class, which is exactly the case
+   * this refuses to reach.
+   *
+   * On by default in `clean` and off everywhere else. Composes with
+   * {@link interpolate} — it sits below that layer and neither suppresses the
+   * other — but the two are not additive on the defect: the blend removes none
+   * of it, so the underpaint does the same work either way.
+   */
+  underpaint?: boolean;
+  /**
    * Extend each region's fill *under* the regions painted after it, instead of
    * cutting at their shared edge. No antialiasing seam can open at a join that no
    * longer exists, and this is the only mechanism here that actually removes one.
@@ -677,6 +752,11 @@ export const TRACE_DEFAULTS = {
   // already collecting +0.0159 of the same thing for a twentieth of the bytes.
   // The four-corner table, the blur floor and the render notes are in api.ts.
   interpolate: false,
+  // OFF here and ON in `clean`, which is the only preset that meets its
+  // precondition — artwork with transparency, where no background rectangle
+  // exists to hide an interior seam. It is a no-op on opaque input, so the
+  // default costs nothing to leave off; see the option's own note.
+  underpaint: false,
   // OFF by default, tried twice and rejected twice on measurement.
   //
   // A second block used to sit above this one opening "On by default at 0.02",
@@ -1130,6 +1210,22 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     }
   }
 
+  // The opaque silhouette underpaint. Refused where a background rectangle
+  // already covers every interior seam (no transparency), where the document is
+  // split into standalone separations, and where `extendUnder` has removed the
+  // seams by overlapping instead. See the option's note for the compositing
+  // algebra and for why no clip-based variant can work.
+  const underpaint = o.underpaint === true && hasVoid && !o.groupByColor && !o.extendUnder;
+  // Below the interpolation layer as well as below every fill: the blend band is
+  // meant to be seen in the gap, and painting the silhouette over it would hide
+  // exactly what that layer emits. Both slots are claimed before the fills for
+  // the same reason — the content is only known once the classes have emitted.
+  const underSlot = underpaint ? doc.reserve() : -1;
+  /** Each opaque class's `d`, concatenated into the one underpaint path. */
+  const underParts: string[] = [];
+  /** The largest opaque class's colour, which is the underpaint's fill. */
+  let underFill: Rgba | null = null;
+
   // The interpolation layer belongs here — over the background rectangle, under
   // every fill — but its content is the set of classes that actually emitted a
   // referenceable path, which is only known once they have. Claim the position
@@ -1333,13 +1429,26 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     let markup: string;
     let label: string;
     const paint = gradientPaints?.get(cls);
+    // Collect this class's outline for the underpaint, opaque classes only. A
+    // loop that left as a primitive is not in `path` and so takes no part; what
+    // remains is still a disjoint subset of the opaque pixels, which is all the
+    // parity argument needs.
+    const collectUnder = (a: number): boolean => {
+      if (!underpaint || a < 255 || path.isEmpty()) return false;
+      underParts.push(path.toString());
+      return true;
+    };
     if (paint) {
+      collectUnder(Math.round(paint.alpha * 255));
       doc.addDef(paint.def);
       const op = paint.alpha < 1 ? ` fill-opacity="${+paint.alpha.toFixed(3)}"` : '';
       markup = `<path fill-rule="evenodd" d="${path.toString()}" fill="${paint.ref}"${op}/>`;
       label = paint.ref.replace(/^url\(#/, '').replace(/\)$/, '');
     } else {
       const color = classColor(cls, palette, alphaLevels, levelCount);
+      // Classes arrive largest-first, so the first opaque contributor is the
+      // largest one — the colour with most boundary to be seen against.
+      if (collectUnder(color.a) && underFill === null) underFill = color;
       const stroke = strokeFor(color);
       const attrs = `${fillAttrs(color)}${stroke}`;
       // Recognised loops become true shapes; whatever is left of the class stays
@@ -1384,6 +1493,21 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     } else {
       doc.add(markup);
     }
+  }
+
+  // One element, one `d`, no clip, no stroke. `evenodd` is what makes the
+  // concatenation exact rather than approximate — see the option's note. Nothing
+  // is emitted when no opaque class carried a flat colour to paint it in, which
+  // is the all-gradient and all-translucent case.
+  //
+  // The id is not decoration. This element paints no region of its own — it is a
+  // copy of the fills above it — so anything taking a census of the document's
+  // faces must skip it or every edge acquires a twin that is its own duplicate
+  // and every count doubles. `scripts/lib/svg-structure.mjs` skips it by this id,
+  // and an editor shows a reader what the layer is for. 18 bytes, once.
+  if (underpaint && underFill !== null) {
+    doc.fill(underSlot,
+      `<path id="underpaint" fill-rule="evenodd" d="${underParts.join('')}"${fillAttrs(underFill)}/>`);
   }
 
   if (interpolate && interpPathId.size > 1) {
