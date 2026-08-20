@@ -2183,8 +2183,10 @@ program
     'reconstruct the antialiased blend along every boundary between two colours — the ramp a '
       + 'partition of flat fills cannot carry. Carries no new coordinates: each colour path is '
       + 'referenced through <use> and clipped to its neighbour, so the cost scales with adjacent '
-      + 'colour PAIRS, not with boundary arcs. +0.0187 mean SSIM for +5.5% gzip over the corpus. '
-      + 'Suppresses --stroke-width. Off by default.',
+      + 'colour PAIRS, not with boundary arcs. +0.0184 mean SSIM for +5.5% gzip against a '
+      + 'document with no seam paint at all — but it SUPPRESSES --stroke-width, and on top of '
+      + 'the 0.5 stroke --preset clean already ships it is worth only +0.0025 mean and harms 4 '
+      + 'of 9 corpus subjects. Off by default; worth trying on high-contrast flat art.',
   )
   .addOption(
     new Option('--turn-policy <policy>', 'how to resolve diagonal self-touches (checkerboard saddles)')

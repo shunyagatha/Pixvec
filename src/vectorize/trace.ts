@@ -338,11 +338,15 @@ export interface TraceOptions {
    * classes — the information a partition of flat fills cannot carry.
    *
    * Where two regions meet, the source raster has a one- or two-pixel ramp
-   * between their colours and a flat partition has a step; worse, two abutting
-   * antialiased fills do not quite cover the shared pixel, so whatever lies
-   * beneath shows through as a hairline. This paints the mean of the two fills
-   * into that band, UNDER the fills, so it is visible only in the gap and at the
-   * fringe.
+   * between their colours and a flat partition has a step. This paints the mean
+   * of the two fills into that band, UNDER the fills, so it is visible only at
+   * their antialiased fringe.
+   *
+   * It reconstructs the RAMP. It does NOT close the interior alpha hairline that
+   * opens where two abutting antialiased fills fail to cover their shared pixel —
+   * measured, it lands level with the 0.5 stroke it suppresses and leaves the
+   * worst pixel on logo-tux fully transparent. See the alpha-deficit table under
+   * `interpolate` in the `clean` preset note in api.ts.
    *
    * IT CARRIES NO COORDINATES. Each class already emits one path; this gives it
    * an id, `<use>`s it for the fill, and paints each adjacent pair's band by
@@ -372,13 +376,25 @@ export interface TraceOptions {
    * 97% of the accuracy for 8% of the extra bytes. Only logo-tux, the flattest and
    * highest-contrast subject, prefers the arcs by a real margin.
    *
-   * It is OFF everywhere, `clean` included, because it is not free: 1-12% of the
-   * gzipped file, and worth only +0.0026 on photo-jpeg-source.
+   * That table survives the #101 metric fix — re-derived on the corrected gate it
+   * reads +0.0496 / +0.0286 / +0.0027 / +0.0094 / +0.0139 / +0.0063 / +0.0075 /
+   * +0.0414 / +0.0066 in the same order, mean +0.0184 against +0.0187.
+   *
+   * IT IS OFF EVERYWHERE, `clean` INCLUDED, AND THE REASON IS NOT THIS TABLE.
+   * Against a bare document the pass wins on 9 of 9. Against what `clean` actually
+   * ships — the same document with `strokeWidth: 0.5`, which this pass suppresses —
+   * it is worth a mean +0.0025 over nine subjects and HARMS four of them, because
+   * the stroke is already collecting a mean +0.0159 of the same thing for a
+   * twentieth of the bytes. It also costs the most (1.11x-1.14x gzip) on exactly
+   * the flat art the preset targets. The full four-corner table, the render
+   * observations and the alpha-deficit numbers are in the `clean` note in api.ts;
+   * read them before proposing this as a default again.
    *
    * It suppresses {@link strokeWidth}: the same-colour stroke repaints, in one
-   * flat colour, the band this has just filled with the interpolated one. Running
-   * both scores worse than this alone on 7 of the 9 subjects (mean 0.7471 against
-   * 0.7606).
+   * flat colour, the band this has just filled with the interpolated one. With the
+   * pass on, `strokeWidth` therefore has NO effect whatever — the documents are
+   * byte-identical on all nine subjects — which is why an on/off comparison of
+   * this option is confounded unless the stroke-0 corner is measured too.
    */
   interpolate?: boolean;
   /**
@@ -653,10 +669,13 @@ export const TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
-  // Off everywhere, `clean` included. It is worth +0.0187 mean SSIM for +5.5%
-  // gzip over the corpus, which is a good trade on flat art (+0.0502 on logo-tux)
-  // and a thin one on a clean JPEG (+0.0026 on photo-jpeg-source) — a decision a
-  // caller should make, not a default.
+  // Off everywhere, `clean` included, and re-confirmed after `clean`'s stroke
+  // moved from 1 to 0.5. Against a document with no seam paint at all it is worth
+  // +0.0184 mean SSIM for +5.5% gzip and wins on 9 of 9 subjects. Against what
+  // `clean` actually ships — the same document with the 0.5 stroke this pass
+  // SUPPRESSES — it is worth +0.0025 mean and HARMS 4 of 9, because the stroke is
+  // already collecting +0.0159 of the same thing for a twentieth of the bytes.
+  // The four-corner table, the blur floor and the render notes are in api.ts.
   interpolate: false,
   // OFF by default, tried twice and rejected twice on measurement.
   //
@@ -1179,6 +1198,25 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // interpolation layer has just filled with the blend. Measured on the corpus,
   // running both is worse than the interpolation alone on 7 of 9 subjects —
   // mean SSIM 0.7471 against 0.7606, and 0.8870 against 0.9182 on alpha-dice.
+  //
+  // THOSE FIGURES ARE AT `strokeWidth: 1`, which `clean` no longer ships, so the
+  // rule was re-tested at 0.5 by env-gating this very line, measuring, and
+  // reverting. It survives, less comfortably than the paragraph above claims.
+  // Against the shipping fills-plus-stroke document, over nine subjects:
+  //
+  //   pass + stroke 0.5   mean +0.0012, harmed 3 of 9. logo-tux +0.0229 — the
+  //                       best figure this project has on that subject — but
+  //                       alpha-dice -0.0160 and motorcycles -0.0060.
+  //   pass + stroke 1.0   mean -0.0111, harmed 7 of 9, worst -0.0337 (alpha-dice).
+  //
+  // So combining is still not a free win at either width and this line stands.
+  //
+  // NOTE FOR ANYONE CHANGING EITHER OPTION: this line is why a naive on/off
+  // comparison of `interpolate` is confounded. With the pass on, `strokeWidth`
+  // has no effect at all — the emitted documents are byte-identical on all nine
+  // subjects — so "the blend helped" and "removing the stroke helped" are the
+  // same measurement unless the stroke-0 corner is measured too. See the
+  // four-corner table in the `clean` preset note in api.ts.
   const strokeFor = (c: Rgba): string => strokeAttrs(c, interpolate ? 0 : o.strokeWidth);
 
   let regions = 0;

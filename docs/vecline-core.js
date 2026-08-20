@@ -5127,10 +5127,13 @@ var TRACE_DEFAULTS = {
   background: true,
   refineIterations: 4,
   strokeWidth: 0,
-  // Off everywhere, `clean` included. It is worth +0.0187 mean SSIM for +5.5%
-  // gzip over the corpus, which is a good trade on flat art (+0.0502 on logo-tux)
-  // and a thin one on a clean JPEG (+0.0026 on photo-jpeg-source) — a decision a
-  // caller should make, not a default.
+  // Off everywhere, `clean` included, and re-confirmed after `clean`'s stroke
+  // moved from 1 to 0.5. Against a document with no seam paint at all it is worth
+  // +0.0184 mean SSIM for +5.5% gzip and wins on 9 of 9 subjects. Against what
+  // `clean` actually ships — the same document with the 0.5 stroke this pass
+  // SUPPRESSES — it is worth +0.0025 mean and HARMS 4 of 9, because the stroke is
+  // already collecting +0.0159 of the same thing for a twentieth of the bytes.
+  // The four-corner table, the blur floor and the render notes are in api.ts.
   interpolate: false,
   // OFF by default, tried twice and rejected twice on measurement.
   //
