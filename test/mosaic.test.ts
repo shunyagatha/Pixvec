@@ -290,11 +290,31 @@ describe('mosaic end to end', () => {
 });
 
 describe('the clean preset', () => {
-  it('declares the mosaic and the seam stroke, so overriding works normally', () => {
+  it('declares the mosaic and the seam stroke, so overriding works normally', async () => {
     // In the preset rather than forced inside trace(): presets are merged before
     // the caller's own `trace` block, so `--stroke-width 0` still wins.
     expect(PRESETS.clean.mosaic).toBe(true);
-    expect(PRESETS.clean.strokeWidth).toBe(1);
+    // 0.5, swept. 1.0 shipped for a day on three subjects that all gained; at N=9
+    // it was the WORST of 0.25/0.5/0.75/1 on the mean and harmed three subjects by
+    // up to 0.0223. See the table in src/api.ts.
+    expect(PRESETS.clean.strokeWidth).toBe(0.5);
+
+    // And the half the name promises, which the assertions above do not check: an
+    // explicit override has to actually reach the output. Pinning two constants
+    // proves the preset's contents, not that a caller can change them.
+    const img = createImage(48, 48);
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        const v = Math.hypot(x - 24, y - 24) < 16 ? 40 : 230;
+        setPixel(img, x, y, v, v, v, 255);
+      }
+    }
+    const preset = await vectorize({ image: img }, { mode: 'trace', preset: 'clean' });
+    const overridden = await vectorize(
+      { image: img }, { mode: 'trace', preset: 'clean', trace: { strokeWidth: 0 } },
+    );
+    expect(preset.svg).toMatch(/stroke-width="0?\.5"/);
+    expect(overridden.svg).not.toMatch(/stroke-width/);
   });
 
   it('emits curves on flat art, where it used to emit none', async () => {

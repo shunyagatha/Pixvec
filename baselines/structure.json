@@ -8,7 +8,7 @@
       "gated": true,
       "producer": "vecline clean",
       "mode": "trace",
-      "ssim": 0.9826870867399052,
+      "ssim": 0.9901224510773954,
       "curvePct": 79.7752808988764,
       "curves": 71,
       "lines": 18,
@@ -26,15 +26,15 @@
       "borderEdges": 7,
       "twinPct": 83.14606741573034,
       "twinLengthPct": 76.91514590513607,
-      "bytes": 1634,
-      "gzip": 741
+      "bytes": 1640,
+      "gzip": 745
     },
     {
       "subject": "petals",
       "gated": true,
       "producer": "vecline clean",
       "mode": "trace",
-      "ssim": 0.9751497079959087,
+      "ssim": 0.9820677292255461,
       "curvePct": 96,
       "curves": 72,
       "lines": 3,
@@ -52,15 +52,15 @@
       "borderEdges": 4,
       "twinPct": 66.66666666666666,
       "twinLengthPct": 64.39959792137253,
-      "bytes": 1966,
-      "gzip": 833
+      "bytes": 1980,
+      "gzip": 835
     },
     {
       "subject": "keycap",
       "gated": true,
       "producer": "vecline clean",
       "mode": "trace",
-      "ssim": 0.970357932916723,
+      "ssim": 0.9640296008967337,
       "curvePct": 0,
       "curves": 0,
       "lines": 52,
@@ -78,15 +78,15 @@
       "borderEdges": 4,
       "twinPct": 92.85714285714286,
       "twinLengthPct": 76.0588147445394,
-      "bytes": 791,
-      "gzip": 346
+      "bytes": 797,
+      "gzip": 348
     },
     {
       "subject": "glyph",
       "gated": true,
       "producer": "vecline clean",
       "mode": "trace",
-      "ssim": 0.9506286820033835,
+      "ssim": 0.9614099344724958,
       "curvePct": 95.83333333333334,
       "curves": 46,
       "lines": 2,
@@ -104,8 +104,8 @@
       "borderEdges": 0,
       "twinPct": 65.38461538461539,
       "twinLengthPct": 68.30038832643717,
-      "bytes": 1214,
-      "gzip": 596
+      "bytes": 1220,
+      "gzip": 598
     }
   ]
 }
