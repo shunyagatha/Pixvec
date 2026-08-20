@@ -630,7 +630,9 @@ function compareImages(reference, candidate, opts = {}) {
     for (let c = 0; c < 3; c++) {
       channelScores.push(ssimPlane(planesA.rgb[c], planesB.rgb[c], width, height));
     }
-    if (!(isConstant(planesA.alpha) && isConstant(planesB.alpha) && planesA.alpha[0] === planesB.alpha[0])) {
+    const alphaCarriesArtwork = !isConstant(planesA.alpha);
+    const flatlyDifferent = isConstant(planesA.alpha) && isConstant(planesB.alpha) && planesA.alpha[0] !== planesB.alpha[0];
+    if (alphaCarriesArtwork || flatlyDifferent) {
       channelScores.push(ssimPlane(planesA.alpha, planesB.alpha, width, height));
     }
     ssim = channelScores.reduce((s, v) => s + v, 0) / channelScores.length;

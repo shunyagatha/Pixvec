@@ -256,6 +256,38 @@ describe('SSIM scores alpha when alpha is what carries the artwork', () => {
     expect(compareImages(disc(255), disc(255)).ssim).toBeCloseTo(1, 12);
   });
 
+  it('does not let a candidate buy a channel by varying its own alpha', () => {
+    // THE EXPLOIT THIS GATE EXISTS FOR, and it shipped for a day.
+    //
+    // The first version admitted alpha whenever EITHER side varied. So against an
+    // opaque reference a candidate could opt itself into a fourth scored channel
+    // just by making its own alpha non-constant — and that channel scores ~1.0
+    // against a constant reference plane, diluting whatever RGB was saying.
+    //
+    // Not hypothetical: wrapping our own SVG output in one `<feGaussianBlur>`
+    // makes alpha vary at the filter-region edge, and photo-motorcycles reported
+    // 0.5698 -> 0.6716 for it. On RGB alone that same blur is 0.5698 -> 0.5622,
+    // i.e. WORSE. The whole +0.1094 was the free channel, and it read as the
+    // largest quality gain in the project's history.
+    const reference = photoLike(48, 36, 3);
+
+    // Same RGB in both candidates. One is fully opaque; the other has a rim of
+    // slightly-transparent pixels, exactly what a filter region produces.
+    const opaque = photoLike(48, 36, 11);
+    const rimmed = { width: opaque.width, height: opaque.height, data: Uint8ClampedArray.from(opaque.data) };
+    for (let x = 0; x < rimmed.width; x++) {
+      rimmed.data[x * 4 + 3] = 250;
+      rimmed.data[((rimmed.height - 1) * rimmed.width + x) * 4 + 3] = 250;
+    }
+
+    const plain = compareImages(reference, opaque).ssim;
+    const varied = compareImages(reference, rimmed).ssim;
+
+    // Touching alpha may cost a little; it must never PAY. Before the fix this
+    // gap was +0.1 in the wrong direction.
+    expect(varied).toBeLessThanOrEqual(plain + 1e-9);
+  });
+
   it('leaves fully opaque comparisons untouched, so published numbers do not move', () => {
     // Both alpha planes are a constant 255. Averaging a free 1.0 into the score
     // would lift every opaque result toward 1 while measuring nothing, so alpha

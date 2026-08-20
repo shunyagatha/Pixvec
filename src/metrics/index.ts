@@ -109,9 +109,34 @@ export function compareImages(
     // Conditional because unconditional would be its own quiet bug: on opaque
     // artwork both alpha planes are a constant 255, `ssimPlane` returns 1 for
     // identical constants, and averaging that in would lift every published score
-    // toward 1 without measuring anything. Alpha joins only when at least one side
-    // varies, or when the two are constant at different values.
-    if (!(isConstant(planesA.alpha) && isConstant(planesB.alpha) && planesA.alpha[0] === planesB.alpha[0])) {
+    // toward 1 without measuring anything.
+    //
+    // WHETHER ALPHA COUNTS IS A PROPERTY OF THE REFERENCE, NOT OF THE CANDIDATE,
+    // and the first version of this got that wrong in a way that was exploitable.
+    // It admitted alpha whenever EITHER side varied — so a candidate could opt
+    // itself into a fourth channel simply by making its own alpha non-constant,
+    // and that channel scores ~1.0 against a constant reference plane. Averaging a
+    // free 1.0 into the mean dilutes whatever the RGB channels are saying.
+    //
+    // Measured, and it is not a small effect. Wrapping our own output in one
+    // `<feGaussianBlur>` makes alpha vary at the filter-region edge (207..255 on
+    // photo-motorcycles). Reported SSIM went 0.5698 -> 0.6716, which read as a
+    // blur being the largest quality gain in the project's history. On RGB alone
+    // the same blur goes 0.5698 -> 0.5622 — it is WORSE, as it should be. The
+    // whole +0.1094 was the fourth channel.
+    //
+    // So: the reference decides. A varying reference alpha means the artwork lives
+    // partly in that channel and it must be scored. Two constant-but-different
+    // planes are still a real difference and stay in — that branch cannot be
+    // gamed, because the candidate has to be constant to reach it.
+    //
+    // A candidate that invents transparency against an opaque reference is not
+    // lost by this: the RGB planes are composited over `bg` before scoring, so a
+    // see-through pixel changes its colour and is caught there.
+    const alphaCarriesArtwork = !isConstant(planesA.alpha);
+    const flatlyDifferent = isConstant(planesA.alpha) && isConstant(planesB.alpha)
+      && planesA.alpha[0] !== planesB.alpha[0];
+    if (alphaCarriesArtwork || flatlyDifferent) {
       channelScores.push(ssimPlane(planesA.alpha, planesB.alpha, width, height));
     }
     ssim = channelScores.reduce((s, v) => s + v, 0) / channelScores.length;
