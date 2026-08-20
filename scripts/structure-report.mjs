@@ -259,15 +259,35 @@ async function runOurs(source, preset) {
  * that reports every structural figure with SSIM blank is far more useful than
  * no row at all.
  */
-async function runRival(svg, name, image) {
+async function runRival(svg, name, image, subject) {
   let ssim = null;
   try {
     const { rasterizeSvg } = await import('../dist/esm/io/rasterize.js');
     const { compareImages } = await import('../dist/esm/metrics/index.js');
     const rendered = await rasterizeSvg(svg, { width: image.width, height: image.height });
-    ssim = compareImages(image, rendered.image ?? rendered).ssim;
-  } catch {
-    // No renderer available, or the rival's SVG uses something it cannot draw.
+    let candidate = rendered.image ?? rendered;
+    // resvg fits ONE axis (width) and lets the other float from the SVG's own
+    // aspect ratio (resolveFit in src/io/rasterize.ts, by design). A rival
+    // document whose viewBox aspect is not bit-identical to the source
+    // raster's — sumansarkar-grand-opening-7142417 is 1.32296 against the PNG's
+    // 1.32321 — rounds to an off-by-one-pixel height. That is a measurement
+    // artifact, not a reason to drop the row, so resize onto the reference's
+    // exact grid before scoring.
+    if (candidate.width !== image.width || candidate.height !== image.height) {
+      const { default: sharp } = await import('sharp');
+      const { data } = await sharp(Buffer.from(candidate.data), {
+        raw: { width: candidate.width, height: candidate.height, channels: 4 },
+      }).resize(image.width, image.height).raw().toBuffer({ resolveWithObject: true });
+      candidate = { width: image.width, height: image.height, data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength) };
+    }
+    ssim = compareImages(image, candidate).ssim;
+  } catch (err) {
+    // A real renderer gap (no renderer available, or a construct resvg cannot
+    // draw) still degrades gracefully to a blank SSIM cell — but says why,
+    // instead of the bare `catch {}` this used to be. That swallowed a real
+    // bug the same way it would a genuine gap: a 1px rounding mismatch above
+    // threw here and came out looking identical to "could not render".
+    console.error(`  ! ${subject ?? '(unknown subject)'} / ${name}: rival SSIM unavailable — ${err.message}`);
   }
   return { producer: name, mode: 'external', ssim, svg, ...measure(svg) };
 }
@@ -314,7 +334,7 @@ async function main() {
       const rival = path.join(rivalDir, `${name}.svg`);
       if (existsSync(rival)) {
         const svg = await readFile(rival, 'utf8');
-        rows.push({ subject: name, gated: false, ...(await runRival(svg, 'Vectorizer.AI', source.image)) });
+        rows.push({ subject: name, gated: false, ...(await runRival(svg, 'Vectorizer.AI', source.image, name)) });
       }
     }
   }
