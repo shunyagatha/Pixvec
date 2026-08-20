@@ -4,7 +4,8 @@ import {
   type FitOptions, type FittedPath, type OpenFitOptions, type Segment,
   fitLoop, fitOpen,
 } from './fit.js';
-import type { Point } from '../types.js';
+import { refineOpenArc } from './subpixel.js';
+import type { Point, RasterImage } from '../types.js';
 
 /**
  * Boundary decomposition into arcs shared by exactly two regions.
@@ -388,6 +389,15 @@ export function reversePath(path: FittedPath): FittedPath {
 export interface FitArcsOptions extends OpenFitOptions {
   /** Passed to {@link fitLoop} for arcs that carry no junction. */
   closed?: FitOptions;
+  /**
+   * Continuous-tone source, for antialiasing-based refinement of open interior
+   * arcs (see {@link refineOpenArc}) before each is fitted. Requires `labels`.
+   * Omit either to fit every open arc's raw lattice points unchanged, exactly as
+   * before this option existed.
+   */
+  image?: RasterImage;
+  /** Component ids from `connectedComponents`, matching `image` pixel-for-pixel. */
+  labels?: Int32Array;
 }
 
 /**
@@ -402,7 +412,14 @@ export function fitFaces(
   dec: ArcDecomposition, opts: FitArcsOptions,
 ): Map<Loop, FittedPath> {
   const fitted: Array<FittedPath | null> = dec.arcs.map((arc) => {
-    if (!arc.closed) return fitOpen(arc.pts, opts);
+    if (!arc.closed) {
+      // Refine only interior arcs: a silhouette or frame edge (see `isInterior`)
+      // has no real region on its outside to measure coverage against.
+      const pts = opts.image && opts.labels && isInterior(arc)
+        ? refineOpenArc(arc.pts, opts.image, opts.labels, arc.a).pts
+        : arc.pts;
+      return fitOpen(pts, opts);
+    }
     const loop = fitLoop(arc.pts, opts.closed ?? {
       tolerance: opts.tolerance,
       fitError: opts.fitError,

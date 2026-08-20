@@ -309,13 +309,24 @@ describe('trace with interpolate', () => {
     // The mechanism's reason to exist, stated as a scaling law. Quadrupling the
     // image quadruples the boundary a per-arc pass would have to encode, and
     // leaves the number of adjacent class pairs where it was.
+    //
+    // The multiplier below is deliberately looser than 4x, and moved once already.
+    // `mosaic`'s shared-arc fitter recovers real sub-pixel edge evidence from
+    // `smooth`'s antialiasing before fitting each arc (`refineOpenArc`, subpixel.ts),
+    // so a longer wavy boundary is increasingly encoded as fewer, larger curves
+    // rather than more forced-straight segments — sub-linear, not absent. Measured
+    // on this fixture: baseline was 1191 -> 2615 bytes (2.196x) before that fitter
+    // existed; with it, 1041 -> 1934 bytes (1.858x). The categorical claim this
+    // test exists to check — total scales with boundary length while layer does
+    // not — still holds by a wide margin (1.858x against layer's <1.25x, which
+    // stays exactly flat at 3 class pairs either size).
     const layerOf = (w: number, h: number): { layer: number; total: number } => {
       const svg = trace(wavyFields(w, h), { ...opts, interpolate: true }).svg;
       return { layer: extractLayer(svg).length, total: svg.length };
     };
     const small = layerOf(90, 60);
     const large = layerOf(360, 240);
-    expect(large.total).toBeGreaterThan(small.total * 2);
+    expect(large.total).toBeGreaterThan(small.total * 1.5);
     expect(large.layer).toBeLessThan(small.layer * 1.25);
   });
 
