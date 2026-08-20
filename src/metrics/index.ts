@@ -7,6 +7,58 @@ import { ssimPlane } from './ssim.js';
 export { ssimPlane };
 export { severity, compositeScore, type SeverityReport, type SeverityOptions } from './severity.js';
 
+/**
+ * WHY SSIM IS STILL THE MEASURE HERE, after six replacements were evaluated.
+ *
+ * A search was run for something a low-pass could not win, against a validation
+ * set with known answers: a blur must rank below the unblurred original, a config
+ * that erased the subject must rank worse, identity must be the maximum. Seven
+ * measures, seven photographic subjects. None replaced SSIM, and two failed in ways
+ * worth recording so they are not proposed again.
+ *
+ * GMSD was the worst, at 0 of 7 — not the best, which is the intuitive guess since
+ * it is explicitly an edge-structure measure. The mechanism is specific to what a
+ * vectoriser emits: our output is piecewise constant, so its gradient field is ZERO
+ * inside regions where the source has texture and enormous at region boundaries
+ * where the source is smooth. Wrong in both directions at once. A small blur seeds
+ * gradient in the flat interiors and spreads it at the boundaries, moving the
+ * candidate toward the reference on both counts, so the score improves nearly
+ * everywhere. GMSD also decimates 2x before its Prewitt operator, which absorbs a
+ * sub-pixel blur outright.
+ *
+ * MS-SSIM is worse than useless for this question: scale-robust by construction,
+ * and scale-robustness is exactly the property that makes a low-pass cheap. It also
+ * compresses real gaps — blurring the SOURCE by sigma 4 costs plain SSIM 0.0954 and
+ * MS-SSIM only 0.0492.
+ *
+ * The leading candidate, `SSIM(luma) x min(r, 1/r)` with r the gradient-energy
+ * ratio, scored 5 of 7 and was REJECTED for opening a larger hole than it closed.
+ * Our output is under-sharp on every photograph (r = 0.42 to 0.55), so `min(r,1/r)`
+ * is just r and the score becomes LINEAR in the candidate's gradient energy with
+ * 2.4x of free headroom — and nothing in it asks where that gradient came from. A
+ * ~200-byte `<feConvolveMatrix>` unsharp mask, no geometry and no information about
+ * the source, gained up to +0.2443 (photo-parrots 0.3952 -> 0.6395) on 8 of 9
+ * subjects. That is the blur exploit run backwards, at twenty-six times the margin
+ * the measure claimed over blur. Plain SSIM is fooled by 0 of the same 45 variants.
+ *
+ * The transferable rule: a metric that multiplies fidelity by a term the candidate
+ * can raise for free is not a fidelity metric, whichever direction the term points.
+ *
+ * WHAT IS WORTH KEEPING from that work is not a score but a diagnostic:
+ * `gradientRatio`, the candidate's mean Sobel magnitude over the reference's. On
+ * its own it is the clearest statement of the photographic gap this project has —
+ * we retain 0.42 to 0.55 of the source's gradient energy on the six hard
+ * photographs where the paid rival retains 0.62 to 0.83. Report it BESIDE a
+ * fidelity score, never folded into one, and never alone: it never looks at the
+ * reference's content, so pure noise maximises it.
+ *
+ * And `scripts/bench-scale.mjs` remains the right instrument for flat art — edge
+ * weighted, at magnification, against true vector ground truth. It is structurally
+ * unavailable for the photographs, which have no vector original; manufacturing one
+ * from the raster would be the circular measurement this project has already been
+ * caught by. That split is the honest answer, not a gap to be closed.
+ */
+
 export interface CompareOptions {
   /**
    * `premultiplied` (default) treats colour under zero alpha as invisible, which

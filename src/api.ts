@@ -257,18 +257,33 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // measured NEGATIVE as a global default: on lattice-aligned polygons there is no
   // gap to fill and the stroke only fattens the shape.
   //
-  // IT IS NOT A CLEAN WIN, AND THE FIRST VERSION OF THIS NOTE SAID IT WAS. That
-  // was measured on three subjects, all of which gain. At N=9 it HARMS three:
+  // 0.5, AND IT SHIPPED AT 1 FOR A DAY BECAUSE THE WIDTH WAS NEVER SWEPT. The
+  // value was chosen on three subjects that all gained, and never varied. Swept
+  // properly, N=9, delta SSIM against no stroke at all:
   //
-  //   logo-tux    +0.0444   photo-cat        +0.0454   photo-portrait  +0.0136
-  //   alpha-dice  +0.0076   photo-parrots    +0.0083   jpeg-source     +0.0068
-  //   lighthouse  -0.0215   jpeg-artifacts   -0.0218   motorcycles     -0.0217
+  //   width   mean      subjects harmed   worst subject   gzip
+  //   0.25   +0.0119        0 of 9           +0.0014      1.003x
+  //   0.50   +0.0159        1 of 9           -0.0020      1.003x
+  //   0.75   +0.0133        3 of 9           -0.0102      1.003x
+  //   1.00   +0.0064        3 of 9           -0.0223      1.003x
   //
-  // Mean +0.0068. It stays because the mean is positive and the three it hurts are
-  // photographs, which this preset already documents itself as wrong for — but a
-  // reader deciding whether to keep it deserves the whole table, not the half that
-  // flatters it. Textbook corpus-size trap: the same question answers yes at N=3
-  // and "yes, mostly" at N=9.
+  // 1.0 was the WORST of the four on the mean and tied for worst on subjects
+  // harmed, with ten times the downside of 0.5. The three casualties there
+  // (jpeg-artifacts -0.0223, motorcycles -0.0219, lighthouse -0.0220) come back to
+  // +0.0005, +0.0028 and -0.0020 at half the width. Byte cost is identical at every
+  // width, so nothing is being traded for it.
+  //
+  // 0.5 IS A SWEPT OPTIMUM ON A SMOOTH TRADE, not a threshold where anything
+  // physical happens. A draft of this note claimed 0.5 was "where the interior seam
+  // hits zero" and that everything above it was spent on the halo; two independent
+  // reviews showed that holds only under an undisclosed threshold, and that the
+  // project's own magnification instrument puts the optimum at 0 rather than 0.5.
+  // The numbers above are the whole case. If no subject may be harmed at all, 0.25
+  // is the honest choice and costs 0.0040 of the mean.
+  //
+  // The general lesson is recorded here because this is the second time it has been
+  // paid for: a constant that has only ever been swept UPWARD gets read as a floor.
+  // 0.25 and 0.5 were never tried until the losses at 1.0 forced the question.
   //
   // THE RIVAL'S STROKE PASS IS NOT A SEAM COVER, and this comment said it was.
   //
@@ -382,7 +397,7 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // exposure before becoming a default.
   clean: {
     colors: 16, minArea: 4, smooth: 1, segment: 0.02,
-    mosaic: true, strokeWidth: 1, optimizeError: 0.75, quadratics: true,
+    mosaic: true, strokeWidth: 0.5, optimizeError: 0.75, quadratics: true,
   },
   // `photo` carries no minArea/tolerance/cornerAngle overrides on purpose. It
   // used to force `minArea: 16, cornerAngle: 90, colors: 64` — the same mistake
