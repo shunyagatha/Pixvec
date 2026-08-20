@@ -7731,7 +7731,7 @@ function toGcode(polylines, opts) {
 }
 
 // src/core.ts
-var VERSION = "2.1.1";
+var VERSION = "2.1.2";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,

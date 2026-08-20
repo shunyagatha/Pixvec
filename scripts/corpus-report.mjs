@@ -25,7 +25,16 @@ const kb = (n) => `${(n / 1024).toFixed(1)}KB`;
 const psnr = (v) => (Number.isFinite(v) ? v.toFixed(2) : '∞');
 
 await mkdir(OUT, { recursive: true });
-const files = (await readdir(SRC)).sort();
+// `withFileTypes` and a directory filter, not a bare `readdir`: this walked
+// straight into an EISDIR the day `corpus/src/Vectorizer.AI/` — a directory of
+// paid rival output used for the flat-art comparison work — first existed.
+// `corpus/` is gitignored precisely so it can hold whatever a working session
+// needs, so this script has to tolerate a subdirectory rather than assume the
+// corpus is flat.
+const files = (await readdir(SRC, { withFileTypes: true }))
+  .filter((e) => e.isFile())
+  .map((e) => e.name)
+  .sort();
 const rows = [];
 const problems = [];
 
