@@ -1114,6 +1114,12 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
         optimize: o.optimize,
         optimizeError: o.optimizeError,
         quadratics: o.quadratics,
+        // Recover real sub-pixel edge evidence for open interior arcs before they
+        // are fitted, so a shared boundary with nothing between its two junctions
+        // is not forced to a straight line when the source image's antialiasing
+        // says otherwise. See `refineOpenArc` in subpixel.ts.
+        image: img,
+        labels: comps.labels,
 // `mosaic` implies smoothing, and the floor is not a preference.
         //
         // Crack-following emits axis-aligned unit steps only, so an untouched
