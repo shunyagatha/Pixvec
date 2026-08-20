@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { trace } from '../src/vectorize/trace.js';
 import { rasterizeSvg } from '../src/io/rasterize.js';
+import { hairline, silhouetteDistance } from '../scripts/lib/hairline.mjs';
 import { createImage, setPixel } from './fixtures.js';
 import type { RasterImage } from '../src/types.js';
 
@@ -166,6 +167,38 @@ describe('the underpaint closes the interior seam', () => {
     // does end there, so it is not something to remove. It must not GROW: an
     // underpaint that spilled past the fills would fatten the artwork.
     expect(after.total).toBeLessThanOrEqual(before.total);
+  });
+
+  // At an integer scale every lattice edge lands on a pixel boundary and the
+  // rasteriser antialiases nothing, so a document can look seam-free purely
+  // because the sampling grid happened to agree with it — the 1x case above
+  // cannot tell that apart from a real fix. 3.902 cannot land on a boundary by
+  // construction (see scripts/lib/hairline.mjs), so a leak merely pushed below
+  // one sampling grid, rather than actually closed, would still show up here.
+  //
+  // strokeWidth is zeroed, unlike every other test in this file: it repaints
+  // each region's own antialiasing fringe and, at this magnification, that
+  // same-colour stroke alone becomes wide enough in render pixels to paper
+  // over the compositing gap regardless of `underpaint` (measured: shared
+  // `OPTS`, i.e. strokeWidth 0.5, gives 0 interior leaks at 3.902x for BOTH
+  // the plain and the underpainted trace). Left in, the `before.interior > 0`
+  // guard below would still fail on that config — but for the wrong reason,
+  // "this fixture stops exhibiting the defect at this scale", not the thing
+  // this test exists to check. Isolating strokeWidth out keeps it pointed at
+  // the mechanism it names.
+  it('removes every interior leak under magnification too, not only at 1x', async () => {
+    const src = splitDisc();
+    const isolated = { ...OPTS, strokeWidth: 0 };
+    const plain = trace(src, isolated).svg;
+    const under = trace(src, { ...isolated, underpaint: true }).svg;
+    const dist = silhouetteDistance(src);
+    const scale = 3.902;
+    const renderAt = async (svg: string) =>
+      (await rasterizeSvg(svg, { width: Math.round(src.width * scale) })).image;
+    const before = hairline(src, await renderAt(plain), { scale, dist });
+    const after = hairline(src, await renderAt(under), { scale, dist });
+    expect(before.interior).toBeGreaterThan(0);
+    expect(after.interior).toBe(0);
   });
 
   it('composes with interpolate rather than fighting it for the same layer', async () => {
