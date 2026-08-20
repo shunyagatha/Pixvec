@@ -313,19 +313,19 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // those gains are not evidence of anything a viewer would see. On logo-tux blur
   // loses by 0.035 and the pass wins, which is what makes that one real.
   //
-  // THE BLUR CONTROL, which is a constraint on every fidelity number in this
-  // project and not just on this option. Wrapping our own output in one ~150-byte
-  // `<feGaussianBlur>` gains more SSIM than anything shipped here, on 8 of 9
-  // subjects, for 1.00-1.02x gzip — jpeg-artifacts +0.1161, motorcycles +0.1037,
-  // portrait +0.0944. Rendered, it is visibly WORSE: the whole image is smeared.
-  // logo-tux is the only subject where blur loses, which is exactly why this is a
-  // flat-art preset and why its claims stop at flat art.
+  // THE BLUR CONTROL, and the correction that came with it. An earlier version of
+  // this note said a free Gaussian blur outscored everything the project had
+  // shipped, on 8 of 9 subjects, and concluded photographic SSIM was untrustworthy.
+  // That was a bug in `compareImages` — the alpha gate let a candidate buy a
+  // fourth scored channel by varying its own alpha, which any `<filter>` does. On
+  // RGB alone the blur was always making things worse. See src/metrics/index.ts.
   //
-  // `npm run blur:control` runs it against any candidate. A photographic gain
-  // smaller than that subject's blur delta has not been shown to be visible, and
-  // that includes how we score the RIVAL: their advantage on photographs is
-  // measured in the same regime, so "+0.2223 on motorcycles" is partly this effect
-  // and must not be quoted as recovered detail.
+  // With that fixed, blur's advantage is at most +0.0229 (alpha-dice) and it LOSES
+  // on logo-tux, motorcycles, jpeg-artifacts and lighthouse. SSIM mildly favours
+  // smoothing, as it is known to; it is not broken here.
+  //
+  // `npm run blur:control` remains worth running as a floor: a gain inside what a
+  // blur buys for free has not been shown to be visible.
   //
   // Colour count stays at 16. The rival describes logo-tux with ten fills and it
   // was worth checking whether that was the advantage; swept at 8, 10, 12 and 16
