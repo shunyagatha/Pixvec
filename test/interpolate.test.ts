@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blendPair, classAdjacency, clipPathDef, interpolationLayer } from '../src/vectorize/interpolate.js';
-import { trace } from '../src/vectorize/trace.js';
+import { TRACE_DEFAULTS, trace } from '../src/vectorize/trace.js';
+import { PRESETS, vectorize } from '../src/api.js';
 import { rasterizeSvg } from '../src/io/rasterize.js';
 import { createImage, setPixel } from './fixtures.js';
 import type { Rgba } from '../src/types.js';
@@ -349,6 +350,20 @@ describe('trace with interpolate', () => {
     expect(layered).not.toContain('clip-rule');
   });
 
+  it('is inert at the width `clean` ships, which is why on/off is confounded', () => {
+    // The single fact that invalidated the original measurement of this option.
+    // The existing suppression test above uses width 1; the preset ships 0.5, and
+    // the whole four-corner argument in api.ts rests on the two being identical.
+    const img = threeFields();
+    const shipped = trace(img, { ...opts, interpolate: true, strokeWidth: 0.5 }).svg;
+    const bare = trace(img, { ...opts, interpolate: true, strokeWidth: 0 }).svg;
+    expect(shipped).toBe(bare);
+    expect(shipped).not.toContain('stroke-width="0.5"');
+    // Not vacuous: without the pass the same two widths differ.
+    expect(trace(img, { ...opts, strokeWidth: 0.5 }).svg)
+      .not.toBe(trace(img, { ...opts, strokeWidth: 0 }).svg);
+  });
+
   it('paints the interpolated colour into the seam, and renders in resvg', async () => {
     const img = threeFields(90, 60);
     const plain = trace(img, { ...opts, strokeWidth: 0 }).svg;
@@ -364,5 +379,67 @@ describe('trace with interpolate', () => {
         || a.image.data[i + 2] !== b.image.data[i + 2]) seen++;
     }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * THE DEFAULT, and the confound that made it look like a different question.
+ *
+ * `interpolate` was measured as worth +0.0213 to +0.0299 on four subjects and
+ * very nearly shipped on in `clean`. Every one of those figures was taken while
+ * `clean` shipped `strokeWidth: 1` — and the pass SUPPRESSES the stroke, so
+ * turning it on changed two things at once. Re-derived at the shipping 0.5 over
+ * the nine-subject corpus, {interpolate off,on} x {strokeWidth 0.5, 0}:
+ *
+ *   the blend against a bare document       +0.0184 mean, wins 9 of 9
+ *   the 0.5 stroke against a bare document  +0.0159 mean, wins 8 of 9
+ *   the blend on top of the 0.5 stroke      +0.0025 mean, HARMS 4 of 9
+ *
+ * Two near-substitutes, and the cheap one already ships. The pass also costs
+ * 1.11x-1.14x gzip on the three flat-art subjects `clean` exists for, clears the
+ * blur floor on only 4 of 9, and is visibly worse on photo-jpeg-source — a pink
+ * halo thickening red type. So it stays an option. Full table in api.ts.
+ *
+ * This block exists so a future flip has to argue with those numbers instead of
+ * slipping through: nothing else in the suite fails if `clean` turns it on.
+ */
+describe('interpolate is an option, not a default', () => {
+  const flatArt = (): ReturnType<typeof createImage> => {
+    const img = createImage(64, 64);
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        if (Math.hypot(x - 32, y - 32) < 20) setPixel(img, x, y, 240, 200, 20, 255);
+        else setPixel(img, x, y, 20, 20, 25, 255);
+      }
+    }
+    return img;
+  };
+
+  it('is off in the trace defaults and in every preset', () => {
+    expect(TRACE_DEFAULTS.interpolate).toBe(false);
+    // `clean` is the only preset it was ever proposed for; measured there at
+    // +0.0025 mean with 4 of 9 subjects harmed. The loop rather than one
+    // assertion so a new preset cannot quietly acquire it either. Naming the
+    // preset in the compared value keeps a failure readable.
+    for (const [name, preset] of Object.entries(PRESETS)) {
+      const on = (preset as { interpolate?: boolean }).interpolate ?? false;
+      expect(`${name}:${on}`).toBe(`${name}:false`);
+    }
+  });
+
+  it('leaves no interpolation layer in a clean-preset document', async () => {
+    const out = await vectorize({ image: flatArt() }, { mode: 'trace', preset: 'clean' });
+    expect(out.svg).not.toContain('<use');
+    expect(out.svg).not.toContain('<clipPath');
+    expect(out.svg).not.toContain('clip-rule');
+    // And the 0.5 stroke the pass would have suppressed is present, at the swept
+    // width that collects +0.0159 of the same mean for a twentieth of the bytes.
+    expect(out.svg).toMatch(/stroke-width="0?\.5"/);
+    // Not vacuous: asked for, the layer does appear through the same preset.
+    const forced = await vectorize(
+      { image: flatArt() },
+      { mode: 'trace', preset: 'clean', trace: { interpolate: true } },
+    );
+    expect(forced.svg).toContain('<clipPath');
   });
 });

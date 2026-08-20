@@ -249,13 +249,17 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // staircase to remove, only detail. `auto` and `photo` remain the right choice
   // there, and this preset does not claim otherwise.
   //
-  // `strokeWidth: 1` is here for a measured reason and not by analogy with the
+  // `strokeWidth` is here for a measured reason and not by analogy with the
   // rival. Curved boundaries no longer land on the lattice, so a join antialiases
   // and can leave a hairline: rendered with nothing painted beneath, logo-tux
   // leaks 943 pixels at 2.7x magnification and the stroke takes it to 66,
   // alpha-dice 32 to 0, photo-parrots 284 to 0. This is why the same option
   // measured NEGATIVE as a global default: on lattice-aligned polygons there is no
-  // gap to fill and the stroke only fattens the shape.
+  // gap to fill and the stroke only fattens the shape. (Those three leak figures
+  // are AT WIDTH 1, which this preset no longer ships — see the sweep below. They
+  // are kept because they are the argument for having a stroke at all, not the
+  // argument for its width; a leak COUNT barely moves with width, only the
+  // deficit does, and that is measured under the `interpolate` note further down.)
   //
   // 0.5, AND IT SHIPPED AT 1 FOR A DAY BECAUSE THE WIDTH WAS NEVER SWEPT. The
   // value was chosen on three subjects that all gained, and never varied. Swept
@@ -311,22 +315,97 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // WHAT THAT MEANS FOR US, stated plainly because it reverses the standing
   // conclusion. Strip their pass and their filled partition scores 0.8994 against
   // our 0.9174: we are 0.0180 AHEAD on regions and colour, and the entire deficit
-  // on logo-tux is this one rendering pass. Our `strokeWidth: 1` remains correct
-  // for what it does — it takes leaks 943 -> 66 for 1.9% of bytes, and costs
+  // on logo-tux is this one rendering pass. Our `strokeWidth` remains correct for
+  // what it does — at width 1 it took leaks 943 -> 66 for 1.9% of bytes, and cost
   // bleed into transparent pixels of 217 -> 765 — but it is not the equivalent of
-  // theirs and must not be recorded as one.
+  // theirs and must not be recorded as one. (Both figures are at width 1; the
+  // preset ships 0.5, and what half a width still buys is the +0.0159 mean in the
+  // sweep above and the alpha deficit in the `interpolate` note below.)
   //
-  // BUILT, as `interpolate`, and off by default everywhere — including here. See
-  // src/vectorize/interpolate.ts. What it is worth, against this preset as shipped:
+  // BUILT, as `interpolate`, and DELIBERATELY OFF here. See
+  // src/vectorize/interpolate.ts. The table that stood here — six subjects, four
+  // gains of +0.0058 to +0.0280 and two losses — is deleted rather than patched,
+  // because every figure in it was taken against `strokeWidth: 1`, and this preset
+  // now ships 0.5. Not one of those six rows survives re-measurement: the four
+  // gains fall to +0.0153 / -0.0025 / +0.0083 / +0.0038 and the two losses become
+  // -0.0083 and +0.0030.
   //
-  //   logo-tux   0.9174 -> 0.9232   alpha-dice  0.8971 -> 0.9182
-  //   lighthouse 0.6633 -> 0.6912   motorcycles 0.5728 -> 0.6008
-  //   jpeg-source 0.9276 -> 0.9235  photo-cat   0.8234 -> 0.8202
+  // WHY THAT INVALIDATED IT, and this is the trap to remember. `interpolate`
+  // SUPPRESSES the stroke entirely (`strokeFor` in trace.ts), so an on/off
+  // comparison changes TWO things: it adds the blend AND it removes the stroke.
+  // The old table was therefore never blend-versus-nothing; it was
+  // blend-versus-the-worst-of-four-stroke-widths. Re-derived on all nine subjects
+  // at the shipping 0.5, as four corners, {interpolate off,on} x {strokeWidth
+  // 0.5, 0}. Cells C (on/0.5) and D (on/0) come out BYTE-IDENTICAL on all nine,
+  // which states the confound as a fact rather than a risk: with the pass on,
+  // `strokeWidth` does nothing at all.
   //
-  // Only logo-tux earns the claim, and the reason is the blur control below: on
-  // every other subject a free Gaussian blur scores HIGHER than this pass does, so
-  // those gains are not evidence of anything a viewer would see. On logo-tux blur
-  // loses by 0.035 and the pass wins, which is what makes that one real.
+  //   subject           A off/0.5   B off/0     D on      D-A       D-B    D vs blur(A)
+  //   logo-tux             0.9076   0.8733   0.9229   +0.0153   +0.0496   +0.0425 CLEARS
+  //   photo-lighthouse     0.6821   0.6841   0.6904   +0.0083   +0.0063   +0.0079 CLEARS
+  //   photo-jpeg-artifacts 0.5521   0.5517   0.5592   +0.0071   +0.0075   +0.0093 CLEARS
+  //   photo-motorcycles    0.5945   0.5917   0.5983   +0.0038   +0.0066   +0.0088 CLEARS
+  //   photo-cat            0.8173   0.7789   0.8203   +0.0030   +0.0414   -0.0159 fails
+  //   photo-parrots        0.7530   0.7419   0.7513   -0.0017   +0.0094   -0.0146 fails
+  //   alpha-dice           0.9203   0.8892   0.9178   -0.0025   +0.0286   -0.0196 fails
+  //   photo-portrait       0.6579   0.6416   0.6555   -0.0025   +0.0139   -0.0133 fails
+  //   photo-jpeg-source    0.9292   0.9182   0.9209   -0.0083   +0.0027   -0.0113 fails
+  //   MEAN                                           +0.0025   +0.0184
+  //
+  // D-B is what the BLEND is worth: positive on 9 of 9, mean +0.0184. The pass
+  // works, and nothing here disputes that. D-A is what it is worth HERE, on top
+  // of what already ships, and that is +0.0025 with four subjects harmed —
+  // because the 0.5 stroke it suppresses is already collecting a mean +0.0159
+  // (A-B, 8 of 9) of the same thing. Two near-substitutes, and the cheap one is
+  // already in: the stroke costs 0.3-2% of the bytes where the pass costs 0.5-14%.
+  //
+  // THE COST LANDS EXACTLY WHERE THE PRESET LIVES. gzip D/A: logo-tux 1.141x,
+  // alpha-dice 1.122x, jpeg-source 1.111x — the flat art `clean` exists for —
+  // against 1.005x to 1.064x on the six photographs. Raw, logo-tux 18,698 ->
+  // 24,221 bytes. It is most expensive precisely where it would have to earn it.
+  //
+  // "ON FOR FLAT ART, OFF FOR PHOTOGRAPHS" WAS TESTED AND IS FALSE, so nobody
+  // builds a content branch for it. The three flat-art subjects disagree with each
+  // other — logo-tux +0.0153, alpha-dice -0.0025, jpeg-source -0.0083 — and two of
+  // the three lose. alpha-dice is the OTHER transparency subject, the case this
+  // preset most exists for, and it prefers the plain stroke.
+  //
+  // RENDERED AND LOOKED AT, source beside both cells over mid grey, and this is
+  // the deciding evidence rather than the table. logo-tux at 10x on the eye and
+  // beak: real and visible — the white ring against black and the yellow beak
+  // against black gain an intermediate ramp where the fills-only document has a
+  // hard step. photo-jpeg-source at 8x: visibly WORSE — every red glyph gains a
+  // pink halo and the counters of `a` and `e` fill in, the blend band spreading
+  // into white and thickening the type. On the one preset whose job is to clean
+  // damaged artwork UP, that is the wrong direction, and SSIM agrees for once.
+  // photo-portrait at 4x: indistinguishable, and alpha-dice at 4x only barely
+  // distinguishable — a faint softening along the die-face seams and pip edges,
+  // which is the same band spreading and matches its -0.0025.
+  //
+  // IT DOES NOT FIX THE INTERIOR ALPHA HAIRLINE, despite interpolate.ts having
+  // claimed the band "recovers both: the ramp and the gap" (now corrected there).
+  // Alpha deficit — the sum of 255-alpha over pixels the SOURCE calls fully
+  // opaque, which needs no metric at all and cannot be gamed by a candidate:
+  //
+  //   subject      bare   stroke 0.5   interpolate   stroke 1.0   paid rival
+  //   logo-tux   175,892      75,634        68,350       23,770       22,971
+  //   alpha-dice  57,036      22,284        22,191        6,434       11,476
+  //
+  // The pass lands level with the 0.5 stroke it deletes and three times short of a
+  // 1.0 stroke. On the worst single pixel of logo-tux it is actively worse: 0/255
+  // against the stroke's 32/255, i.e. a fully transparent pixel inside solid
+  // artwork. The hairline is a stroke-width question and must not be spent on this
+  // one. Note also that the leak COUNT is inert here — 3,656 on logo-tux for bare,
+  // stroked and interpolated alike, because alpha 254 counts the same as alpha 0.
+  // Only the deficit moves; quote a count without its threshold and it says nothing.
+  //
+  // WHAT WOULD CHANGE THIS. One subject clearing the blur floor by 0.0425 while
+  // five fail it is an argument for an OPTION, which is what this already is, not
+  // for a default. A corpus with more logo-tux-shaped subjects — high-contrast
+  // flat art on transparency, few classes, long shared boundaries — could move it;
+  // N=9 with one strong win and four losses cannot. DO NOT RE-OPEN THIS AGAINST
+  // THE STROKE-1 NUMBERS AGAIN: any comparison that does not also measure the
+  // stroke-0 corner is measuring the suppression, not the blend.
   //
   // THE BLUR CONTROL, and the correction that came with it. An earlier version of
   // this note said a free Gaussian blur outscored everything the project had

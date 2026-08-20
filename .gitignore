@@ -33,3 +33,6 @@ bench-scale.json
 .refs/
 .out/
 .audit-tmp/
+# Scratch renders and per-cell SVGs from a measurement run. Derived from corpus/
+# inputs, so it inherits the same never-commit rule.
+.measure/
