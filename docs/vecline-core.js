@@ -2853,6 +2853,115 @@ function refineLoop(loop, img, classes, cls) {
   }
   return { pts: out, moved: displaced, total: count2 };
 }
+function refineOpenArc(pts, img, labels, cls) {
+  const { width, height, data } = img;
+  const srcN = pts.length / 2;
+  const asFloat = () => {
+    const out2 = new Float64Array(pts.length);
+    for (let i = 0; i < pts.length; i++) out2[i] = pts[i];
+    return out2;
+  };
+  if (srcN < 2) return { pts: asFloat(), moved: 0, total: srcN };
+  let count2 = 1;
+  for (let i = 0; i < srcN - 1; i++) {
+    count2 += Math.abs(pts[(i + 1) * 2] - pts[i * 2]) + Math.abs(pts[(i + 1) * 2 + 1] - pts[i * 2 + 1]);
+  }
+  if (count2 < 2) return { pts: asFloat(), moved: 0, total: srcN };
+  const vx = new Float64Array(count2);
+  const vy = new Float64Array(count2);
+  const sx = new Float64Array(count2);
+  const sy = new Float64Array(count2);
+  const hits = new Uint8Array(count2);
+  let k = 0;
+  for (let i = 0; i < srcN - 1; i++) {
+    const x0 = pts[i * 2], y0 = pts[i * 2 + 1];
+    const x1 = pts[(i + 1) * 2], y1 = pts[(i + 1) * 2 + 1];
+    const steps = Math.abs(x1 - x0) + Math.abs(y1 - y0);
+    const dx = Math.sign(x1 - x0);
+    const dy = Math.sign(y1 - y0);
+    for (let s = 0; s < steps; s++) {
+      vx[k] = x0 + dx * s;
+      vy[k] = y0 + dy * s;
+      k++;
+    }
+  }
+  vx[k] = pts[(srcN - 1) * 2];
+  vy[k] = pts[(srcN - 1) * 2 + 1];
+  k++;
+  const at = (x, y) => (y * width + x) * 4;
+  const inBounds = (x, y) => x >= 0 && y >= 0 && x < width && y < height;
+  let moved = 0;
+  for (let i = 0; i < count2 - 1; i++) {
+    const j = i + 1;
+    const ax = vx[i], ay = vy[i];
+    const bx = vx[j], by = vy[j];
+    const ey = by - ay;
+    let p1x, p1y, p2x, p2y;
+    if (ey === 0) {
+      const x = Math.min(ax, bx);
+      p1x = x;
+      p1y = ay - 1;
+      p2x = x;
+      p2y = ay;
+    } else {
+      const y = Math.min(ay, by);
+      p1x = ax - 1;
+      p1y = y;
+      p2x = ax;
+      p2y = y;
+    }
+    const in1 = inBounds(p1x, p1y) && labels[p1y * width + p1x] === cls;
+    const in2 = inBounds(p2x, p2y) && labels[p2y * width + p2x] === cls;
+    if (in1 === in2) continue;
+    const ix = in1 ? p1x : p2x, iy = in1 ? p1y : p2y;
+    const ox = in1 ? p2x : p1x, oy = in1 ? p2y : p1y;
+    if (!inBounds(ox, oy)) continue;
+    const nx = ox - ix, ny = oy - iy;
+    const pax = ix - nx, pay = iy - ny;
+    const pbx = ox + nx, pby = oy + ny;
+    const aOff = inBounds(pax, pay) ? at(pax, pay) : at(ix, iy);
+    const bOff = inBounds(pbx, pby) ? at(pbx, pby) : at(ox, oy);
+    const abr = data[aOff] - data[bOff];
+    const abg = data[aOff + 1] - data[bOff + 1];
+    const abb = data[aOff + 2] - data[bOff + 2];
+    const aba = data[aOff + 3] - data[bOff + 3];
+    const contrast = abr * abr + abg * abg + abb * abb + aba * aba;
+    if (contrast < MIN_CONTRAST_SQ) continue;
+    const iOff = at(ix, iy);
+    const oOff = at(ox, oy);
+    const project = (off) => {
+      const t = ((data[off] - data[bOff]) * abr + (data[off + 1] - data[bOff + 1]) * abg + (data[off + 2] - data[bOff + 2]) * abb + (data[off + 3] - data[bOff + 3]) * aba) / contrast;
+      return t < 0 ? 0 : t > 1 ? 1 : t;
+    };
+    let d = project(iOff) + project(oOff) - 1;
+    if (d > MAX_SHIFT) d = MAX_SHIFT;
+    else if (d < -MAX_SHIFT) d = -MAX_SHIFT;
+    if (d === 0) continue;
+    sx[i] += d * nx;
+    sy[i] += d * ny;
+    hits[i]++;
+    sx[j] += d * nx;
+    sy[j] += d * ny;
+    hits[j]++;
+    moved++;
+  }
+  const out = new Float64Array(count2 * 2);
+  let displaced = 0;
+  for (let i = 0; i < count2; i++) {
+    if (i === 0 || i === count2 - 1) {
+      out[i * 2] = vx[i];
+      out[i * 2 + 1] = vy[i];
+      continue;
+    }
+    const n2 = hits[i];
+    const ox = n2 > 0 ? sx[i] / n2 : 0;
+    const oy = n2 > 0 ? sy[i] / n2 : 0;
+    if (ox !== 0 || oy !== 0) displaced++;
+    out[i * 2] = vx[i] + ox;
+    out[i * 2 + 1] = vy[i] + oy;
+  }
+  return { pts: out, moved: displaced, total: count2 };
+}
 
 // src/vectorize/merge.ts
 function segmentPixels(img, k = 300, minRegion = 0) {
@@ -3281,6 +3390,9 @@ function decomposeToArcs(loopsByComponent, labels, width, height) {
   }
   return { arcs, faces };
 }
+function isInterior(arc) {
+  return arc.a !== OUTSIDE_FRAME && arc.b !== OUTSIDE_FRAME && arc.a !== -1 && arc.b !== -1;
+}
 function reversePath(path) {
   const on = [path.start];
   for (const s of path.segments) on.push({ x: s.x, y: s.y });
@@ -3307,7 +3419,10 @@ function reversePath(path) {
 }
 function fitFaces(dec, opts) {
   const fitted = dec.arcs.map((arc) => {
-    if (!arc.closed) return fitOpen(arc.pts, opts);
+    if (!arc.closed) {
+      const pts = opts.image && opts.labels && isInterior(arc) ? refineOpenArc(arc.pts, opts.image, opts.labels, arc.a).pts : arc.pts;
+      return fitOpen(pts, opts);
+    }
     const loop = fitLoop(arc.pts, opts.closed ?? {
       tolerance: opts.tolerance,
       fitError: opts.fitError,
@@ -5379,6 +5494,12 @@ function trace(source, opts = {}) {
     optimize: o.optimize,
     optimizeError: o.optimizeError,
     quadratics: o.quadratics,
+    // Recover real sub-pixel edge evidence for open interior arcs before they
+    // are fitted, so a shared boundary with nothing between its two junctions
+    // is not forced to a straight line when the source image's antialiasing
+    // says otherwise. See `refineOpenArc` in subpixel.ts.
+    image: img,
+    labels: comps.labels,
     // `mosaic` implies smoothing, and the floor is not a preference.
     //
     // Crack-following emits axis-aligned unit steps only, so an untouched
