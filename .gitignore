@@ -13,6 +13,9 @@ Thumbs.db
 .vscode/
 *.tsbuildinfo
 corpus/
+# Measurement scratch: SVGs, renders and tables derived from corpus/ inputs, so
+# it inherits the same never-commit rule.
+.measure/
 
 # Built MCPB bundle — reproducible from mcpb/ via `npm run mcpb`
 *.mcpb

@@ -86,7 +86,7 @@
       "gated": true,
       "producer": "vecline clean",
       "mode": "trace",
-      "ssim": 0.9614099344724958,
+      "ssim": 0.9671357301119046,
       "curvePct": 95.83333333333334,
       "curves": 46,
       "lines": 2,
@@ -104,8 +104,8 @@
       "borderEdges": 0,
       "twinPct": 65.38461538461539,
       "twinLengthPct": 68.30038832643717,
-      "bytes": 1220,
-      "gzip": 598
+      "bytes": 2160,
+      "gzip": 636
     }
   ]
 }

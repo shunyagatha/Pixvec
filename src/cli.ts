@@ -362,6 +362,7 @@ interface VectorizeCliOptions {
   optTolerance?: number;
   quadratics?: boolean;
   interpolate?: boolean;
+  underpaint?: boolean;
   refineIterations?: number;
   blur?: number;
   blurDelta?: number;
@@ -518,6 +519,7 @@ async function runVectorize(input: string, o: VectorizeCliOptions): Promise<void
       optimizeError: o.optTolerance,
       quadratics: o.quadratics,
       interpolate: o.interpolate,
+      underpaint: o.underpaint,
       refineIterations: o.refineIterations,
       blur: o.blur,
       blurDelta: o.blurDelta,
@@ -2188,6 +2190,18 @@ program
       + 'the 0.5 stroke --preset clean already ships it is worth only +0.0025 mean and harms 4 '
       + 'of 9 corpus subjects. Off by default; worth trying on high-contrast flat art.',
   )
+  .option(
+    '--underpaint',
+    'paint the opaque silhouette once underneath everything, so an interior seam cannot be '
+      + 'see-through. Where two fills meet, each covers part of the shared pixel and the two '
+      + 'together leave it up to a quarter transparent; on artwork WITH transparency there is no '
+      + 'background rectangle to hide that, and the leak traces every interior boundary. One '
+      + 'extra path, no clip, no new curves: the opaque classes concatenated into a single '
+      + 'element, which cannot seam against itself. On by default in --preset clean, and a no-op '
+      + 'on artwork with no transparent pixels. Declared as a pair with --no-underpaint so that '
+      + 'passing neither leaves the value undefined and the preset decides.',
+  )
+  .option('--no-underpaint', 'disable the silhouette underpaint that --preset clean turns on')
   .addOption(
     new Option('--turn-policy <policy>', 'how to resolve diagonal self-touches (checkerboard saddles)')
       .choices(['left', 'right', 'black', 'white', 'minority', 'majority']),

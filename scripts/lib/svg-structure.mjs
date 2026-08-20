@@ -409,7 +409,17 @@ export function structure(svg, { borderEpsilon = 0.51 } = {}) {
   const decimals = coordinateDecimals(svg);
   const box = canvas(svg);
   const els = elements(svg);
-  const faces = els.filter((e) => e.fill !== 'none');
+  // `id="underpaint"` is an UNDERLAY, not a face: it is a verbatim copy of the
+  // opaque fills above it, painted once underneath so an interior seam cannot be
+  // see-through (see `underpaint` in vectorize/trace.ts). It bounds no region of
+  // its own, and counting it would corrupt every figure here in the flattering
+  // direction — each of its subpaths is an exact duplicate of a real face, so
+  // every edge would acquire a twin and the segment, subpath and anchor counts
+  // would roughly double. Excluded for the same reason the seam-cover strokes
+  // are: a producer must not be able to raise its own score by drawing the same
+  // boundary again. Its BYTES still count, because those are measured from the
+  // file.
+  const faces = els.filter((e) => e.fill !== 'none' && e.attrs.id !== 'underpaint');
   const facePaths = faces.filter((e) => typeof e.d === 'string');
   const primitives = faces.filter((e) => typeof e.d !== 'string').length;
 

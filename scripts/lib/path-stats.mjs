@@ -48,13 +48,24 @@ export function commands(d) {
 const CURVE = new Set(['c', 's', 'q', 't', 'a']);
 const LINE = new Set(['l', 'h', 'v']);
 
-/** Segment census over every path in a document. */
+/**
+ * Segment census over every path in a document.
+ *
+ * `id="underpaint"` is skipped. That element is a verbatim COPY of the opaque
+ * fills above it, painted once underneath so an interior seam cannot be
+ * see-through (`underpaint` in vectorize/trace.ts); its `d` contains no
+ * coordinate that is not already counted, and leaving it in doubles the segment
+ * and subpath census of every transparent subject while describing nothing new.
+ * Its cost is not being hidden — bytes and gzip are measured from the whole
+ * file, and that is where a duplicated `d` belongs.
+ */
 export function pathStats(svg) {
   const counts = Object.create(null);
   let curves = 0;
   let lines = 0;
   let subpaths = 0;
-  for (const m of svg.matchAll(/\sd="([^"]*)"/g)) {
+  const body = svg.replace(/<path\b[^>]*\bid="underpaint"[^>]*>/g, '');
+  for (const m of body.matchAll(/\sd="([^"]*)"/g)) {
     for (const c of commands(m[1])) {
       counts[c] = (counts[c] ?? 0) + 1;
       if (CURVE.has(c)) curves++;
