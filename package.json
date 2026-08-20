@@ -199,6 +199,7 @@
     "diagnose": "node scripts/diagnose-photo.mjs",
     "structure": "node scripts/structure-report.mjs",
     "blur:control": "node scripts/blur-control.mjs",
+    "notices": "node scripts/third-party-notices.mjs",
     "structure:check": "node scripts/structure-report.mjs --check",
     "playground": "node scripts/build-playground.mjs",
     "figma:art": "node scripts/build-figma-art-trace.mjs && node scripts/build-figma-art-sweep.mjs && node scripts/build-figma-art.mjs && node scripts/build-figma-carousel.mjs",
