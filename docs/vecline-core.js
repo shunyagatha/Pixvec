@@ -3841,6 +3841,53 @@ function quantizeAlpha(img, maxLevels) {
   if (hist[255] > 0) levels.add(255);
   return Uint8Array.from([...levels].sort((x, y) => x - y));
 }
+function nearestAlphaLevel(levels, value) {
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < levels.length; i++) {
+    const d = Math.abs(levels[i] - value);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    } else if (d > bestD) break;
+  }
+  return best;
+}
+function collapseFringeAlpha(img, maxLevels, threshold = 0.2) {
+  const levels = quantizeAlpha(img, maxLevels);
+  if (levels.length <= 2) return img;
+  const { width, height, data } = img;
+  const n2 = width * height;
+  const band = new Int32Array(n2);
+  for (let i = 0; i < n2; i++) band[i] = nearestAlphaLevel(levels, data[i * 4 + 3]);
+  const total = new Float64Array(levels.length);
+  const interior = new Float64Array(levels.length);
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const i = row + x;
+      const lvl = band[i];
+      total[lvl]++;
+      const left = x > 0 ? band[i - 1] : lvl;
+      const right = x < width - 1 ? band[i + 1] : lvl;
+      const up = y > 0 ? band[i - width] : lvl;
+      const down = y < height - 1 ? band[i + width] : lvl;
+      if (left === lvl && right === lvl && up === lvl && down === lvl) interior[lvl]++;
+    }
+  }
+  const keep = Array.from(levels, (v, lvl) => {
+    if (v === 0 || v === 255) return true;
+    const frac = total[lvl] > 0 ? interior[lvl] / total[lvl] : 0;
+    return frac >= threshold;
+  });
+  if (keep.every(Boolean)) return img;
+  const kept = Uint8Array.from(levels.filter((_, lvl) => keep[lvl]));
+  if (kept.length === 0) return img;
+  const remap = Uint8Array.from(levels, (v, lvl) => keep[lvl] ? v : kept[nearestAlphaLevel(kept, v)]);
+  const out = data.slice();
+  for (let i = 0; i < n2; i++) out[i * 4 + 3] = remap[band[i]];
+  return { width, height, data: out };
+}
 function extractPalette(img, colors = 6) {
   const pal = quantize(img, colors, {});
   const n2 = img.width * img.height;
@@ -5235,6 +5282,7 @@ function trace(source, opts = {}) {
   };
   report("Preparing", 2);
   let img = source;
+  img = collapseFringeAlpha(img, Math.max(1, o.alphaLevels));
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
   }
