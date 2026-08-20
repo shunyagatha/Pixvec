@@ -11,7 +11,7 @@ import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
 import { regulariseAgreeing } from './junctions.js';
 import { decomposeToArcs, fitFaces } from './arcs.js';
-import { NearestColor, quantize, quantizeAlpha, type FillStrategy } from './quantize.js';
+import { NearestColor, quantize, quantizeAlpha, collapseFringeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
 import { detectPrimitive, primitiveSvg } from './primitives.js';
@@ -985,6 +985,13 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // clean edge the threshold produced.
   report('Preparing', 2);
   let img = source;
+  // Ahead of everything else, deliberately: collapsing antialiasing-ramp
+  // fringe alpha levels into their nearest real neighbour before blur/smooth/
+  // segment ever see the image means those passes shape the corrected ramp,
+  // not the original one. Doing this later, at classification time, measured
+  // as a regression on genuine translucency — see collapseFringeAlpha's own
+  // doc comment for why order matters here.
+  img = collapseFringeAlpha(img, Math.max(1, o.alphaLevels));
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
   }
