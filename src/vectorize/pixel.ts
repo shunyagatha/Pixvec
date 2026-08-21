@@ -39,6 +39,15 @@ export interface PixelVectorizeOptions {
   crispEdges?: boolean;
   title?: string;
   generator?: string;
+  /**
+   * Emit `width`/`height` on the root `<svg>`, in addition to `viewBox`. On by
+   * default — see the identical option on `TraceOptions` for why a consumer
+   * that sizes the element itself (an `<img>` under `width:100%`, an inline
+   * `<svg>`) would want `false` instead: it lets a standalone file scale to
+   * fit its viewer rather than opening at its literal, often oversized,
+   * pixel dimensions.
+   */
+  emitDimensions?: boolean;
 }
 
 export interface PixelVectorizeOutput {
@@ -206,6 +215,7 @@ export function vectorizePixels(
     generator: opts.generator,
     title: opts.title,
     shapeRendering: opts.crispEdges === false ? 'auto' : 'crispEdges',
+    emitDimensions: opts.emitDimensions,
   });
 
   if (backgroundKey !== 0) doc.addBackground(unpackRgba(backgroundKey));

@@ -579,6 +579,22 @@ export interface TraceOptions {
   title?: string;
   generator?: string;
   /**
+   * Emit `width`/`height` on the root `<svg>`, in addition to `viewBox`. On by
+   * default, for compatibility with tools that size an inserted vector from
+   * its own intrinsic attributes rather than its container.
+   *
+   * The cost of leaving it on: a browser opening the file directly with no
+   * surrounding page renders it at that literal pixel size — for a real
+   * photograph that is routinely bigger than the viewport, so the file needs
+   * zooming out to see at all, even though the geometry inside is exactly as
+   * resolution-independent either way. `viewBox` alone is enough for any
+   * consumer that sizes the element itself (an `<img>` under `width:100%`,
+   * an `<svg>` inline in a page, this project's own Studio), and lets a
+   * standalone file scale to fit its viewer the way `viewBox`-only markup
+   * does. Set `false` for that behaviour.
+   */
+  emitDimensions?: boolean;
+  /**
    * Called as each stage begins, with a name and a percentage.
    *
    * The percentage describes position in the *stage list*, not work completed,
@@ -1199,6 +1215,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     height,
     generator: o.generator,
     title: o.title,
+    emitDimensions: o.emitDimensions,
     // Inherited, so one attribute serves every `<clipPath>` the pass adds; stating
     // it is not optional, because neither resvg nor librsvg falls back to the
     // referenced path's own `fill-rule` when clipping. Harmless when the pass
