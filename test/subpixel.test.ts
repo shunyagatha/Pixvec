@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { connectedComponents } from '../src/vectorize/components.js';
 import { traceComponents, type Loop } from '../src/vectorize/contour.js';
-import { refineLoop } from '../src/vectorize/subpixel.js';
+import { refineLoop, refineOpenArc } from '../src/vectorize/subpixel.js';
 import { fitLoop } from '../src/vectorize/fit.js';
 import type { RasterImage } from '../src/types.js';
 
@@ -266,6 +266,83 @@ describe('refineLoop', () => {
 
     expect(onLattice).toBe(0);
     expect(onSubpixel).toBeGreaterThan(0);
+  });
+});
+
+describe('refineOpenArc', () => {
+  /**
+   * `findPlateau`'s walk out from a boundary is bounded by the region map, not
+   * only by pixel value: it must stop the instant it would leave the component
+   * being measured, because a thin region (a 1-2px bicycle spoke, in production)
+   * can be narrower than the walk's reach. Without that guard, refining one edge
+   * of a thin stroke would read contaminated "pure colour" samples from whatever
+   * lies past the stroke's *other* edge.
+   *
+   * `findPlateau` itself is module-private, so this drives it through the public
+   * `refineOpenArc` entry point with a synthetic thin stroke, built so the walk
+   * cannot plateau on pixel value alone before it would reach the far side:
+   *
+   *   rows 0-12  label 0  flat v=255              (near-outside, both variants)
+   *   rows 13-19 label 1  v = 180 - (row-13)*30    (the stroke under test, `cls`,
+   *                                                 partial coverage at row 13
+   *                                                 ramping down to pure black
+   *                                                 by row 19)
+   *   rows 20-29 label 2  flat, DIFFERS by variant  (far side, past the stroke)
+   *
+   * The arc under test is the boundary crack at row 13 (label 0 above it, label
+   * 1 below), refined with `cls = 1`. Its inward walk starts at row 13 and steps
+   * downward through the stroke; every step inside the stroke changes value by
+   * 30 (delta² = 2700, far above the plateau epsilon), so nothing but the region
+   * guard can stop it before row 20 — where the two variants diverge.
+   *
+   * The two variants are byte-identical from row 0 through row 19 (everything
+   * the guard should ever let the walk see) and differ only at row 20 and
+   * beyond. So: guard intact -> the walk never reaches row 20 -> refining the
+   * near edge is unaffected by what the far side looks like -> identical output.
+   * Guard broken -> the walk reads row 20's differing value as part of its
+   * "pure colour" reference -> the two variants diverge.
+   */
+  function thinStrokeFixture(farValue: number): { img: RasterImage; labels: Int32Array } {
+    const width = 6, height = 30;
+    const img: RasterImage = { width, height, data: new Uint8ClampedArray(width * height * 4) };
+    const labels = new Int32Array(width * height);
+
+    for (let y = 0; y < height; y++) {
+      let label: number, v: number;
+      if (y < 13) { label = 0; v = 255; }
+      else if (y < 20) { label = 1; v = 180 - (y - 13) * 30; }
+      else { label = 2; v = farValue; }
+
+      for (let x = 0; x < width; x++) {
+        labels[y * width + x] = label;
+        const o = (y * width + x) * 4;
+        img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255;
+      }
+    }
+    return { img, labels };
+  }
+
+  it("does not let a thin stroke's near-edge refinement see past its far edge", () => {
+    // A short, locally-straight run of the row-13 crack: x=0..4, y=13 constant.
+    const pts = [0, 13, 1, 13, 2, 13, 3, 13, 4, 13];
+
+    // Two arbitrary, distinct far-side values — chosen only so that if the
+    // guard is lost, the walk would (a) find genuine, non-zero-contrast
+    // "plateaus" out there rather than accidentally colliding with the
+    // near-outside colour, and (b) land on two different projected shifts
+    // that are not both clamped to the same MAX_SHIFT ceiling, so a mutation
+    // shows up as unequal output rather than being masked by clamping.
+    const variantA = thinStrokeFixture(140);
+    const variantB = thinStrokeFixture(60);
+
+    const refinedA = refineOpenArc(pts, variantA.img, variantA.labels, 1);
+    const refinedB = refineOpenArc(pts, variantB.img, variantB.labels, 1);
+
+    // Sanity: there is real anti-aliasing signal for this arc to act on at all,
+    // or the invariant below would hold trivially for the wrong reason.
+    expect(refinedA.moved).toBeGreaterThan(0);
+
+    expect(Array.from(refinedB.pts)).toEqual(Array.from(refinedA.pts));
   });
 });
 
