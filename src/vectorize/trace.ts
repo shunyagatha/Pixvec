@@ -7,6 +7,7 @@ import { adaptiveMinArea, connectedComponents, despeckle, type ComponentMap, typ
 import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } from './contour.js';
 import { fitLoop, flattenPath, type FitOptions, type FittedPath } from './fit.js';
 import { refineLoop } from './subpixel.js';
+import { refineSourceFor } from './refine-source.js';
 import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
 import { regulariseAgreeing } from './junctions.js';
@@ -1101,6 +1102,22 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     }
   }
 
+  // A denoised copy of `img`, read ONLY by the sub-pixel coverage sampling in
+  // `refineLoop`/`refineOpenArc` below — never by classification, and never by
+  // anything above this point. See `refine-source.ts` for why: a resized/
+  // compressed source can have pixel-level noise (sharpening ringing, JPEG
+  // blocking) riding on top of a genuine antialiasing ramp, and reading that
+  // noise as if it were signal is what defeats simplification even after
+  // coverage refinement runs. Computed only when something below will actually
+  // read it — `refineLoop` behind `o.subpixel`, `refineOpenArc` (via
+  // `mosaicFitBase.image`) whenever mosaic assembly runs regardless of
+  // `subpixel`, matching the note above about sub-pixel refinement paths that
+  // supersede the flag — and band-limited to `comps.labels`' FINAL boundaries
+  // (after despeckling), so the filter never runs on a component that
+  // despeckling is about to erase.
+  const needsRefineSource = o.subpixel === true || o.mosaic === true;
+  const refineSource = needsRefineSource ? refineSourceFor(img, comps.labels) : img;
+
   report('Tracing contours', 55);
   // `regularise` needs junctions to survive the collinear collapse, or two runs
   // either side of one merge and stop matching what the neighbour sees.
@@ -1138,8 +1155,9 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // Recover real sub-pixel edge evidence for open interior arcs before they
     // are fitted, so a shared boundary with nothing between its two junctions
     // is not forced to a straight line when the source image's antialiasing
-    // says otherwise. See `refineOpenArc` in subpixel.ts.
-    image: img,
+    // says otherwise. See `refineOpenArc` in subpixel.ts. The denoised
+    // measurement copy, not `img` itself — see `refine-source.ts`.
+    image: refineSource,
     labels: comps.labels,
     // `mosaic` implies smoothing, and the floor is not a preference.
     //
@@ -1507,7 +1525,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     const fitFor = (loop: Loop): FittedPath | null => {
       const shared = sharedGeometry?.get(loop);
       const refined = shared ?? (o.subpixel && !rankOfClass
-        ? refineLoop(loop, img, classes, cls).pts
+        ? refineLoop(loop, refineSource, classes, cls).pts
         : loop.pts);
       return mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
     };
@@ -1519,7 +1537,7 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     const underFitFor = (loop: Loop): FittedPath | null => {
       const shared = sharedGeometry?.get(loop);
       const refined = shared ?? (o.subpixel && !rankOfClass
-        ? refineLoop(loop, img, classes, cls).pts
+        ? refineLoop(loop, refineSource, classes, cls).pts
         : loop.pts);
       return underMosaicFaces?.get(loop) ?? fitLoop(refined, underFitOpts);
     };

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { connectedComponents } from '../src/vectorize/components.js';
 import { traceComponents, type Loop } from '../src/vectorize/contour.js';
-import { refineLoop, refineOpenArc } from '../src/vectorize/subpixel.js';
+import {
+  refineLoop, refineOpenArc, cornerCuts, smoothVertexDisplacements,
+} from '../src/vectorize/subpixel.js';
 import { fitLoop } from '../src/vectorize/fit.js';
 import type { RasterImage } from '../src/types.js';
 
@@ -472,5 +474,173 @@ describe('subpixel superseded by shared-boundary geometry', () => {
     // The CLI prints `result.notes`, so this is the assertion that the message
     // reaches a person rather than only a return value nobody reads.
     expect(out.notes.join('\n')).toContain('Sub-pixel refinement had no effect');
+  });
+});
+
+/**
+ * Robust smoothing of the per-vertex displacement signal, driven directly
+ * with hand-built tangent/displacement sequences rather than through an
+ * image fixture.
+ *
+ * `refineLoop`/`refineOpenArc` densify a polyline and average two incident
+ * steps into each vertex before this pass ever runs, which makes the exact
+ * per-vertex sequence an image produces hard to dictate by hand — unlike
+ * `findPlateau`, which a caller can pin precisely by controlling pixel
+ * coverage. `cornerCuts` and `smoothVertexDisplacements` are exported for
+ * exactly this reason (see their own doc comments) so the mechanism itself —
+ * not a proxy for it — is what these tests exercise.
+ */
+describe('cornerCuts', () => {
+  it('marks both ends of a boundary between two long runs (a real corner)', () => {
+    // A wrapping loop of 12 steps: 6 pointing right, 6 pointing down. Two run
+    // boundaries: v=6 (right run ends, down run starts) and the wrap seam at
+    // v=0 (down run ends, right run starts) — both meet two runs of length 6,
+    // above CORNER_RUN_MIN (4), so both are genuine corners.
+    const tx = new Int8Array([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    const ty = new Int8Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]);
+    const cut = cornerCuts(tx, ty, 12, true);
+    expect(Array.from(cut)).toEqual([1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
+  });
+
+  it('leaves short alternating runs unmarked — staircase noise, not corners', () => {
+    // Runs of length 2, well below CORNER_RUN_MIN — the crack-following
+    // staircase this pass exists to smooth over, not a real corner anywhere.
+    const tx = new Int8Array([1, 1, 0, 0, 1, 1, 0, 0]);
+    const ty = new Int8Array([0, 0, 1, 1, 0, 0, 1, 1]);
+    const cut = cornerCuts(tx, ty, 8, true);
+    expect(Array.from(cut)).toEqual(new Array(8).fill(0));
+  });
+
+  it('requires BOTH runs at a boundary to be long — one short side is still noise', () => {
+    // A long run (6) meets a short run (2): the short side means this could
+    // still be staircase jitter rather than a deliberate corner, so it must
+    // not be cut.
+    const tx = new Int8Array([1, 1, 1, 1, 1, 1, 0, 0]);
+    const ty = new Int8Array([0, 0, 0, 0, 0, 0, 1, 1]);
+    const cut = cornerCuts(tx, ty, 8, true);
+    expect(cut[6]).toBe(0);
+  });
+
+  it('does not cut the wrap seam when the tangent continues straight through it', () => {
+    // A single unbroken run of one tangent all the way around: the "last run
+    // wraps straight into the first" merge means there is no boundary at
+    // v=0 at all, not even a candidate to evaluate.
+    const tx = new Int8Array(10).fill(1);
+    const ty = new Int8Array(10).fill(0);
+    const cut = cornerCuts(tx, ty, 10, true);
+    expect(Array.from(cut)).toEqual(new Array(10).fill(0));
+  });
+
+  it('never cuts vertex 0 of an open arc, and leaves the endpoint slot 0', () => {
+    // Non-wrapping: vertex 0 has no arriving step, so it can never be a cut
+    // regardless of what follows; the trailing endpoint slot (index nSteps)
+    // is pinned by the caller and this function must not touch it either.
+    const tx = new Int8Array([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    const ty = new Int8Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]);
+    const cut = cornerCuts(tx, ty, 12, false);
+    expect(cut.length).toBe(13);
+    expect(cut[0]).toBe(0);
+    expect(cut[12]).toBe(0);
+    // The interior boundary (v=6) is still a real corner in the open-arc case.
+    expect(cut[6]).toBe(1);
+  });
+});
+
+describe('smoothVertexDisplacements', () => {
+  const n7valid = new Uint8Array(7).fill(1);
+  const n7noCut = new Uint8Array(7);
+
+  it('replaces a lone outlier with the window median — the majority wins', () => {
+    // Vertex 3 disagrees in sign with every one of its 4 window neighbours,
+    // all of them well above FIGHT_MAGNITUDE_MIN — the back-and-forth
+    // signature this pass exists to correct.
+    const dx = new Float64Array([0.5, 0.5, 0.5, -0.5, 0.5, 0.5, 0.5]);
+    const dy = new Float64Array(7);
+    const out = smoothVertexDisplacements(dx, dy, n7valid, n7noCut, 7, false);
+    expect(out.x[3]).toBeCloseTo(0.5, 10);
+  });
+
+  it('leaves a mutually agreeing run untouched, exactly, not just close', () => {
+    const dx = new Float64Array([0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4]);
+    const dy = new Float64Array(7);
+    const out = smoothVertexDisplacements(dx, dy, n7valid, n7noCut, 7, false);
+    for (let i = 0; i < 7; i++) expect(out.x[i]).toBe(0.4);
+  });
+
+  it('does not count a sign disagreement below FIGHT_MAGNITUDE_MIN as oscillation', () => {
+    // The centre value (-0.1) is opposite in sign to its neighbours but too
+    // small to be a real measurement rather than near-zero jitter — every
+    // pair touching it is skipped, so nothing in this window ever triggers,
+    // and the whole sequence passes through unchanged.
+    const dx = new Float64Array([0.5, 0.5, -0.1, 0.5, 0.5]);
+    const dy = new Float64Array(5);
+    const valid = new Uint8Array(5).fill(1);
+    const cut = new Uint8Array(5);
+    const out = smoothVertexDisplacements(dx, dy, valid, cut, 5, false);
+    expect(Array.from(out.x)).toEqual(Array.from(dx));
+  });
+
+  /**
+   * MUTATION CHECK (performed by hand, not shipped): raising
+   * FIGHT_MAGNITUDE_MIN's effective floor by changing the `-0.1` fixture
+   * value above to `-0.3` (above the real 0.25 threshold) made this
+   * assertion fail — `out.x` differed from `dx` because the disagreement was
+   * then large enough to trigger smoothing. Confirms the test actually
+   * discriminates the threshold rather than passing regardless of it.
+   * Reverted afterward.
+   */
+  it('never lets the smoothing window cross a hard corner', () => {
+    // A SHORT genuine run (two +0.5 vertices, indices 3-4) sits right next to
+    // a long -0.5 run. Without a corner gate, a radius-2 window outnumbers a
+    // short run with its longer neighbour and the median flips it to the
+    // WRONG value — the exact failure a corner gate exists to prevent, not a
+    // hypothetical. A hard corner at vertex 5 (between the two runs) must
+    // stop that from happening to vertex 4.
+    const dx = new Float64Array([-0.5, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, -0.5, -0.5]);
+    const dy = new Float64Array(9);
+    const valid = new Uint8Array(9).fill(1);
+
+    // Unprotected: outvoted by its 3 (of 4 window) negative neighbours, the
+    // median overrules vertex 4's own true value. This is not asserting a
+    // trivial fact — it demonstrates why the gate below is load-bearing.
+    const unprotected = smoothVertexDisplacements(dx, dy, valid, new Uint8Array(9), 9, false);
+    expect(unprotected.x[4]).toBe(-0.5);
+
+    // Protected: the same vertex, with the real corner marked at vertex 5.
+    const cut = new Uint8Array(9);
+    cut[5] = 1;
+    const protectedOut = smoothVertexDisplacements(dx, dy, valid, cut, 9, false);
+    expect(protectedOut.x[4]).toBe(0.5);
+  });
+
+  it('excludes an invalid vertex from its neighbours’ windows and leaves its own output at zero', () => {
+    // A 2-vertex sequence: vertex 0 is valid and has exactly ONE possible
+    // window neighbour — vertex 1 — which has no usable measurement. With
+    // only one other candidate in reach, a median over 5 points can't be
+    // trusted to shrug the bug off the way it would with a full window (a
+    // single outlier among many is still outvoted even if wrongly let in);
+    // here inclusion or exclusion is the entire difference between a 1-point
+    // window (no pair to compare, never triggers) and a 2-point window
+    // (immediately oscillates and gets replaced by an average of the two).
+    const dx = new Float64Array([0.4, -999]);
+    const dy = new Float64Array(2);
+    const valid = new Uint8Array([1, 0]);
+    const cut = new Uint8Array(2);
+    const out = smoothVertexDisplacements(dx, dy, valid, cut, 2, false);
+    expect(out.x[1]).toBe(0); // invalid vertex: never written beyond its zero init
+    expect(out.x[0]).toBe(0.4); // vertex 1 excluded, so vertex 0's window is just itself
+  });
+
+  it('wraps the window around a loop seam', () => {
+    // A 6-vertex wrapping loop where vertex 0's window legitimately includes
+    // vertices 4, 5 (to its "left", wrapping) and 1, 2 (to its right).
+    const dx = new Float64Array([-0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+    const dy = new Float64Array(6);
+    const valid = new Uint8Array(6).fill(1);
+    const cut = new Uint8Array(6);
+    const out = smoothVertexDisplacements(dx, dy, valid, cut, 6, true);
+    // Vertex 0 disagrees with every wrapped-around neighbour, so it is
+    // corrected to the majority — this only happens if wrapping is real.
+    expect(out.x[0]).toBeCloseTo(0.5, 10);
   });
 });

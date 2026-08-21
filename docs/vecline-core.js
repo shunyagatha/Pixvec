@@ -2824,6 +2824,107 @@ function findPlateau(data, width, height, region, match, x0, y0, dx, dy) {
   }
   return prevOff;
 }
+var SMOOTH_RADIUS = 2;
+var FIGHT_MAGNITUDE_MIN = 0.25;
+var OSCILLATION_MIN = 1;
+var CORNER_RUN_MIN = 4;
+function cornerCuts(tx, ty, nSteps, wrap) {
+  const cut2 = new Uint8Array(wrap ? nSteps : nSteps + 1);
+  if (nSteps === 0) return cut2;
+  const runId = new Int32Array(nSteps);
+  const runLen = [];
+  let id = 0, start = 0;
+  for (let i = 1; i < nSteps; i++) {
+    if (tx[i] !== tx[i - 1] || ty[i] !== ty[i - 1]) {
+      for (let k = start; k < i; k++) runId[k] = id;
+      runLen.push(i - start);
+      id++;
+      start = i;
+    }
+  }
+  for (let k = start; k < nSteps; k++) runId[k] = id;
+  runLen.push(nSteps - start);
+  if (wrap && runLen.length > 1 && tx[0] === tx[nSteps - 1] && ty[0] === ty[nSteps - 1]) {
+    const firstId = runId[0], lastId = runId[nSteps - 1];
+    const merged = runLen[firstId] + runLen[lastId];
+    for (let k = 0; k < nSteps; k++) if (runId[k] === lastId) runId[k] = firstId;
+    runLen[firstId] = merged;
+  }
+  for (let v = wrap ? 0 : 1; v < nSteps; v++) {
+    const prev = v === 0 ? nSteps - 1 : v - 1;
+    if (runId[prev] === runId[v]) continue;
+    if (runLen[runId[prev]] >= CORNER_RUN_MIN && runLen[runId[v]] >= CORNER_RUN_MIN) cut2[v] = 1;
+  }
+  return cut2;
+}
+function smoothVertexDisplacements(dx, dy, valid, cut2, n2, wrap) {
+  const outX = new Float64Array(n2);
+  const outY = new Float64Array(n2);
+  if (n2 === 0) return { x: outX, y: outY };
+  const idx = (raw) => {
+    if (wrap) return (raw % n2 + n2) % n2;
+    return raw >= 0 && raw < n2 ? raw : -1;
+  };
+  const median = (vals) => {
+    vals.sort((a, b) => a - b);
+    const mid = vals.length >> 1;
+    return vals.length % 2 === 1 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+  };
+  for (let i = 0; i < n2; i++) {
+    if (!valid[i]) continue;
+    const wx = [];
+    const wy = [];
+    for (let r = SMOOTH_RADIUS; r >= 1; r--) {
+      const li = idx(i - r);
+      if (li === -1) continue;
+      let blocked = false;
+      for (let b = 0; b < r; b++) {
+        const bi = idx(i - b);
+        if (bi !== -1 && cut2[bi]) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked && valid[li]) {
+        wx.push(dx[li]);
+        wy.push(dy[li]);
+      }
+    }
+    wx.push(dx[i]);
+    wy.push(dy[i]);
+    for (let r = 1; r <= SMOOTH_RADIUS; r++) {
+      const ri = idx(i + r);
+      if (ri === -1) continue;
+      let blocked = false;
+      for (let b = 1; b <= r; b++) {
+        const bi = idx(i + b);
+        if (bi !== -1 && cut2[bi]) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked && valid[ri]) {
+        wx.push(dx[ri]);
+        wy.push(dy[ri]);
+      }
+    }
+    let changes = 0;
+    for (let k = 1; k < wx.length; k++) {
+      const magA = Math.abs(wx[k - 1]) + Math.abs(wy[k - 1]);
+      const magB = Math.abs(wx[k]) + Math.abs(wy[k]);
+      if (magA < FIGHT_MAGNITUDE_MIN || magB < FIGHT_MAGNITUDE_MIN) continue;
+      if (wx[k - 1] * wx[k] + wy[k - 1] * wy[k] < 0) changes++;
+    }
+    if (changes < OSCILLATION_MIN) {
+      outX[i] = dx[i];
+      outY[i] = dy[i];
+      continue;
+    }
+    outX[i] = median(wx);
+    outY[i] = median(wy);
+  }
+  return { x: outX, y: outY };
+}
 function refineLoop(loop, img, classes, cls) {
   const { width, height, data } = img;
   const src = loop.pts;
@@ -2837,9 +2938,6 @@ function refineLoop(loop, img, classes, cls) {
   if (count2 === 0) return { pts: Float64Array.from(src), moved: 0, total: srcN };
   const vx = new Float64Array(count2);
   const vy = new Float64Array(count2);
-  const sx = new Float64Array(count2);
-  const sy = new Float64Array(count2);
-  const hits = new Uint8Array(count2);
   let k = 0;
   for (let i = 0; i < srcN; i++) {
     const j = (i + 1) % srcN;
@@ -2854,9 +2952,19 @@ function refineLoop(loop, img, classes, cls) {
       k++;
     }
   }
+  const stepTx = new Int8Array(count2);
+  const stepTy = new Int8Array(count2);
+  for (let i = 0; i < count2; i++) {
+    const j = (i + 1) % count2;
+    stepTx[i] = Math.sign(vx[j] - vx[i]);
+    stepTy[i] = Math.sign(vy[j] - vy[i]);
+  }
+  const cut2 = cornerCuts(stepTx, stepTy, count2, true);
   const at = (x, y) => (y * width + x) * 4;
   const inBounds = (x, y) => x >= 0 && y >= 0 && x < width && y < height;
-  let moved = 0;
+  const sx = new Float64Array(count2);
+  const sy = new Float64Array(count2);
+  const hits = new Uint8Array(count2);
   for (let i = 0; i < count2; i++) {
     const j = (i + 1) % count2;
     const ax = vx[i], ay = vy[i];
@@ -2909,14 +3017,23 @@ function refineLoop(loop, img, classes, cls) {
     sx[j] += d * nx;
     sy[j] += d * ny;
     hits[j]++;
-    moved++;
   }
+  const rawOx = new Float64Array(count2);
+  const rawOy = new Float64Array(count2);
+  const vertexValid = new Uint8Array(count2);
+  for (let i = 0; i < count2; i++) {
+    const n2 = hits[i];
+    if (n2 === 0) continue;
+    rawOx[i] = sx[i] / n2;
+    rawOy[i] = sy[i] / n2;
+    vertexValid[i] = 1;
+  }
+  const smoothed = smoothVertexDisplacements(rawOx, rawOy, vertexValid, cut2, count2, true);
   const out = new Float64Array(count2 * 2);
   let displaced = 0;
   for (let i = 0; i < count2; i++) {
-    const n2 = hits[i];
-    const ox = n2 > 0 ? sx[i] / n2 : 0;
-    const oy = n2 > 0 ? sy[i] / n2 : 0;
+    const ox = smoothed.x[i];
+    const oy = smoothed.y[i];
     if (ox !== 0 || oy !== 0) displaced++;
     out[i * 2] = vx[i] + ox;
     out[i * 2 + 1] = vy[i] + oy;
@@ -2939,9 +3056,6 @@ function refineOpenArc(pts, img, labels, cls) {
   if (count2 < 2) return { pts: asFloat(), moved: 0, total: srcN };
   const vx = new Float64Array(count2);
   const vy = new Float64Array(count2);
-  const sx = new Float64Array(count2);
-  const sy = new Float64Array(count2);
-  const hits = new Uint8Array(count2);
   let k = 0;
   for (let i = 0; i < srcN - 1; i++) {
     const x0 = pts[i * 2], y0 = pts[i * 2 + 1];
@@ -2958,10 +3072,20 @@ function refineOpenArc(pts, img, labels, cls) {
   vx[k] = pts[(srcN - 1) * 2];
   vy[k] = pts[(srcN - 1) * 2 + 1];
   k++;
+  const nSteps = count2 - 1;
+  const stepTx = new Int8Array(nSteps);
+  const stepTy = new Int8Array(nSteps);
+  for (let i = 0; i < nSteps; i++) {
+    stepTx[i] = Math.sign(vx[i + 1] - vx[i]);
+    stepTy[i] = Math.sign(vy[i + 1] - vy[i]);
+  }
+  const cut2 = cornerCuts(stepTx, stepTy, nSteps, false);
   const at = (x, y) => (y * width + x) * 4;
   const inBounds = (x, y) => x >= 0 && y >= 0 && x < width && y < height;
-  let moved = 0;
-  for (let i = 0; i < count2 - 1; i++) {
+  const sx = new Float64Array(count2);
+  const sy = new Float64Array(count2);
+  const hits = new Uint8Array(count2);
+  for (let i = 0; i < nSteps; i++) {
     const j = i + 1;
     const ax = vx[i], ay = vy[i];
     const bx = vx[j], by = vy[j];
@@ -3012,8 +3136,18 @@ function refineOpenArc(pts, img, labels, cls) {
     sx[j] += d * nx;
     sy[j] += d * ny;
     hits[j]++;
-    moved++;
   }
+  const rawOx = new Float64Array(count2);
+  const rawOy = new Float64Array(count2);
+  const vertexValid = new Uint8Array(count2);
+  for (let i = 1; i < count2 - 1; i++) {
+    const n2 = hits[i];
+    if (n2 === 0) continue;
+    rawOx[i] = sx[i] / n2;
+    rawOy[i] = sy[i] / n2;
+    vertexValid[i] = 1;
+  }
+  const smoothed = smoothVertexDisplacements(rawOx, rawOy, vertexValid, cut2, count2, false);
   const out = new Float64Array(count2 * 2);
   let displaced = 0;
   for (let i = 0; i < count2; i++) {
@@ -3022,14 +3156,117 @@ function refineOpenArc(pts, img, labels, cls) {
       out[i * 2 + 1] = vy[i];
       continue;
     }
-    const n2 = hits[i];
-    const ox = n2 > 0 ? sx[i] / n2 : 0;
-    const oy = n2 > 0 ? sy[i] / n2 : 0;
+    const ox = smoothed.x[i];
+    const oy = smoothed.y[i];
     if (ox !== 0 || oy !== 0) displaced++;
     out[i * 2] = vx[i] + ox;
     out[i * 2 + 1] = vy[i] + oy;
   }
   return { pts: out, moved: displaced, total: count2 };
+}
+
+// src/vectorize/refine-source.ts
+var RADIUS = 4;
+var SIGMA_SPATIAL = 1.8;
+var SIGMA_RANGE = 60;
+function spatialWeights(radius, sigma) {
+  const side = radius * 2 + 1;
+  const w = new Float64Array(side * side);
+  const denom = 2 * sigma * sigma;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const r2 = dx * dx + dy * dy;
+      w[(dy + radius) * side + (dx + radius)] = Math.exp(-r2 / denom);
+    }
+  }
+  return w;
+}
+function dilate1D(mask, width, height, radius, horizontal) {
+  const out = new Uint8Array(mask.length);
+  const lines = horizontal ? height : width;
+  const lineLen = horizontal ? width : height;
+  const stride2 = horizontal ? 1 : width;
+  const base = horizontal ? (l) => l * width : (l) => l;
+  const dist = new Int32Array(lineLen);
+  for (let l = 0; l < lines; l++) {
+    const off = base(l);
+    let d = lineLen;
+    for (let p = 0; p < lineLen; p++) {
+      const i = off + p * stride2;
+      d = mask[i] ? 0 : d + 1;
+      dist[p] = d;
+    }
+    d = lineLen;
+    for (let p = lineLen - 1; p >= 0; p--) {
+      const i = off + p * stride2;
+      d = mask[i] ? 0 : d + 1;
+      if (d < dist[p]) dist[p] = d;
+    }
+    for (let p = 0; p < lineLen; p++) {
+      out[off + p * stride2] = dist[p] <= radius ? 1 : 0;
+    }
+  }
+  return out;
+}
+function boundaryBand(labels, width, height, radius = MAX_PLATEAU_REACH) {
+  const n2 = width * height;
+  const seed = new Uint8Array(n2);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const v = labels[i];
+      if (x > 0 && labels[i - 1] !== v || x < width - 1 && labels[i + 1] !== v || y > 0 && labels[i - width] !== v || y < height - 1 && labels[i + width] !== v) {
+        seed[i] = 1;
+      }
+    }
+  }
+  if (radius <= 0) return seed;
+  const rows = dilate1D(seed, width, height, radius, true);
+  return dilate1D(rows, width, height, radius, false);
+}
+function bilateralForMeasurement(img, band, opts = {}) {
+  const { width, height, data } = img;
+  const radius = opts.radius ?? RADIUS;
+  const sigmaRange = opts.sigmaRange ?? SIGMA_RANGE;
+  const sw = spatialWeights(radius, opts.sigmaSpatial ?? SIGMA_SPATIAL);
+  const side = radius * 2 + 1;
+  const rangeDenom = 2 * sigmaRange * sigmaRange;
+  const out = new Uint8ClampedArray(data);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      if (!band[p]) continue;
+      const co = p * 4;
+      const cr = data[co], cg = data[co + 1], cb = data[co + 2], ca = data[co + 3];
+      let sr = 0, sg = 0, sb = 0, sa = 0, sw_ = 0;
+      const y0 = Math.max(0, y - radius), y1 = Math.min(height - 1, y + radius);
+      const x0 = Math.max(0, x - radius), x1 = Math.min(width - 1, x + radius);
+      for (let ny = y0; ny <= y1; ny++) {
+        const wy = ny - y + radius;
+        for (let nx = x0; nx <= x1; nx++) {
+          const wx = nx - x + radius;
+          const no = (ny * width + nx) * 4;
+          const dr = data[no] - cr, dg = data[no + 1] - cg, db = data[no + 2] - cb, da = data[no + 3] - ca;
+          const rangeSq = dr * dr + dg * dg + db * db + da * da;
+          const weight = sw[wy * side + wx] * Math.exp(-rangeSq / rangeDenom);
+          sr += weight * data[no];
+          sg += weight * data[no + 1];
+          sb += weight * data[no + 2];
+          sa += weight * data[no + 3];
+          sw_ += weight;
+        }
+      }
+      out[co] = sr / sw_;
+      out[co + 1] = sg / sw_;
+      out[co + 2] = sb / sw_;
+      out[co + 3] = sa / sw_;
+    }
+  }
+  return { width, height, data: out };
+}
+function refineSourceFor(img, labels, opts = {}) {
+  const band = boundaryBand(labels, img.width, img.height);
+  return bilateralForMeasurement(img, band, opts);
 }
 
 // src/vectorize/merge.ts
@@ -5541,6 +5778,8 @@ function trace(source, opts = {}) {
       comps = connectedComponents(classes, width, height, -1);
     }
   }
+  const needsRefineSource = o.subpixel === true || o.mosaic === true;
+  const refineSource = needsRefineSource ? refineSourceFor(img, comps.labels) : img;
   report("Tracing contours", 55);
   const shareBoundaries = (o.regularise ?? 0) > 0;
   const mosaic = o.mosaic === true;
@@ -5571,8 +5810,9 @@ function trace(source, opts = {}) {
     // Recover real sub-pixel edge evidence for open interior arcs before they
     // are fitted, so a shared boundary with nothing between its two junctions
     // is not forced to a straight line when the source image's antialiasing
-    // says otherwise. See `refineOpenArc` in subpixel.ts.
-    image: img,
+    // says otherwise. See `refineOpenArc` in subpixel.ts. The denoised
+    // measurement copy, not `img` itself — see `refine-source.ts`.
+    image: refineSource,
     labels: comps.labels,
     // `mosaic` implies smoothing, and the floor is not a preference.
     //
@@ -5752,12 +5992,12 @@ function trace(source, opts = {}) {
     const eligible = o.primitives && classLoops.length > 0 && classLoops.every((l) => l.signedArea > 0);
     const fitFor = (loop) => {
       const shared = sharedGeometry?.get(loop);
-      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
+      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, refineSource, classes, cls).pts : loop.pts);
       return mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
     };
     const underFitFor = (loop) => {
       const shared = sharedGeometry?.get(loop);
-      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
+      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, refineSource, classes, cls).pts : loop.pts);
       return underMosaicFaces?.get(loop) ?? fitLoop(refined, underFitOpts);
     };
     const fittedByLoop = eligible ? classLoops.map(fitFor) : [];
