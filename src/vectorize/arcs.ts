@@ -398,6 +398,22 @@ export interface FitArcsOptions extends OpenFitOptions {
   image?: RasterImage;
   /** Component ids from `connectedComponents`, matching `image` pixel-for-pixel. */
   labels?: Int32Array;
+  /**
+   * Marks an arc whose endpoint sits at a genuine 3+-way junction, where two
+   * or more independently-fitted open arcs converge on one shared, immovable
+   * vertex. There, a merge pass run at a widened `optimizeError` can let each
+   * arc individually stay within its own budget while their UNION still fails
+   * to cover a pixel at a tight pinch — so a flagged arc is fit at
+   * `junctionOptimizeError`/`junctionFitError` instead of the document-wide
+   * budget. Every other arc keeps the wide budget, so the documented byte
+   * savings from widening `optimizeError` are unaffected everywhere merging
+   * cannot create this defect.
+   */
+  isJunctionArc?: (arc: Arc, index: number) => boolean;
+  /** `optimizeError` for an arc `isJunctionArc` flags. Defaults to `optimizeError`. */
+  junctionOptimizeError?: number;
+  /** `fitError` for an arc `isJunctionArc` flags. Defaults to `fitError`. */
+  junctionFitError?: number;
 }
 
 /**
@@ -411,25 +427,36 @@ export interface FitArcsOptions extends OpenFitOptions {
 export function fitFaces(
   dec: ArcDecomposition, opts: FitArcsOptions,
 ): Map<Loop, FittedPath> {
-  const fitted: Array<FittedPath | null> = dec.arcs.map((arc) => {
+  const fitted: Array<FittedPath | null> = dec.arcs.map((arc, arcIndex) => {
+    // A junction-flagged arc is fit at the tighter budget everywhere below —
+    // built once per arc rather than threading a second parameter through
+    // every branch, since every read of `opts` in this closure means "the
+    // budget this particular arc is held to".
+    const useOpts: FitArcsOptions = opts.isJunctionArc && opts.isJunctionArc(arc, arcIndex)
+      ? {
+          ...opts,
+          optimizeError: opts.junctionOptimizeError ?? opts.optimizeError,
+          fitError: opts.junctionFitError ?? opts.fitError,
+        }
+      : opts;
     if (!arc.closed) {
       // Refine only interior arcs: a silhouette or frame edge (see `isInterior`)
       // has no real region on its outside to measure coverage against.
-      const pts = opts.image && opts.labels && isInterior(arc)
-        ? refineOpenArc(arc.pts, opts.image, opts.labels, arc.a).pts
+      const pts = useOpts.image && useOpts.labels && isInterior(arc)
+        ? refineOpenArc(arc.pts, useOpts.image, useOpts.labels, arc.a).pts
         : arc.pts;
-      return fitOpen(pts, opts);
+      return fitOpen(pts, useOpts);
     }
-    const loop = fitLoop(arc.pts, opts.closed ?? {
-      tolerance: opts.tolerance,
-      fitError: opts.fitError,
-      cornerAngle: opts.cornerAngle,
+    const loop = fitLoop(arc.pts, useOpts.closed ?? {
+      tolerance: useOpts.tolerance,
+      fitError: useOpts.fitError,
+      cornerAngle: useOpts.cornerAngle,
       polygonOnly: false,
-      optimize: opts.optimize,
-      optimizeError: opts.optimizeError,
-      regularise: opts.regularise,
-      regulariseBand: opts.regulariseBand,
-      quadratics: opts.quadratics,
+      optimize: useOpts.optimize,
+      optimizeError: useOpts.optimizeError,
+      regularise: useOpts.regularise,
+      regulariseBand: useOpts.regulariseBand,
+      quadratics: useOpts.quadratics,
     });
     if (!loop) return null;
     // Make the cycle explicit so reversal and concatenation treat closed and open

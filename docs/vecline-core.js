@@ -2322,7 +2322,7 @@ function fitCubic(x, y, first, last, tHat1, tHat2, error, out, depth = 0) {
   let u = chordLengthParameterize(x, y, first, last);
   let bez = generateBezier(x, y, first, last, u, tHat1, tHat2);
   let { maxError, splitPoint } = computeMaxError(x, y, first, last, bez, u);
-  if (maxError < error) {
+  if (maxError < error && maxContinuousDeviation(x, y, first, last, bez) < error) {
     emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, tHat1, tHat2);
     return;
   }
@@ -2331,7 +2331,7 @@ function fitCubic(x, y, first, last, tHat1, tHat2, error, out, depth = 0) {
       const uPrime = reparameterize(x, y, first, last, u, bez);
       bez = generateBezier(x, y, first, last, uPrime, tHat1, tHat2);
       const next = computeMaxError(x, y, first, last, bez, uPrime);
-      if (next.maxError < error) {
+      if (next.maxError < error && maxContinuousDeviation(x, y, first, last, bez) < error) {
         emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, tHat1, tHat2);
         return;
       }
@@ -2340,9 +2340,12 @@ function fitCubic(x, y, first, last, tHat1, tHat2, error, out, depth = 0) {
       splitPoint = next.splitPoint;
     }
   }
-  if (depth > 24 || splitPoint <= first || splitPoint >= last) {
+  if (depth > 24) {
     emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, tHat1, tHat2);
     return;
+  }
+  if (splitPoint <= first || splitPoint >= last) {
+    splitPoint = first + Math.max(1, Math.floor((last - first) / 2));
   }
   const tCenter = centerTangentOfChain(x, y, splitPoint);
   fitCubic(x, y, first, splitPoint, tHat1, negate(tCenter), error, out, depth + 1);
@@ -2386,6 +2389,7 @@ function tryMerge(x, y, a, b, error) {
   const bez = generateBezier(x, y, first, last, u, a.t1, b.t2);
   const { maxError } = computeMaxError(x, y, first, last, bez, u);
   if (maxError > error) return null;
+  if (maxContinuousDeviation(x, y, first, last, bez) > error) return null;
   const out = [];
   emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, a.t1, b.t2);
   return out[0] ?? null;
@@ -2440,6 +2444,25 @@ function quadMaxError(x, y, first, last, qx, qy) {
   }
   return worst2;
 }
+function quadMaxContinuousDeviation(x, y, first, last, qx, qy) {
+  const span = last - first;
+  if (span <= 0) return 0;
+  const p0x = x[first], p0y = y[first];
+  const p3x = x[last], p3y = y[last];
+  const N = Math.min(800, Math.max(20, span * 4));
+  let worst2 = 0;
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    const p = quadAt(p0x, p0y, qx, qy, p3x, p3y, t);
+    let best = Infinity;
+    for (let i = first; i < last; i++) {
+      const d = distToSegment(p.x, p.y, x[i], y[i], x[i + 1], y[i + 1]);
+      if (d < best) best = d;
+    }
+    if (best > worst2) worst2 = best;
+  }
+  return worst2;
+}
 function reduceToQuadratics(x, y, segments, error) {
   let converted = false;
   const out = [];
@@ -2453,11 +2476,14 @@ function reduceToQuadratics(x, y, segments, error) {
     const q = bestQuadratic(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
     let ok;
     if (f.last - f.first >= 3) {
-      ok = quadMaxError(x, y, f.first, f.last, q.x, q.y) <= error;
+      ok = quadMaxError(x, y, f.first, f.last, q.x, q.y) <= error && quadMaxContinuousDeviation(x, y, f.first, f.last, q.x, q.y) <= error;
     } else {
       const u = chordLengthParameterize(x, y, f.first, f.last);
       const bez = Float64Array.of(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
-      const spent = computeMaxError(x, y, f.first, f.last, bez, u).maxError;
+      const spent = Math.max(
+        computeMaxError(x, y, f.first, f.last, bez, u).maxError,
+        maxContinuousDeviation(x, y, f.first, f.last, bez)
+      );
       ok = quadDeviation(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y) <= error - spent;
     }
     if (!ok) {
@@ -2551,6 +2577,31 @@ function generateBezier(x, y, first, last, u, tHat1, tHat2) {
     x[last],
     y[last]
   ]);
+}
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+function maxContinuousDeviation(x, y, first, last, bez) {
+  const span = last - first;
+  if (span <= 0) return 0;
+  const N = Math.min(800, Math.max(20, span * 4));
+  let worst2 = 0;
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    const p = bezierAt(bez, t);
+    let best = Infinity;
+    for (let i = first; i < last; i++) {
+      const d = distToSegment(p.x, p.y, x[i], y[i], x[i + 1], y[i + 1]);
+      if (d < best) best = d;
+    }
+    if (best > worst2) worst2 = best;
+  }
+  return worst2;
 }
 function computeMaxError(x, y, first, last, bez, u) {
   let maxError = 0;
@@ -3420,21 +3471,26 @@ function reversePath(path) {
   return { start: on[on.length - 1], segments };
 }
 function fitFaces(dec, opts) {
-  const fitted = dec.arcs.map((arc) => {
+  const fitted = dec.arcs.map((arc, arcIndex) => {
+    const useOpts = opts.isJunctionArc && opts.isJunctionArc(arc, arcIndex) ? {
+      ...opts,
+      optimizeError: opts.junctionOptimizeError ?? opts.optimizeError,
+      fitError: opts.junctionFitError ?? opts.fitError
+    } : opts;
     if (!arc.closed) {
-      const pts = opts.image && opts.labels && isInterior(arc) ? refineOpenArc(arc.pts, opts.image, opts.labels, arc.a).pts : arc.pts;
-      return fitOpen(pts, opts);
+      const pts = useOpts.image && useOpts.labels && isInterior(arc) ? refineOpenArc(arc.pts, useOpts.image, useOpts.labels, arc.a).pts : arc.pts;
+      return fitOpen(pts, useOpts);
     }
-    const loop = fitLoop(arc.pts, opts.closed ?? {
-      tolerance: opts.tolerance,
-      fitError: opts.fitError,
-      cornerAngle: opts.cornerAngle,
+    const loop = fitLoop(arc.pts, useOpts.closed ?? {
+      tolerance: useOpts.tolerance,
+      fitError: useOpts.fitError,
+      cornerAngle: useOpts.cornerAngle,
       polygonOnly: false,
-      optimize: opts.optimize,
-      optimizeError: opts.optimizeError,
-      regularise: opts.regularise,
-      regulariseBand: opts.regulariseBand,
-      quadratics: opts.quadratics
+      optimize: useOpts.optimize,
+      optimizeError: useOpts.optimizeError,
+      regularise: useOpts.regularise,
+      regulariseBand: useOpts.regulariseBand,
+      quadratics: useOpts.quadratics
     });
     if (!loop) return null;
     const last = loop.segments[loop.segments.length - 1];
@@ -5489,12 +5545,12 @@ function trace(source, opts = {}) {
     o.regularise ?? 0,
     o.regulariseBand ?? 0.75
   ) : void 0;
-  const mosaicFaces = mosaic ? fitFaces(decomposeToArcs(loopsByComponent, comps.labels, width, height), {
+  const mosaicDec = mosaic ? decomposeToArcs(loopsByComponent, comps.labels, width, height) : void 0;
+  const mosaicFitBase = {
     tolerance: o.tolerance,
     fitError: o.fitError,
     cornerAngle: o.cornerAngle,
     optimize: o.optimize,
-    optimizeError: o.optimizeError,
     quadratics: o.quadratics,
     // Recover real sub-pixel edge evidence for open interior arcs before they
     // are fitted, so a shared boundary with nothing between its two junctions
@@ -5516,7 +5572,38 @@ function trace(source, opts = {}) {
     // A caller asking for more gets more.
     regularise: Math.max(o.regularise ?? 0, 2),
     regulariseBand: o.regulariseBand ?? 0.75
+  };
+  const isOpaqueClass = (cls) => alphaLevels[cls % levelCount] === 255;
+  const hardJunctionVertex = (vx, vy) => {
+    const cell = (cx, cy) => {
+      if (cx < 0 || cy < 0 || cx >= width || cy >= height) return -1;
+      const comp = comps.labels[cy * width + cx];
+      if (comp < 0) return -1;
+      const cls = comps.classes[comp];
+      return isOpaqueClass(cls) ? cls : -2;
+    };
+    const tl = cell(vx - 1, vy - 1), tr = cell(vx, vy - 1);
+    const bl = cell(vx - 1, vy), br = cell(vx, vy);
+    return (/* @__PURE__ */ new Set([tl, tr, bl, br])).size >= 3;
+  };
+  const arcTouchesHardJunction = (arc) => {
+    if (arc.closed) return false;
+    const n3 = arc.pts.length / 2;
+    return hardJunctionVertex(arc.pts[0], arc.pts[1]) || hardJunctionVertex(arc.pts[(n3 - 1) * 2], arc.pts[(n3 - 1) * 2 + 1]);
+  };
+  const mosaicFaces = mosaicDec ? fitFaces(mosaicDec, {
+    ...mosaicFitBase,
+    optimizeError: o.optimizeError,
+    // An arc touching a hard junction is fit at the un-widened `fitError`
+    // instead of `optimizeError`: the merge pass's extra slack is exactly
+    // what lets several near-budget arcs jointly leave a hairline gap at a
+    // tight pinch. Every other arc — the overwhelming majority of any real
+    // document — keeps the full widened budget.
+    isJunctionArc: arcTouchesHardJunction,
+    junctionOptimizeError: mosaicFitBase.fitError
   }) : void 0;
+  const underpaintEligible = mosaic && o.underpaint === true && hasVoid && !o.groupByColor && !o.extendUnder;
+  const underMosaicFaces = underpaintEligible && mosaicDec ? fitFaces(mosaicDec, { ...mosaicFitBase, optimizeError: o.fitError }) : void 0;
   const EMPTY_LOOPS = [];
   const extendedLoops = (rank, rankOfClass2) => {
     const mask = new Int32Array(width * height).fill(-1);
@@ -5626,6 +5713,7 @@ function trace(source, opts = {}) {
     rightAngleEnhance: o.rightAngleEnhance,
     rightAngleThreshold: o.rightAngleThreshold
   };
+  const underFitOpts = { ...fitOpts, optimizeError: o.fitError };
   const strokeFor = (c) => strokeAttrs(c, interpolate ? 0 : o.strokeWidth);
   let regions = 0;
   let rankOfClass = null;
@@ -5651,6 +5739,11 @@ function trace(source, opts = {}) {
       const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
       return mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
     };
+    const underFitFor = (loop) => {
+      const shared = sharedGeometry?.get(loop);
+      const refined = shared ?? (o.subpixel && !rankOfClass ? refineLoop(loop, img, classes, cls).pts : loop.pts);
+      return underMosaicFaces?.get(loop) ?? fitLoop(refined, underFitOpts);
+    };
     const fittedByLoop = eligible ? classLoops.map(fitFor) : [];
     const prims = classLoops.map((l, i) => {
       if (!eligible) return null;
@@ -5661,17 +5754,25 @@ function trace(source, opts = {}) {
       });
     });
     const path = new PathBuilder(o.precision);
+    const underPath = underpaintEligible ? new PathBuilder(o.precision) : null;
+    const appendTo = (builder, fitted) => {
+      builder.moveTo(fitted.start.x, fitted.start.y);
+      for (const seg of fitted.segments) {
+        if (seg.kind === "line") builder.lineTo(seg.x, seg.y);
+        else if (seg.kind === "quad") builder.quadTo(seg.x1, seg.y1, seg.x, seg.y);
+        else builder.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
+      }
+      builder.close();
+    };
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue;
       const fitted = eligible ? fittedByLoop[i] : fitFor(loop);
       if (!fitted) continue;
-      path.moveTo(fitted.start.x, fitted.start.y);
-      for (const seg of fitted.segments) {
-        if (seg.kind === "line") path.lineTo(seg.x, seg.y);
-        else if (seg.kind === "quad") path.quadTo(seg.x1, seg.y1, seg.x, seg.y);
-        else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
+      appendTo(path, fitted);
+      if (underPath) {
+        const underFitted = underFitFor(loop);
+        if (underFitted) appendTo(underPath, underFitted);
       }
-      path.close();
     }
     const primCount = prims.reduce((k, p) => k + (p ? 1 : 0), 0);
     if (path.isEmpty() && primCount === 0) continue;
@@ -5680,7 +5781,7 @@ function trace(source, opts = {}) {
     const paint = gradientPaints?.get(cls);
     const collectUnder = (a) => {
       if (!underpaint || a < 255 || path.isEmpty()) return false;
-      underParts.push(path.toString());
+      underParts.push(underPath && !underPath.isEmpty() ? underPath.toString() : path.toString());
       return true;
     };
     if (paint) {

@@ -10,7 +10,7 @@ import { refineLoop } from './subpixel.js';
 import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
 import { regulariseAgreeing } from './junctions.js';
-import { decomposeToArcs, fitFaces } from './arcs.js';
+import { decomposeToArcs, fitFaces, type Arc } from './arcs.js';
 import { NearestColor, quantize, quantizeAlpha, collapseFringeAlpha, type FillStrategy } from './quantize.js';
 import { applyThreshold } from './threshold.js';
 import { detectGradients, GRAD_BASE, type GradientPaint } from './gradient.js';
@@ -1122,35 +1122,129 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // Fit every shared boundary ONCE, then assemble each face from the results.
   // The alternative is each face fitting its own copy, which the reversal
   // measurement in arcs.ts rules out for anything that emits curves.
-  const mosaicFaces = mosaic
-    ? fitFaces(decomposeToArcs(loopsByComponent, comps.labels, width, height), {
-        tolerance: o.tolerance,
-        fitError: o.fitError,
-        cornerAngle: o.cornerAngle,
-        optimize: o.optimize,
+  //
+  // The decomposition is built once and reused below for the underpaint's own,
+  // separately-budgeted pass over the same arcs — arc topology does not depend
+  // on the error budget, only refitting does.
+  const mosaicDec = mosaic
+    ? decomposeToArcs(loopsByComponent, comps.labels, width, height)
+    : undefined;
+  const mosaicFitBase = {
+    tolerance: o.tolerance,
+    fitError: o.fitError,
+    cornerAngle: o.cornerAngle,
+    optimize: o.optimize,
+    quadratics: o.quadratics,
+    // Recover real sub-pixel edge evidence for open interior arcs before they
+    // are fitted, so a shared boundary with nothing between its two junctions
+    // is not forced to a straight line when the source image's antialiasing
+    // says otherwise. See `refineOpenArc` in subpixel.ts.
+    image: img,
+    labels: comps.labels,
+    // `mosaic` implies smoothing, and the floor is not a preference.
+    //
+    // Crack-following emits axis-aligned unit steps only, so an untouched
+    // lattice vertex cannot deviate from a chord by less than 1/sqrt(5) =
+    // 0.4472136 — above the 0.4 tolerance, so Douglas-Peucker removes nothing
+    // and every arc comes out a polygon. Measured on logo-tux: 0 passes gives
+    // 0 curves at 18,297 bytes; one pass gives 306 at 30,606.
+    //
+    // Two rather than one because the second is nearly free and the sweep
+    // flattens immediately after: across passes 1 to 8 at bands 0.5, 0.75 and
+    // 1.0, SSIM spans 0.8740 to 0.8804 and never orders them consistently.
+    // A caller asking for more gets more.
+    regularise: Math.max(o.regularise ?? 0, 2),
+    regulariseBand: o.regulariseBand ?? 0.75,
+  };
+  // A vertex where 3 or more DISTINCT regions meet is a genuine multi-region
+  // T-junction: two or more independently-fitted open arcs converge on one
+  // shared, immovable endpoint. Each may fit well within its own budget, but
+  // nothing else verifies that the UNION of their swept areas covers every
+  // pixel touching the junction — when the true available area at a tight
+  // pinch is only about a pixel wide, several near-budget curves can jointly
+  // leave a hairline gap there even though none individually violates its own
+  // budget. Confirmed on a synthetic tightly-packed-blobs fixture: the leaking
+  // pixel's own corner is exactly such a vertex (crackDegree 3, 3 distinct
+  // classes), and the leak is unaffected by the merge budget alone.
+  //
+  // This is not the same test as `crackDegree !== 2` (junctions.ts): a
+  // same-pair checkerboard saddle also has crackDegree != 2 without being a
+  // real third region, so distinctness is measured by CLASS (colour) here
+  // instead of raw component id. Two same-coloured, unrelated components both
+  // bordering void is common in any busy image and already shares one evenodd
+  // path (built per class, not per component) — there is no cross-fill seam
+  // between them to protect against. Raw-component-id distinctness flagged
+  // essentially every open arc in a real mosaic as junction-touching, which
+  // re-imposes the whole-document cost of tightening every arc's budget
+  // through a side door.
+  //
+  // A translucent alpha-quantisation fringe class is folded into one shared
+  // bucket rather than counted as its own distinct region: it shares the fill
+  // colour of whichever opaque region it borders and is never itself something
+  // a competing fill paints solidly, so it cannot be the third region a real
+  // pinch needs.
+  //
+  // Outside the canvas frame shares void's own sentinel rather than getting a
+  // distinct one: "nothing painted here" is the same fact on either side of
+  // the border. Treating them as two different regions made every arc that
+  // merely touches the image edge look like a hard junction — measured on the
+  // mandated subjects, over 97% of open arcs on art that runs to the frame
+  // edge — reproducing the same whole-document cost through a different door.
+  const isOpaqueClass = (cls: number): boolean => alphaLevels[cls % levelCount] === 255;
+  const hardJunctionVertex = (vx: number, vy: number): boolean => {
+    const cell = (cx: number, cy: number): number => {
+      if (cx < 0 || cy < 0 || cx >= width || cy >= height) return -1; // outside frame == void
+      const comp = comps.labels[cy * width + cx]!;
+      if (comp < 0) return -1; // void stays its own class
+      const cls = comps.classes[comp]!;
+      return isOpaqueClass(cls) ? cls : -2; // any translucent fringe, shared bucket
+    };
+    const tl = cell(vx - 1, vy - 1), tr = cell(vx, vy - 1);
+    const bl = cell(vx - 1, vy), br = cell(vx, vy);
+    return new Set([tl, tr, bl, br]).size >= 3;
+  };
+  // A closed arc (per `decomposeToArcs`) carries no junction at all — only an
+  // open arc's two endpoints can be shared with a neighbour.
+  const arcTouchesHardJunction = (arc: Arc): boolean => {
+    if (arc.closed) return false;
+    const n = arc.pts.length / 2;
+    return hardJunctionVertex(arc.pts[0]!, arc.pts[1]!)
+      || hardJunctionVertex(arc.pts[(n - 1) * 2]!, arc.pts[(n - 1) * 2 + 1]!);
+  };
+  const mosaicFaces = mosaicDec
+    ? fitFaces(mosaicDec, {
+        ...mosaicFitBase,
         optimizeError: o.optimizeError,
-        quadratics: o.quadratics,
-        // Recover real sub-pixel edge evidence for open interior arcs before they
-        // are fitted, so a shared boundary with nothing between its two junctions
-        // is not forced to a straight line when the source image's antialiasing
-        // says otherwise. See `refineOpenArc` in subpixel.ts.
-        image: img,
-        labels: comps.labels,
-// `mosaic` implies smoothing, and the floor is not a preference.
-        //
-        // Crack-following emits axis-aligned unit steps only, so an untouched
-        // lattice vertex cannot deviate from a chord by less than 1/sqrt(5) =
-        // 0.4472136 — above the 0.4 tolerance, so Douglas-Peucker removes nothing
-        // and every arc comes out a polygon. Measured on logo-tux: 0 passes gives
-        // 0 curves at 18,297 bytes; one pass gives 306 at 30,606.
-        //
-        // Two rather than one because the second is nearly free and the sweep
-        // flattens immediately after: across passes 1 to 8 at bands 0.5, 0.75 and
-        // 1.0, SSIM spans 0.8740 to 0.8804 and never orders them consistently.
-        // A caller asking for more gets more.
-        regularise: Math.max(o.regularise ?? 0, 2),
-        regulariseBand: o.regulariseBand ?? 0.75,
+        // An arc touching a hard junction is fit at the un-widened `fitError`
+        // instead of `optimizeError`: the merge pass's extra slack is exactly
+        // what lets several near-budget arcs jointly leave a hairline gap at a
+        // tight pinch. Every other arc — the overwhelming majority of any real
+        // document — keeps the full widened budget.
+        isJunctionArc: arcTouchesHardJunction,
+        junctionOptimizeError: mosaicFitBase.fitError,
       })
+    : undefined;
+  // The visible fills' merge pass runs at `optimizeError` — `clean` widens
+  // this to 0.75, a deliberate, measured byte saving (see that option's own
+  // docstring) — but the underpaint silhouette must guarantee full coverage
+  // underneath every neighbour's fill, and that widened slack is exactly what
+  // can leave a gap the visible geometry itself never shows (its own neighbour
+  // repaints over it). So underpaint gets its own fit of the same arcs, held
+  // to the un-widened `fitError` every split already had to satisfy — one
+  // extra `fitFaces` pass over the arcs already decomposed above, decoupling
+  // "what geometry is cheapest to render" from "what geometry underpaint needs
+  // to guarantee coverage".
+  //
+  // Measured directly at this budget (no further tightening beyond
+  // `fitError`): two mandated subjects and two adversarial calligraphic-curl
+  // fixtures all reach 0 interior leaks at both 1x and 3.902x scale, for 1/4
+  // to 1/3 the byte cost of a tighter `fitError / 4` floor tried first and
+  // found unnecessary once this pass and the junction fix above were both in
+  // place.
+  const underpaintEligible =
+    mosaic && o.underpaint === true && hasVoid && !o.groupByColor && !o.extendUnder;
+  const underMosaicFaces = underpaintEligible && mosaicDec
+    ? fitFaces(mosaicDec, { ...mosaicFitBase, optimizeError: o.fitError })
     : undefined;
 
   /** Shared empty stand-in, so releasing a consumed entry allocates nothing. */
@@ -1314,6 +1408,12 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     rightAngleThreshold: o.rightAngleThreshold,
   };
 
+  // The non-mosaic fallback of the tight underpaint-only fit: same as
+  // `fitOpts` but never widened past `fitError`. See `underMosaicFaces` above
+  // for the mosaic case, which is the one every leak this pass was validated
+  // against actually takes.
+  const underFitOpts: FitOptions = { ...fitOpts, optimizeError: o.fitError };
+
   // A same-colour stroke of a pixel or so overpaints the hairline seam that can
   // appear between two abutting regions when a renderer antialiases their shared
   // edge. Emitted per path in the path's own fill colour — and at the path's own
@@ -1412,6 +1512,18 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
       return mosaicFaces?.get(loop) ?? fitLoop(refined, fitOpts);
     };
 
+    // The same loop, refit at the tight underpaint budget instead of reusing
+    // the visible fill's (possibly `optimizeError`-widened) geometry.
+    // `refined`/`shared` are recomputed identically to `fitFor` — they do not
+    // depend on the error budget, only the refit does.
+    const underFitFor = (loop: Loop): FittedPath | null => {
+      const shared = sharedGeometry?.get(loop);
+      const refined = shared ?? (o.subpixel && !rankOfClass
+        ? refineLoop(loop, img, classes, cls).pts
+        : loop.pts);
+      return underMosaicFaces?.get(loop) ?? fitLoop(refined, underFitOpts);
+    };
+
     // Ask the primitive fitters about the curve that will actually be EMITTED,
     // not about the lattice staircase behind it.
     //
@@ -1436,17 +1548,28 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     });
 
     const path = new PathBuilder(o.precision);
+    // The same non-primitive loops, refit tight, built in lockstep with
+    // `path` — only actually populated (see the `underpaint` guard below) so
+    // the extra fit cost is not paid on documents that never use it.
+    const underPath = underpaintEligible ? new PathBuilder(o.precision) : null;
+    const appendTo = (builder: PathBuilder, fitted: FittedPath): void => {
+      builder.moveTo(fitted.start.x, fitted.start.y);
+      for (const seg of fitted.segments) {
+        if (seg.kind === 'line') builder.lineTo(seg.x, seg.y);
+        else if (seg.kind === 'quad') builder.quadTo(seg.x1, seg.y1, seg.x, seg.y);
+        else builder.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
+      }
+      builder.close();
+    };
     for (const [i, loop] of classLoops.entries()) {
       if (prims[i]) continue; // emitted as its own element below
       const fitted = eligible ? fittedByLoop[i] : fitFor(loop);
       if (!fitted) continue;
-      path.moveTo(fitted.start.x, fitted.start.y);
-      for (const seg of fitted.segments) {
-        if (seg.kind === 'line') path.lineTo(seg.x, seg.y);
-        else if (seg.kind === 'quad') path.quadTo(seg.x1, seg.y1, seg.x, seg.y);
-        else path.curveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
+      appendTo(path, fitted);
+      if (underPath) {
+        const underFitted = underFitFor(loop);
+        if (underFitted) appendTo(underPath, underFitted);
       }
-      path.close();
     }
 
     const primCount = prims.reduce((k, p) => k + (p ? 1 : 0), 0);
@@ -1465,7 +1588,11 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
     // parity argument needs.
     const collectUnder = (a: number): boolean => {
       if (!underpaint || a < 255 || path.isEmpty()) return false;
-      underParts.push(path.toString());
+      // The tight-budget geometry when it exists (built in lockstep above,
+      // non-empty whenever `path` is), the shared loose one otherwise —
+      // unchanged fallback for anything `underpaintEligible` did not cover
+      // (non-mosaic documents).
+      underParts.push(underPath && !underPath.isEmpty() ? underPath.toString() : path.toString());
       return true;
     };
     if (paint) {

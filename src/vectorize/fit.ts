@@ -782,7 +782,20 @@ function fitCubic(
   let bez = generateBezier(x, y, first, last, u, tHat1, tHat2);
   let { maxError, splitPoint } = computeMaxError(x, y, first, last, bez, u);
 
-  if (maxError < error) {
+  // `computeMaxError` only ever checks a point against the curve at that
+  // point's OWN assigned parameter. That is fine when the points are dense —
+  // but `x`/`y` here is whatever chain the caller handed in, and both
+  // `fitLoop` and `fitOpen` build that chain from Douglas-Peucker ANCHORS, not
+  // every lattice vertex: a run DP judged straight enough to drop is exactly a
+  // run with no sample point left to check the curve against. A least-squares
+  // solve pinned by a cluster of nearby points at one end and a single far
+  // anchor at the other is under-constrained in between, and nothing stops it
+  // bulging there even while every remaining sample scores perfectly. Verified
+  // on a real case (equal-rights corpus subject): 4 anchors within 3px of each
+  // other, a 5th anchor 10.5px further along a straight run DP had already
+  // collapsed, `maxError` 0.27 against a budget of 0.4 — and the emitted curve
+  // reached 5px off that straight run at its worst, entirely between anchors.
+  if (maxError < error && maxContinuousDeviation(x, y, first, last, bez) < error) {
     emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, tHat1, tHat2);
     return;
   }
@@ -794,7 +807,11 @@ function fitCubic(
       const uPrime = reparameterize(x, y, first, last, u, bez);
       bez = generateBezier(x, y, first, last, uPrime, tHat1, tHat2);
       const next = computeMaxError(x, y, first, last, bez, uPrime);
-      if (next.maxError < error) {
+      // Reparameterisation moved the correspondence, not just the fit, so a
+      // low sampled error alone is not trusted here the way it is on the
+      // never-reparameterized path above: verify the curve itself against the
+      // true polyline before accepting. See `maxContinuousDeviation`.
+      if (next.maxError < error && maxContinuousDeviation(x, y, first, last, bez) < error) {
         emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, tHat1, tHat2);
         return;
       }
@@ -804,10 +821,20 @@ function fitCubic(
     }
   }
 
-  // Guard against pathological inputs driving unbounded recursion.
-  if (depth > 24 || splitPoint <= first || splitPoint >= last) {
+  // Guard against pathological inputs driving unbounded recursion. Only the
+  // depth cap is a reason to stop splitting altogether and emit whatever the
+  // last candidate was — an out-of-range `splitPoint` is not "nowhere left to
+  // go", it is Newton's last reparameterisation having pushed the tracked
+  // worst-point index out of (first, last) while the curve itself was
+  // rejected by `maxContinuousDeviation` above. Emitting there would hand
+  // back exactly the unverified curve that rejection just refused; splitting
+  // at the midpoint instead keeps every emitted leaf covered by a real check.
+  if (depth > 24) {
     emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, tHat1, tHat2);
     return;
+  }
+  if (splitPoint <= first || splitPoint >= last) {
+    splitPoint = first + Math.max(1, Math.floor((last - first) / 2));
   }
 
   const tCenter = centerTangentOfChain(x, y, splitPoint);
@@ -918,6 +945,11 @@ function tryMerge(
   const bez = generateBezier(x, y, first, last, u, a.t1, b.t2);
   const { maxError } = computeMaxError(x, y, first, last, bez, u);
   if (maxError > error) return null;
+  // A merge reaches across more of the original chain than either half being
+  // replaced ever fit alone, so the same sampled-only check that is trusted
+  // on an ordinary un-reparameterized split (see `maxContinuousDeviation`'s
+  // doc comment) is verified here too rather than assumed to extend.
+  if (maxContinuousDeviation(x, y, first, last, bez) > error) return null;
 
   const out: FittedSegment[] = [];
   emit(bez[2], bez[3], bez[4], bez[5], bez[0], bez[1], bez[6], bez[7], out, first, last, a.t1, b.t2);
@@ -1027,6 +1059,52 @@ function quadMaxError(
 }
 
 /**
+ * The same question {@link maxContinuousDeviation} asks for a cubic, asked for
+ * a quadratic: how far does the CURVE stray from the true lattice polyline,
+ * sampled densely along its own parameter rather than only at the interior
+ * lattice points {@link quadMaxError} checks.
+ *
+ * `quadMaxError` only ever tests the `last - first - 1` interior points, each
+ * pulled onto the quadratic by a few Newton steps from its chord-length
+ * parameter — the exact same blind spot the cubic-side doc comment describes:
+ * `x`/`y` here are Douglas-Peucker anchors, not every pixel-lattice vertex, so
+ * a bulge between two adjacent anchors has no sample point to be caught by.
+ * Approximating "the true lattice polyline" by the straight segments between
+ * anchors (what {@link distToSegment} measures against) is the same safe
+ * stand-in used on the cubic side, for the same reason: DP already guarantees
+ * the true boundary stays close to that chord.
+ *
+ * Measured on real output: this catches quadratics that {@link quadMaxError}
+ * alone would have accepted on 85 spans across the equal-rights corpus
+ * subject, 7 on grand-opening and 1 on celebration — each one a genuine bulge
+ * between anchors invisible to the per-point check — at a corpus-wide cost of
+ * 0 to 0.4% more bytes.
+ */
+function quadMaxContinuousDeviation(
+  x: Float64Array, y: Float64Array,
+  first: number, last: number,
+  qx: number, qy: number,
+): number {
+  const span = last - first;
+  if (span <= 0) return 0;
+  const p0x = x[first], p0y = y[first];
+  const p3x = x[last], p3y = y[last];
+  const N = Math.min(800, Math.max(20, span * 4));
+  let worst = 0;
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    const p = quadAt(p0x, p0y, qx, qy, p3x, p3y, t);
+    let best = Infinity;
+    for (let i = first; i < last; i++) {
+      const d = distToSegment(p.x, p.y, x[i], y[i], x[i + 1], y[i + 1]);
+      if (d < best) best = d;
+    }
+    if (best > worst) worst = best;
+  }
+  return worst;
+}
+
+/**
  * Rewrite cubics as quadratics wherever the quadratic still honours `error`.
  *
  * A quadratic is four numbers where a cubic is six, and on a traced boundary
@@ -1070,12 +1148,23 @@ function reduceToQuadratics(
 
     let ok: boolean;
     if (f.last - f.first >= 3) {
-      // Two or more interior points: ask the chain.
-      ok = quadMaxError(x, y, f.first, f.last, q.x, q.y) <= error;
+      // Two or more interior points: ask the chain. Both the per-point check
+      // and the continuous one must pass — see `quadMaxContinuousDeviation`
+      // for the bulge-between-anchors gap the second one closes.
+      ok = quadMaxError(x, y, f.first, f.last, q.x, q.y) <= error
+        && quadMaxContinuousDeviation(x, y, f.first, f.last, q.x, q.y) <= error;
     } else {
       const u = chordLengthParameterize(x, y, f.first, f.last);
       const bez = Float64Array.of(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y);
-      const spent = computeMaxError(x, y, f.first, f.last, bez, u).maxError;
+      // `spent` must be the cubic's TRUE (continuous) deviation from the
+      // lattice, not just the discrete per-point metric — otherwise the
+      // budget handed to `quadDeviation` below can be overstated by exactly
+      // the gap `maxContinuousDeviation` exists to catch, and the quad and
+      // cubic errors could silently sum past `error`.
+      const spent = Math.max(
+        computeMaxError(x, y, f.first, f.last, bez, u).maxError,
+        maxContinuousDeviation(x, y, f.first, f.last, bez),
+      );
       ok = quadDeviation(p0x, p0y, s.x1, s.y1, s.x2, s.y2, s.x, s.y) <= error - spent;
     }
 
@@ -1244,6 +1333,68 @@ function generateBezier(
     x[last] + tHat2.x * alphaR, y[last] + tHat2.y * alphaR,
     x[last], y[last],
   ]);
+}
+
+/**
+ * Distance from point `p` to the line segment `(ax,ay)-(bx,by)`.
+ */
+function distToSegment(
+  px: number, py: number, ax: number, ay: number, bx: number, by: number,
+): number {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/**
+ * How far the CURVE itself ever strays from the true lattice polyline
+ * `x[first..last]`, sampled densely along the curve's own parameter rather
+ * than at each point's assigned `u`.
+ *
+ * `computeMaxError` answers "is point `i` close to the curve at parameter
+ * `u[i]`" — which, after Newton reparameterisation has moved `u` to wherever
+ * on the CURRENT curve is closest to each point, can stay small even while the
+ * curve bulges away from the boundary *between* points: reparameterize moves
+ * the correspondence, not just the fit, so the sampled metric and the curve's
+ * true position can decouple. Measured directly on one such case (equal-rights
+ * corpus subject, a 13-unit run intended to stay flat at y≈636): the
+ * chord-only curve tracked the boundary; after this file's ordinary Newton
+ * loop "improved" the sampled error, the same curve bulged to y≈641 at
+ * `t≈0.65` — 5px off a straight run, invisible to `computeMaxError` because no
+ * lattice point's assigned parameter fell in the bulge.
+ *
+ * This samples the curve at a fixed density (independent of how the points
+ * got reparameterized) and measures each sample against the nearest point on
+ * the true polyline — the same continuous-deviation question the interior
+ * alpha-compositing hairline instrument (`scripts/lib/hairline.mjs`) is built
+ * to catch, asked here before the curve is ever emitted.
+ */
+function maxContinuousDeviation(
+  x: Float64Array, y: Float64Array,
+  first: number, last: number,
+  bez: Float64Array,
+): number {
+  const span = last - first;
+  if (span <= 0) return 0;
+  // Dense enough to catch a bulge between any two adjacent lattice points:
+  // at least 4 samples per unit step, capped so a very long span (rare here —
+  // this only runs on spans close enough to already be passing a coarse
+  // check) cannot blow up the cost.
+  const N = Math.min(800, Math.max(20, span * 4));
+  let worst = 0;
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    const p = bezierAt(bez, t);
+    let best = Infinity;
+    for (let i = first; i < last; i++) {
+      const d = distToSegment(p.x, p.y, x[i], y[i], x[i + 1], y[i + 1]);
+      if (d < best) best = d;
+    }
+    if (best > worst) worst = best;
+  }
+  return worst;
 }
 
 function computeMaxError(
