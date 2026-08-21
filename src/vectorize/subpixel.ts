@@ -59,6 +59,93 @@ const MIN_CONTRAST_SQ = 3 * 3 * 4;
 /** A boundary lies within half a pixel of its crack line; beyond that is noise. */
 const MAX_SHIFT = 0.5;
 
+/**
+ * How far {@link findPlateau} may walk before giving up. Measured against the
+ * corpus rather than assumed: the widest real anti-aliasing ramp found (a
+ * large silhouette's outer edge, `yoyokd14-calm-7149117_1920.png`'s black
+ * outline) resolves to flat colour within 10px of raw perpendicular sampling.
+ * 12 leaves that a two-pixel margin without inviting a walk on a genuine
+ * gradient background to wander arbitrarily far from the edge it is meant to
+ * describe. A thinner region caps the walk itself, sooner, via the region
+ * check below — this is a ceiling, not the expected reach on most edges.
+ */
+const MAX_PLATEAU_REACH = 12;
+
+/**
+ * Two consecutive samples this close (summed squared channel delta) are
+ * "no more ramp here", not two pure-colour measurements that happen to
+ * coincide. Chosen above the ~2-per-channel jitter measured between
+ * neighbouring same-region pixels on real corpus photos (JPEG ringing,
+ * dithering) so ordinary compression noise cannot be mistaken for a plateau
+ * one step early, while still resolving well inside a true flat region.
+ */
+const PLATEAU_EPS_SQ = 4 * 4;
+
+/**
+ * Walk outward from a boundary-adjacent pixel `(x0, y0)` in direction
+ * `(dx, dy)` — a unit step, since that is all a crack-following normal ever
+ * is — until the sampled colour stops changing: the "pure" reference the
+ * coverage projection in {@link refineLoop} and {@link refineOpenArc} assumes
+ * is one pixel away. A fixed one-pixel reach is only correct when the
+ * source's anti-aliasing ramp is at most a pixel wide (see the module doc);
+ * on a wider ramp that pixel is still mid-gradient, and using it as "pure"
+ * makes the projected displacement wrong and noisy at every step along the
+ * edge — which is what defeats simplification downstream even after this
+ * pass runs.
+ *
+ * The walk stops, and the last usable sample is returned, at whichever comes
+ * first:
+ *
+ *  - two consecutive samples differ by less than {@link PLATEAU_EPS_SQ} — the
+ *    ramp has resolved to flat colour;
+ *  - the next pixel does not belong to `match` in `region` — walking further
+ *    would leave the shape being measured and start sampling some *other*
+ *    shape's ramp. This is the case a fixed reach cannot see coming: on a
+ *    stroke thin enough that its two edges' ramps meet in the middle (a 1-2px
+ *    bicycle spoke is exactly this), an unbounded walk searching for "pure"
+ *    would cross clean through to the far side and average in a second edge's
+ *    antialiasing, actively making that side's coverage measurement worse
+ *    rather than better. Stopping at the region boundary keeps the walk from
+ *    ever taking a sample that belongs to a different edge than the one being
+ *    refined;
+ *  - {@link MAX_PLATEAU_REACH} pixels have been walked with no plateau — a
+ *    genuine gradient background has no "pure" colour to find, so the
+ *    farthest sample is the least-wrong approximation available;
+ *  - the walk leaves the image.
+ *
+ * Falls back to the boundary pixel itself (step 0) when even one step out is
+ * unusable — out of bounds, or already a different region — matching what a
+ * fixed one-pixel reach did in the same situation: a shape touching the frame,
+ * or a region a single pixel wide, is refined against its own edge rather
+ * than against a sample that was never validated.
+ */
+function findPlateau(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  region: Int32Array,
+  match: number,
+  x0: number,
+  y0: number,
+  dx: number,
+  dy: number,
+): number {
+  let prevOff = (y0 * width + x0) * 4;
+  for (let step = 1; step <= MAX_PLATEAU_REACH; step++) {
+    const x = x0 + dx * step, y = y0 + dy * step;
+    if (x < 0 || y < 0 || x >= width || y >= height) break;
+    if (region[y * width + x] !== match) break;
+    const off = (y * width + x) * 4;
+    const dr = data[off] - data[prevOff];
+    const dg = data[off + 1] - data[prevOff + 1];
+    const db = data[off + 2] - data[prevOff + 2];
+    const da = data[off + 3] - data[prevOff + 3];
+    prevOff = off;
+    if (dr * dr + dg * dg + db * db + da * da <= PLATEAU_EPS_SQ) break;
+  }
+  return prevOff;
+}
+
 export interface RefinedLoop {
   /** Interleaved `x, y`, ready to hand straight to {@link fitLoop}. */
   pts: Float64Array;
@@ -158,13 +245,14 @@ export function refineLoop(
     // Outward normal: from the inside pixel's centre toward the outside pixel's.
     const nx = ox - ix, ny = oy - iy;
 
-    // One pixel further out on each side, for the two pure endpoints. Falling
-    // back to the boundary pixel itself when that lands outside the image keeps a
-    // shape touching the frame from being refined against nothing.
-    const pax = ix - nx, pay = iy - ny;
-    const pbx = ox + nx, pby = oy + ny;
-    const aOff = inBounds(pax, pay) ? at(pax, pay) : at(ix, iy);
-    const bOff = inBounds(pbx, pby) ? at(pbx, pby) : at(ox, oy);
+    // Walk outward on each side independently until the colour plateaus, for
+    // the two pure endpoints — see `findPlateau`. `outCls` is whatever class
+    // the outside pixel actually is; bounding that walk to it (rather than to
+    // "not cls") stops it at the far side's own edge instead of averaging in
+    // a third region if the outside happens to be thin too.
+    const outCls = classes[oy * width + ox]!;
+    const aOff = findPlateau(data, width, height, classes, cls, ix, iy, -nx, -ny);
+    const bOff = findPlateau(data, width, height, classes, outCls, ox, oy, nx, ny);
 
     let contrast = 0;
     const abr = data[aOff] - data[bOff];
@@ -328,10 +416,13 @@ export function refineOpenArc(
     // Outward normal: from the inside pixel's centre toward the outside pixel's.
     const nx = ox - ix, ny = oy - iy;
 
-    const pax = ix - nx, pay = iy - ny;
-    const pbx = ox + nx, pby = oy + ny;
-    const aOff = inBounds(pax, pay) ? at(pax, pay) : at(ix, iy);
-    const bOff = inBounds(pbx, pby) ? at(pbx, pby) : at(ox, oy);
+    // Walk outward on each side independently until the colour plateaus —
+    // see `findPlateau`. `outLabel` bounds the outward walk to the specific
+    // component the outside pixel belongs to, so it stops at that region's
+    // own far edge rather than crossing into a third component.
+    const outLabel = labels[oy * width + ox]!;
+    const aOff = findPlateau(data, width, height, labels, cls, ix, iy, -nx, -ny);
+    const bOff = findPlateau(data, width, height, labels, outLabel, ox, oy, nx, ny);
 
     const abr = data[aOff]! - data[bOff]!;
     const abg = data[aOff + 1]! - data[bOff + 1]!;

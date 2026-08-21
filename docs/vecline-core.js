@@ -2806,6 +2806,24 @@ function flattenPath(path, spacing = 1) {
 // src/vectorize/subpixel.ts
 var MIN_CONTRAST_SQ = 3 * 3 * 4;
 var MAX_SHIFT = 0.5;
+var MAX_PLATEAU_REACH = 12;
+var PLATEAU_EPS_SQ = 4 * 4;
+function findPlateau(data, width, height, region, match, x0, y0, dx, dy) {
+  let prevOff = (y0 * width + x0) * 4;
+  for (let step = 1; step <= MAX_PLATEAU_REACH; step++) {
+    const x = x0 + dx * step, y = y0 + dy * step;
+    if (x < 0 || y < 0 || x >= width || y >= height) break;
+    if (region[y * width + x] !== match) break;
+    const off = (y * width + x) * 4;
+    const dr = data[off] - data[prevOff];
+    const dg = data[off + 1] - data[prevOff + 1];
+    const db = data[off + 2] - data[prevOff + 2];
+    const da = data[off + 3] - data[prevOff + 3];
+    prevOff = off;
+    if (dr * dr + dg * dg + db * db + da * da <= PLATEAU_EPS_SQ) break;
+  }
+  return prevOff;
+}
 function refineLoop(loop, img, classes, cls) {
   const { width, height, data } = img;
   const src = loop.pts;
@@ -2865,10 +2883,9 @@ function refineLoop(loop, img, classes, cls) {
     const ox = in1 ? p2x : p1x, oy = in1 ? p2y : p1y;
     if (!inBounds(ox, oy)) continue;
     const nx = ox - ix, ny = oy - iy;
-    const pax = ix - nx, pay = iy - ny;
-    const pbx = ox + nx, pby = oy + ny;
-    const aOff = inBounds(pax, pay) ? at(pax, pay) : at(ix, iy);
-    const bOff = inBounds(pbx, pby) ? at(pbx, pby) : at(ox, oy);
+    const outCls = classes[oy * width + ox];
+    const aOff = findPlateau(data, width, height, classes, cls, ix, iy, -nx, -ny);
+    const bOff = findPlateau(data, width, height, classes, outCls, ox, oy, nx, ny);
     let contrast = 0;
     const abr = data[aOff] - data[bOff];
     const abg = data[aOff + 1] - data[bOff + 1];
@@ -2970,10 +2987,9 @@ function refineOpenArc(pts, img, labels, cls) {
     const ox = in1 ? p2x : p1x, oy = in1 ? p2y : p1y;
     if (!inBounds(ox, oy)) continue;
     const nx = ox - ix, ny = oy - iy;
-    const pax = ix - nx, pay = iy - ny;
-    const pbx = ox + nx, pby = oy + ny;
-    const aOff = inBounds(pax, pay) ? at(pax, pay) : at(ix, iy);
-    const bOff = inBounds(pbx, pby) ? at(pbx, pby) : at(ox, oy);
+    const outLabel = labels[oy * width + ox];
+    const aOff = findPlateau(data, width, height, labels, cls, ix, iy, -nx, -ny);
+    const bOff = findPlateau(data, width, height, labels, outLabel, ox, oy, nx, ny);
     const abr = data[aOff] - data[bOff];
     const abg = data[aOff + 1] - data[bOff + 1];
     const abb = data[aOff + 2] - data[bOff + 2];
