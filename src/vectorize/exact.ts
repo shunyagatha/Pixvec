@@ -204,6 +204,7 @@ export function vectorizeExactContours(img: RasterImage, opts: ExactOptions = {}
     height,
     generator: opts.generator,
     title: opts.title,
+    emitDimensions: opts.emitDimensions,
     // Integer geometry renders identically either way, but disabling
     // antialiasing removes any dependence on the renderer's edge rules.
     shapeRendering: opts.crispEdges === false ? 'auto' : 'crispEdges',

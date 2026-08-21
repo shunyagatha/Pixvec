@@ -1299,7 +1299,8 @@ function vectorizePixels(img, opts = {}) {
     height,
     generator: opts.generator,
     title: opts.title,
-    shapeRendering: opts.crispEdges === false ? "auto" : "crispEdges"
+    shapeRendering: opts.crispEdges === false ? "auto" : "crispEdges",
+    emitDimensions: opts.emitDimensions
   });
   if (backgroundKey !== 0) doc.addBackground(unpackRgba(backgroundKey));
   const ordered = [...byColor.keys()].filter((k) => k !== backgroundKey).map((k) => [counts.get(k) ?? 0, k]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).map(([, k]) => k);
@@ -1883,6 +1884,7 @@ function vectorizeExactContours(img, opts = {}) {
     height,
     generator: opts.generator,
     title: opts.title,
+    emitDimensions: opts.emitDimensions,
     // Integer geometry renders identically either way, but disabling
     // antialiasing removes any dependence on the renderer's edge rules.
     shapeRendering: opts.crispEdges === false ? "auto" : "crispEdges"
@@ -5548,6 +5550,7 @@ function trace(source, opts = {}) {
     height,
     generator: o.generator,
     title: o.title,
+    emitDimensions: o.emitDimensions,
     // Inherited, so one attribute serves every `<clipPath>` the pass adds; stating
     // it is not optional, because neither resvg nor librsvg falls back to the
     // referenced path's own `fill-rule` when clipping. Harmless when the pass
