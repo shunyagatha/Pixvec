@@ -8,6 +8,7 @@ import { traceComponents, type TurnPolicy, type Loop, type LoopBudgetGuard } fro
 import { fitLoop, flattenPath, type FitOptions, type FittedPath } from './fit.js';
 import { refineLoop } from './subpixel.js';
 import { refineSourceFor } from './refine-source.js';
+import { despikeRinging } from './despike.js';
 import { flattenToSegments } from './merge.js';
 import { smoothPreservingEdges } from './smooth.js';
 import { regulariseAgreeing } from './junctions.js';
@@ -120,6 +121,21 @@ export interface TraceOptions {
    * Oklab. Overrides {@link colors}.
    */
   fixedPalette?: Rgba[];
+  /**
+   * Correct a resize/sharpening Gibbs-ringing overshoot in the raw source —
+   * a pixel whose value lies past a true plateau on either side of it, on a
+   * short antialiasing ramp — before classification (`collapseFringeAlpha`,
+   * `quantize`, `connectedComponents`, the contour itself) ever sees the
+   * raster. See `despike.ts` for the exact, narrowly-gated signature this
+   * targets and the measurements behind each threshold: every gate is a
+   * precondition evaluated on the untouched source, so a pixel this cannot
+   * confidently identify as the specific overshoot signature is left
+   * byte-identical. Off by default, opt-in — validated on a 9-subject corpus
+   * plus the target defect image with zero interior-leak or topology
+   * regressions and no corner-rounding, but not yet exercised on a wide
+   * enough corpus to default it on for every caller.
+   */
+  despike?: boolean;
   /**
    * Selective blur radius applied before quantisation. Removes sensor noise and
    * JPEG grain that would otherwise fragment a flat region into speckle
@@ -657,6 +673,12 @@ export interface TraceOutput {
 export const TRACE_DEFAULTS = {
   colors: 16,
   alphaLevels: 8,
+  // Opt-in, not on by default: proven to resolve the diagnosed Gibbs-ringing
+  // staircase defect with zero interior-leak/topology regressions on the
+  // 9-subject corpus, but that corpus is not wide enough on its own to make
+  // this the default for every caller. See `despike.ts` and the `despike`
+  // option's own doc comment.
+  despike: false,
   minArea: 0,
   speckleScope: 'all' as SpeckleScope,
   // 0.4, not 1.0. A measured diagnosis (scripts/diagnose-photo.mjs) found the
@@ -1002,6 +1024,15 @@ export function trace(source: RasterImage, opts: TraceOptions = {}): TraceOutput
   // clean edge the threshold produced.
   report('Preparing', 2);
   let img = source;
+  // Ahead of EVERYTHING, including collapseFringeAlpha: a resize/sharpening
+  // Gibbs-ringing overshoot is a property of the raw raster itself, not of
+  // any decision this pipeline makes about it, so classification should see
+  // the corrected pixels — not just refinement, which is all `refine-source.ts`
+  // downstream of this can reach. Surgical by construction: see despike.ts's
+  // own doc comment for the gates that keep it from ever touching real
+  // antialiasing, thin strokes, or unrelated edges. Opt-in (see the
+  // `despike` option's own doc comment for why it defaults off).
+  if (o.despike) img = despikeRinging(img);
   // Ahead of everything else, deliberately: collapsing antialiasing-ramp
   // fringe alpha levels into their nearest real neighbour before blur/smooth/
   // segment ever see the image means those passes shape the corrected ramp,

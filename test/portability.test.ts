@@ -52,6 +52,7 @@ const CORE_MODULES = [
   'vectorize/contour.ts',
   'vectorize/subpixel.ts',
   'vectorize/refine-source.ts',
+  'vectorize/despike.ts',
   'vectorize/fit.ts',
   'vectorize/gradient.ts',
   'vectorize/primitives.ts',
