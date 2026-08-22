@@ -217,9 +217,9 @@ export function fitLoop(pts: Int32Array | Float64Array | number[], opts: FitOpti
   // Measured on the corpus at the default tolerance: byte-identical output,
   // 69 ms -> 35 ms on logo-tux and 142 -> 95 on alpha-dice.
   //
-  // The condition is deliberately narrow. At the `logo` and `lineart` presets
-  // (tolerance 0.6) DP *does* remove vertices, the fitter *does* fire, and this
-  // shortcut correctly stays out of the way.
+  // The condition is deliberately narrow. At the `logo` (tolerance 0.65) and
+  // `lineart` (tolerance 0.6) presets DP *does* remove vertices, the fitter
+  // *does* fire, and this shortcut correctly stays out of the way.
   const fitterIsDead = anchors.length === n && !opts.rightAngleEnhance;
 
   if (opts.polygonOnly || fitterIsDead) {

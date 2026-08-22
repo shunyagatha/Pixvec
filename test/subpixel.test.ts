@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { connectedComponents } from '../src/vectorize/components.js';
 import { traceComponents, type Loop } from '../src/vectorize/contour.js';
 import {
-  refineLoop, refineOpenArc, cornerCuts, smoothVertexDisplacements,
+  refineLoop, refineOpenArc, cornerCuts, smoothVertexDisplacements, combineAxes,
 } from '../src/vectorize/subpixel.js';
 import { fitLoop } from '../src/vectorize/fit.js';
 import type { RasterImage } from '../src/types.js';
@@ -642,5 +642,64 @@ describe('smoothVertexDisplacements', () => {
     // Vertex 0 disagrees with every wrapped-around neighbour, so it is
     // corrected to the majority — this only happens if wrapping is real.
     expect(out.x[0]).toBeCloseTo(0.5, 10);
+  });
+});
+
+describe('combineAxes', () => {
+  /**
+   * The fix under test: a corner vertex's per-axis measurements are combined
+   * by the pre-existing combined-hit-count average in every case except one
+   * — where exactly one axis's measurement is MAX_SHIFT-saturated, and so
+   * carries no reliable magnitude. See `refineLoop`'s doc for the full
+   * rationale and the alternatives that were tried and measurably regressed
+   * small-curve accuracy.
+   */
+
+  it('only-X-measured passes X through and leaves Y at 0, regardless of saturation flags', () => {
+    // hitsY === 0 means Y was never measured — satY must not matter, and
+    // must not be read as "Y measured 0".
+    expect(combineAxes(2, 999, 4, 0, false, true)).toEqual([0.5, 0]);
+    expect(combineAxes(-2, 0, 4, 0, true, false)).toEqual([-0.5, 0]);
+  });
+
+  it('only-Y-measured passes Y through and leaves X at 0, regardless of saturation flags', () => {
+    expect(combineAxes(999, 3, 0, 3, true, false)).toEqual([0, 1]);
+    expect(combineAxes(0, -3, 0, 3, false, true)).toEqual([0, -1]);
+  });
+
+  it('both measured, neither saturated: combined-hit-count average — the pre-existing behaviour, unchanged', () => {
+    // hitsX=1, hitsY=1: (sumX)/(1+1), (sumY)/(1+1).
+    expect(combineAxes(0.4, 0.6, 1, 1, false, false)).toEqual([0.2, 0.3]);
+    // hitsX=2, hitsY=1: divisor is the COMBINED count (3), not each axis's own.
+    const [ox, oy] = combineAxes(0.6, 0.3, 2, 1, false, false);
+    expect(ox).toBeCloseTo(0.2, 10);
+    expect(oy).toBeCloseTo(0.1, 10);
+  });
+
+  it('both measured, both saturated: falls back to the combined-hit-count average — neither axis can be preferred', () => {
+    expect(combineAxes(0.5, -0.5, 1, 1, true, true)).toEqual([0.25, -0.25]);
+  });
+
+  it('both measured, only X saturated: X is discarded, Y is used at its OWN hit count (not the combined one)', () => {
+    // hitsX=3 (all saturated, discarded), hitsY=2 unsaturated: Y = sumY/2, X = 0.
+    expect(combineAxes(1.5, 0.8, 3, 2, true, false)).toEqual([0, 0.4]);
+  });
+
+  it('both measured, only Y saturated: Y is discarded, X is used at its OWN hit count', () => {
+    expect(combineAxes(0.8, 1.5, 2, 3, false, true)).toEqual([0.4, 0]);
+  });
+
+  it('a genuinely monotonic sweep from all-X to all-Y information never divides by the combined count for the trusted axis', () => {
+    // Regression pin for the exact bug this fix targets: with the
+    // pre-existing code, an unsaturated dx of 0.47 sitting next to a
+    // saturated dy would be halved (0.235) instead of used at full strength.
+    const [ox, oy] = combineAxes(0.47, 0.5, 1, 1, false, true);
+    expect(ox).toBeCloseTo(0.47, 10);
+    expect(oy).toBe(0);
+  });
+
+  it('degenerate: both sums are zero (no real displacement measured on either axis)', () => {
+    expect(combineAxes(0, 0, 1, 1, false, false)).toEqual([0, 0]);
+    expect(combineAxes(0, 0, 1, 1, true, false)).toEqual([0, 0]);
   });
 });

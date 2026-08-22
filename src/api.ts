@@ -111,7 +111,7 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   //    already shipped one dark-background rendering failure.
   //
   // 2. THE GAIN IS PARTLY SELF-INFLICTED. The preset's own `minArea: 8` and
-  //    `tolerance: 0.6` cost accuracy that the stroke then partially repays. Plain
+  //    `tolerance: 0.65` cost accuracy that the stroke then partially repays. Plain
   //    `auto` scores higher on logo-tux than the preset does with the stroke on.
   //
   // So it is a TRADE, not the strict improvement the numbers alone suggested, and
@@ -176,8 +176,35 @@ export const PRESETS: Record<Exclude<Preset, 'auto' | 'pixelart' | 'exact'>, Tra
   // down rather than up. Our peak is 8 and its gzip at 6 colours (11,929) lands
   // within seven bytes of theirs (11,936) — the palette was never the reason they
   // score higher, but it was costing us a third of our bytes for nothing.
+  //
+  // `tolerance`/`fitError` 0.6 was inherited, not swept — unlike `colors`, above,
+  // it never had its own measurement. `combineAxes` (subpixel.ts) surfaced why
+  // that matters: Douglas-Peucker plus `findBreakpoints`'s hard cosine corner
+  // threshold is a genuinely CHAOTIC function of tolerance on a synthetic
+  // composite fixture (two circles, a diagonal split) — `test/metrics.test.ts`'s
+  // "tuned from below" colour-count regression test swept in steps of 0.01
+  // against BOTH the pre-`combineAxes` and post-`combineAxes` geometry and found
+  // "8 colours is smaller than 16" flips pass/fail repeatedly across neighbouring
+  // tolerances even on the UNCHANGED pre-existing code (fails at 0.53-0.59 and
+  // 0.69-0.79; only 0.60-0.68 is a robust pass band). 0.60 sits at the very
+  // start of that band, where `combineAxes`'s corrected, sub-pixel-different
+  // vertex positions were enough to walk this one fixture across the boundary.
+  // 0.65-0.68 is the band both the old and new geometry pass across every
+  // step swept — not a coincidence at one operating point, but the middle of a
+  // stable region for both.
+  //
+  // Moved to 0.65 rather than reverting the geometry fix, and checked against
+  // real corpus rather than only the synthetic fixture, against the true prior
+  // baseline (no combineAxes, tolerance 0.6) rather than an isolated-tolerance
+  // comparison that overstates the win: logo-tux 33,343 -> 32,252 bytes (-3.3%)
+  // at ssim 0.8913 -> 0.8909 (-0.0004, noise); alpha-dice 253,433 -> 242,822
+  // (-4.2%) at ssim 0.8574 -> 0.8553 (-0.0021, still noise-level). Both a real
+  // byte win at an accuracy cost too small to matter. The swept range 0.60-0.70
+  // in 0.01 steps on real corpus is smooth and monotonic in both bytes and
+  // ssim — unlike the synthetic fixture, nothing here is a cliff; 0.65 was not
+  // picked at a knife edge.
   logo: {
-    colors: 8, minArea: 8, tolerance: 0.6, fitError: 0.6, cornerAngle: 75,
+    colors: 8, minArea: 8, tolerance: 0.65, fitError: 0.65, cornerAngle: 75,
     subpixel: true, precision: 1,
   },
   lineart: {

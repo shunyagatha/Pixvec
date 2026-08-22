@@ -2925,6 +2925,13 @@ function smoothVertexDisplacements(dx, dy, valid, cut2, n2, wrap) {
   }
   return { x: outX, y: outY };
 }
+function combineAxes(sumX, sumY, hitsX, hitsY, satX, satY) {
+  if (hitsX > 0 && hitsY === 0) return [sumX / hitsX, 0];
+  if (hitsY > 0 && hitsX === 0) return [0, sumY / hitsY];
+  if (satX && !satY) return [0, sumY / hitsY];
+  if (satY && !satX) return [sumX / hitsX, 0];
+  return [sumX / (hitsX + hitsY), sumY / (hitsX + hitsY)];
+}
 function refineLoop(loop, img, classes, cls) {
   const { width, height, data } = img;
   const src = loop.pts;
@@ -2964,7 +2971,10 @@ function refineLoop(loop, img, classes, cls) {
   const inBounds = (x, y) => x >= 0 && y >= 0 && x < width && y < height;
   const sx = new Float64Array(count2);
   const sy = new Float64Array(count2);
-  const hits = new Uint8Array(count2);
+  const hitsX = new Uint8Array(count2);
+  const hitsY = new Uint8Array(count2);
+  const satX = new Uint8Array(count2);
+  const satY = new Uint8Array(count2);
   for (let i = 0; i < count2; i++) {
     const j = (i + 1) % count2;
     const ax = vx[i], ay = vy[i];
@@ -3007,26 +3017,42 @@ function refineLoop(loop, img, classes, cls) {
       const t = ((data[off] - data[bOff]) * abr + (data[off + 1] - data[bOff + 1]) * abg + (data[off + 2] - data[bOff + 2]) * abb + (data[off + 3] - data[bOff + 3]) * aba) / contrast;
       return t < 0 ? 0 : t > 1 ? 1 : t;
     };
-    let d = project(iOff) + project(oOff) - 1;
+    const raw = project(iOff) + project(oOff) - 1;
+    let d = raw;
     if (d > MAX_SHIFT) d = MAX_SHIFT;
     else if (d < -MAX_SHIFT) d = -MAX_SHIFT;
     if (d === 0) continue;
-    sx[i] += d * nx;
-    sy[i] += d * ny;
-    hits[i]++;
-    sx[j] += d * nx;
-    sy[j] += d * ny;
-    hits[j]++;
+    const saturated = raw >= MAX_SHIFT || raw <= -MAX_SHIFT;
+    if (nx !== 0) {
+      sx[i] += d * nx;
+      sx[j] += d * nx;
+      hitsX[i]++;
+      hitsX[j]++;
+      if (saturated) {
+        satX[i] = 1;
+        satX[j] = 1;
+      }
+    } else {
+      sy[i] += d * ny;
+      sy[j] += d * ny;
+      hitsY[i]++;
+      hitsY[j]++;
+      if (saturated) {
+        satY[i] = 1;
+        satY[j] = 1;
+      }
+    }
   }
   const rawOx = new Float64Array(count2);
   const rawOy = new Float64Array(count2);
   const vertexValid = new Uint8Array(count2);
   for (let i = 0; i < count2; i++) {
-    const n2 = hits[i];
-    if (n2 === 0) continue;
-    rawOx[i] = sx[i] / n2;
-    rawOy[i] = sy[i] / n2;
+    const nX = hitsX[i], nY = hitsY[i];
+    if (nX === 0 && nY === 0) continue;
     vertexValid[i] = 1;
+    const [ox, oy] = combineAxes(sx[i], sy[i], nX, nY, satX[i] === 1, satY[i] === 1);
+    rawOx[i] = ox;
+    rawOy[i] = oy;
   }
   const smoothed = smoothVertexDisplacements(rawOx, rawOy, vertexValid, cut2, count2, true);
   const out = new Float64Array(count2 * 2);
@@ -3084,7 +3110,10 @@ function refineOpenArc(pts, img, labels, cls) {
   const inBounds = (x, y) => x >= 0 && y >= 0 && x < width && y < height;
   const sx = new Float64Array(count2);
   const sy = new Float64Array(count2);
-  const hits = new Uint8Array(count2);
+  const hitsX = new Uint8Array(count2);
+  const hitsY = new Uint8Array(count2);
+  const satX = new Uint8Array(count2);
+  const satY = new Uint8Array(count2);
   for (let i = 0; i < nSteps; i++) {
     const j = i + 1;
     const ax = vx[i], ay = vy[i];
@@ -3126,26 +3155,42 @@ function refineOpenArc(pts, img, labels, cls) {
       const t = ((data[off] - data[bOff]) * abr + (data[off + 1] - data[bOff + 1]) * abg + (data[off + 2] - data[bOff + 2]) * abb + (data[off + 3] - data[bOff + 3]) * aba) / contrast;
       return t < 0 ? 0 : t > 1 ? 1 : t;
     };
-    let d = project(iOff) + project(oOff) - 1;
+    const raw = project(iOff) + project(oOff) - 1;
+    let d = raw;
     if (d > MAX_SHIFT) d = MAX_SHIFT;
     else if (d < -MAX_SHIFT) d = -MAX_SHIFT;
     if (d === 0) continue;
-    sx[i] += d * nx;
-    sy[i] += d * ny;
-    hits[i]++;
-    sx[j] += d * nx;
-    sy[j] += d * ny;
-    hits[j]++;
+    const saturated = raw >= MAX_SHIFT || raw <= -MAX_SHIFT;
+    if (nx !== 0) {
+      sx[i] += d * nx;
+      sx[j] += d * nx;
+      hitsX[i]++;
+      hitsX[j]++;
+      if (saturated) {
+        satX[i] = 1;
+        satX[j] = 1;
+      }
+    } else {
+      sy[i] += d * ny;
+      sy[j] += d * ny;
+      hitsY[i]++;
+      hitsY[j]++;
+      if (saturated) {
+        satY[i] = 1;
+        satY[j] = 1;
+      }
+    }
   }
   const rawOx = new Float64Array(count2);
   const rawOy = new Float64Array(count2);
   const vertexValid = new Uint8Array(count2);
   for (let i = 1; i < count2 - 1; i++) {
-    const n2 = hits[i];
-    if (n2 === 0) continue;
-    rawOx[i] = sx[i] / n2;
-    rawOy[i] = sy[i] / n2;
+    const nX = hitsX[i], nY = hitsY[i];
+    if (nX === 0 && nY === 0) continue;
     vertexValid[i] = 1;
+    const [ox, oy] = combineAxes(sx[i], sy[i], nX, nY, satX[i] === 1, satY[i] === 1);
+    rawOx[i] = ox;
+    rawOy[i] = oy;
   }
   const smoothed = smoothVertexDisplacements(rawOx, rawOy, vertexValid, cut2, count2, false);
   const out = new Float64Array(count2 * 2);

@@ -130,7 +130,7 @@ const CANDIDATES = [
   { id: 'sub-tol2', opts: { mode: 'trace', trace: { subpixel: true, tolerance: 2 } } },
   // The PRESETS, which are what a user actually types and what Phases 2-5 were
   // tuned on -- and which this harness could not see until now. That blindness
-  // mattered: `logo` couples tolerance 0.6 with subpixel refinement, a
+  // mattered: `logo` couples tolerance 0.65 with subpixel refinement, a
   // combination none of the rows above reproduce, and it is the only
   // configuration that emits curves on a real logo at all.
   //
@@ -150,7 +150,7 @@ const CANDIDATES = [
   //
   // The cause is in the fixtures below: they were built to have the features
   // vectorizers get wrong -- long straight diagonals, tight corners -- and those
-  // reward a preset that simplifies hard (tolerance 0.6 + subpixel). Real artwork
+  // reward a preset that simplifies hard (tolerance 0.65 + subpixel). Real artwork
   // is mostly texture and small regions, where the same simplification loses.
   // Run `npm run bench:scale -- corpus/src` before believing any ranking these
   // built-in shapes produce.

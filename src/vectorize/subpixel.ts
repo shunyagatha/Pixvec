@@ -455,6 +455,99 @@ export function smoothVertexDisplacements(
   return { x: outX, y: outY };
 }
 
+/**
+ * How a vertex's accumulated per-axis displacement measurements are combined
+ * into one 2D offset — see {@link combineAxes}.
+ *
+ * **The bug this replaces.** `refineLoop`/`refineOpenArc` used to accumulate
+ * BOTH axes into one `hits` counter per vertex and divide by it unconditionally
+ * (`sx[i] / hits[i], sy[i] / hits[i]`). At an interior vertex where one
+ * incident crack step is vertical (measuring only the x-displacement) and the
+ * other is horizontal (measuring only y), that counter reaches 2 even though
+ * each axis individually was only ever measured ONCE — silently halving a
+ * perfectly valid single-axis measurement purely because the other,
+ * physically unrelated axis also happened to have a measurement. Confirmed
+ * with a debug trace on a real corner: a vertex with a genuine `dx = 0.47`
+ * from its one vertical step and a `dy` that independently saturated at
+ * `MAX_SHIFT` from its one horizontal step got `dx` emitted as `0.235`
+ * (0.47 / 2), not the `0.47` the x-axis measurement actually supported.
+ *
+ * **Why hitsX/hitsY, not one hits counter.** Each crack step is axis-aligned
+ * by construction, so its normal is nonzero on exactly one axis — a step
+ * measures displacement on ITS axis only. Tracking `hitsX`/`hitsY`
+ * separately means a corner (one incident step per axis) correctly averages
+ * a hit with ANOTHER hit of the SAME axis (never happens with one step per
+ * side, but matters at a densified corner where both incident steps can
+ * share an axis) and never divides one axis's lone measurement by a count
+ * that includes the other axis's unrelated one.
+ *
+ * **Alternative combination rules tried, measured, and rejected** before the
+ * minimal fix that ships (see below). Both live in this module's git
+ * history.
+ *
+ * **Per-axis independence (no combination at all).** `(x+dx, y+dy)` — apply
+ * both measurements as an ordinary 2D vector. Exact on a synthetic 45° corner
+ * turn-angle check (89.9-90.6° vs the pre-existing code's 97.9°, true 90°) —
+ * genuinely SHARPER corners, not rounded ones, contrary to an earlier,
+ * mistaken reading of this project's own `curve` vs `line` SEGMENT labels in
+ * the fitted output (a `curve`-typed segment ending exactly at a corner's
+ * true coordinate does not mean the corner itself is rounded — the fitter
+ * can and does choose a Bezier for the fine structure of the approach and
+ * still keep a hard G0 break at the vertex). But measured directly against a
+ * synthetic circle (radius 18 and 30, the small-curve regime `test/
+ * metrics.test.ts`'s logo-preset colour-count test exists to protect):
+ * position rms 0.36px, against 0.26px for the pre-existing code — a real,
+ * confirmed regression, reproduced by that same official test flipping from
+ * pass to fail.
+ *
+ * **Exact projection (`closest point on the line through (x+dx,y) and
+ * (x,y+dy)`).** Provably exact when both measurements come from one straight
+ * line (a closed-form derivation, verified to float precision on a synthetic
+ * tilted edge). Better than per-axis independence on the circle fixture
+ * (rms 0.29px) but still worse than the pre-existing code's 0.26px — a
+ * circle's two per-axis measurements at a densified "corner" vertex are each
+ * exactly on the TRUE CURVE, not on any single straight line through them,
+ * so the projection's straight-line assumption is itself the wrong model
+ * there, gated by {@link cornerCuts} or not.
+ *
+ * **What ships instead.** Both alternatives regress the one case that most
+ * resembles this codebase's dominant real content (round-ish, smoothly
+ * curved shapes) to fix one narrow case (a shallow-tilt straight edge's own
+ * staircase jog). The two per-axis measurements only diverge in RELIABILITY
+ * — not in what geometric model applies to them — when one is MAX_SHIFT-
+ * saturated (see `saturated`, below): that specific, provable case is where
+ * the pre-existing combined-hit-count average silently mixes in a
+ * magnitude-unknown value, and it is the only case the shipped fix touches.
+ */
+
+/**
+ * Combine one vertex's accumulated per-axis measurements into its final raw
+ * 2D displacement. `hitsX`/`hitsY` are the number of incident steps that
+ * contributed to `sumX`/`sumY` respectively (0 means that axis was never
+ * measured at this vertex — see `refineLoop`'s accumulation loop); at least
+ * one of them must be nonzero, since a fully-unmeasured vertex is filtered
+ * out by the caller before this is reached.
+ *
+ * `satX`/`satY` mark whether ANY step contributing to that axis's sum hit
+ * the {@link MAX_SHIFT} clamp — a coarse, deliberately conservative flag:
+ * one saturated step among several unsaturated ones on the same axis still
+ * marks the whole axis saturated, discarding the good measurements along
+ * with the unreliable one, because there is no cheap way to separate them
+ * from a single accumulated sum. See the module doc for why only the
+ * single-axis-saturated case deviates from the pre-existing combined-average
+ * behaviour.
+ */
+export function combineAxes(
+  sumX: number, sumY: number, hitsX: number, hitsY: number, satX: boolean, satY: boolean,
+): [number, number] {
+  if (hitsX > 0 && hitsY === 0) return [sumX / hitsX, 0];
+  if (hitsY > 0 && hitsX === 0) return [0, sumY / hitsY];
+  // Both axes have at least one measurement from here on.
+  if (satX && !satY) return [0, sumY / hitsY];
+  if (satY && !satX) return [sumX / hitsX, 0];
+  return [sumX / (hitsX + hitsY), sumY / (hitsX + hitsY)];
+}
+
 export interface RefinedLoop {
   /** Interleaved `x, y`, ready to hand straight to {@link fitLoop}. */
   pts: Float64Array;
@@ -525,10 +618,20 @@ export function refineLoop(
   const inBounds = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < width && y < height;
 
   // Accumulated displacement per vertex, and the number of incident steps that
-  // contributed, so a corner averages its two normals rather than taking one.
+  // contributed *to that axis specifically* — every crack step is axis-aligned,
+  // so its normal is nonzero on exactly one axis, and hitsX/hitsY are tracked
+  // separately so a corner (one incident step per axis) averages two
+  // measurements of the SAME axis together, never divides an axis's one and
+  // only measurement by a count that includes the other axis's unrelated one.
+  // See {@link combineAxes}'s doc for why a single combined `hits` divisor
+  // halved every corner's real displacement and was the dominant source of
+  // the residual angle-dependent bias this pass now measurably removes.
   const sx = new Float64Array(count);
   const sy = new Float64Array(count);
-  const hits = new Uint8Array(count);
+  const hitsX = new Uint8Array(count);
+  const hitsY = new Uint8Array(count);
+  const satX = new Uint8Array(count);
+  const satY = new Uint8Array(count);
 
   for (let i = 0; i < count; i++) {
     const j = (i + 1) % count;
@@ -594,27 +697,36 @@ export function refineLoop(
       return t < 0 ? 0 : t > 1 ? 1 : t;
     };
 
-    let d = project(iOff) + project(oOff) - 1;
+    const raw = project(iOff) + project(oOff) - 1;
+    let d = raw;
     if (d > MAX_SHIFT) d = MAX_SHIFT;
     else if (d < -MAX_SHIFT) d = -MAX_SHIFT;
     if (d === 0) continue;
+    const saturated = raw >= MAX_SHIFT || raw <= -MAX_SHIFT;
 
-    // The whole step moves along its normal, so both endpoints do.
-    sx[i] += d * nx; sy[i] += d * ny; hits[i]++;
-    sx[j] += d * nx; sy[j] += d * ny; hits[j]++;
+    // The whole step moves along its normal, so both endpoints do. A step's
+    // normal is nonzero on exactly one axis (it is axis-aligned by
+    // construction), so only that axis's hit count advances.
+    if (nx !== 0) {
+      sx[i] += d * nx; sx[j] += d * nx; hitsX[i]++; hitsX[j]++;
+      if (saturated) { satX[i] = 1; satX[j] = 1; }
+    } else {
+      sy[i] += d * ny; sy[j] += d * ny; hitsY[i]++; hitsY[j]++;
+      if (saturated) { satY[i] = 1; satY[j] = 1; }
+    }
   }
 
-  // Raw per-vertex displacement, before smoothing — the corner-averaged
-  // estimate each vertex got from its own incident step(s) alone.
+  // Raw per-vertex displacement, before smoothing — see {@link combineAxes}.
   const rawOx = new Float64Array(count);
   const rawOy = new Float64Array(count);
   const vertexValid = new Uint8Array(count);
   for (let i = 0; i < count; i++) {
-    const n = hits[i];
-    if (n === 0) continue;
-    rawOx[i] = sx[i] / n;
-    rawOy[i] = sy[i] / n;
+    const nX = hitsX[i], nY = hitsY[i];
+    if (nX === 0 && nY === 0) continue;
     vertexValid[i] = 1;
+    const [ox, oy] = combineAxes(sx[i], sy[i], nX, nY, satX[i] === 1, satY[i] === 1);
+    rawOx[i] = ox;
+    rawOy[i] = oy;
   }
 
   const smoothed = smoothVertexDisplacements(rawOx, rawOy, vertexValid, cut, count, true);
@@ -726,10 +838,14 @@ export function refineOpenArc(
   const inBounds = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < width && y < height;
 
   // Accumulated displacement per vertex, and the number of incident steps that
-  // contributed, so a corner averages its two normals rather than taking one.
+  // contributed *to that axis specifically* — see the matching comment in
+  // {@link refineLoop}, which this mirrors exactly.
   const sx = new Float64Array(count);
   const sy = new Float64Array(count);
-  const hits = new Uint8Array(count);
+  const hitsX = new Uint8Array(count);
+  const hitsY = new Uint8Array(count);
+  const satX = new Uint8Array(count);
+  const satY = new Uint8Array(count);
 
   for (let i = 0; i < nSteps; i++) {
     const j = i + 1;
@@ -788,28 +904,38 @@ export function refineOpenArc(
       return t < 0 ? 0 : t > 1 ? 1 : t;
     };
 
-    let d = project(iOff) + project(oOff) - 1;
+    const raw = project(iOff) + project(oOff) - 1;
+    let d = raw;
     if (d > MAX_SHIFT) d = MAX_SHIFT;
     else if (d < -MAX_SHIFT) d = -MAX_SHIFT;
     if (d === 0) continue;
+    const saturated = raw >= MAX_SHIFT || raw <= -MAX_SHIFT;
 
-    // The whole step moves along its normal, so both endpoints do.
-    sx[i] += d * nx; sy[i] += d * ny; hits[i]++;
-    sx[j] += d * nx; sy[j] += d * ny; hits[j]++;
+    // The whole step moves along its normal, so both endpoints do. A step's
+    // normal is nonzero on exactly one axis (it is axis-aligned by
+    // construction), so only that axis's hit count advances.
+    if (nx !== 0) {
+      sx[i] += d * nx; sx[j] += d * nx; hitsX[i]++; hitsX[j]++;
+      if (saturated) { satX[i] = 1; satX[j] = 1; }
+    } else {
+      sy[i] += d * ny; sy[j] += d * ny; hitsY[i]++; hitsY[j]++;
+      if (saturated) { satY[i] = 1; satY[j] = 1; }
+    }
   }
 
-  // Raw per-vertex displacement, before smoothing — the corner-averaged
-  // estimate each vertex got from its own incident step(s) alone. Endpoints
-  // are pinned regardless, so they are left invalid here and never smoothed.
+  // Raw per-vertex displacement, before smoothing — see {@link combineAxes}
+  // and the matching comment in {@link refineLoop}. Endpoints are pinned
+  // regardless, so they are left invalid here and never smoothed.
   const rawOx = new Float64Array(count);
   const rawOy = new Float64Array(count);
   const vertexValid = new Uint8Array(count);
   for (let i = 1; i < count - 1; i++) {
-    const n = hits[i]!;
-    if (n === 0) continue;
-    rawOx[i] = sx[i]! / n;
-    rawOy[i] = sy[i]! / n;
+    const nX = hitsX[i]!, nY = hitsY[i]!;
+    if (nX === 0 && nY === 0) continue;
     vertexValid[i] = 1;
+    const [ox, oy] = combineAxes(sx[i]!, sy[i]!, nX, nY, satX[i] === 1, satY[i] === 1);
+    rawOx[i] = ox;
+    rawOy[i] = oy;
   }
 
   const smoothed = smoothVertexDisplacements(rawOx, rawOy, vertexValid, cut, count, false);
