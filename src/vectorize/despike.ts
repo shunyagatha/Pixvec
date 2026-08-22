@@ -85,8 +85,13 @@ import type { RasterImage } from '../types.js';
  *     ({@link RESID_MAX_SQ}).
  *  5. The candidate's projection onto that line must fall PAST an endpoint,
  *     by more than a noise floor ({@link OVERSHOOT_MIN_SQ}).
+ *  6. If `A`, `B` AND the candidate are all achromatic (grey: R≈G≈B on
+ *     each), the overshoot found in gate 5 must also be small relative to
+ *     the A-B step itself ({@link ACHROMATIC_EXCESS_RATIO_MAX}). See that
+ *     constant's doc comment for why gate 4 cannot do this job for grey
+ *     content the way it does for colour.
  *
- * A pixel that clears all five is corrected by projecting it back onto the
+ * A pixel that clears every gate is corrected by projecting it back onto the
  * segment — clamping its interpolation parameter to `[0, 1]` — using
  * whichever of the (up to 4) axes measured the largest overshoot. Every
  * other pixel is copied through unchanged, byte for byte; this function
@@ -191,6 +196,62 @@ const RESID_MAX_SQ = 300;
  */
 const OVERSHOOT_MIN_SQ = 500;
 
+/**
+ * Per-channel spread (`max(R,G,B) - min(R,G,B)`, raw bytes) at or below which
+ * a sample counts as achromatic (grey) for {@link ACHROMATIC_EXCESS_RATIO_MAX}
+ * below. 2 matches the same real-corpus-measured per-channel jitter floor
+ * `EPS_SQ` above is built on (see that constant's doc comment) — the same
+ * amount of noise this file already treats as "not a real difference"
+ * elsewhere is also not enough to call a sample "not quite grey".
+ */
+const ACHROMATIC_CHANNEL_EPS = 2;
+
+/**
+ * Why gate 4 (colinearity, {@link RESID_MAX_SQ}) is a structural no-op when
+ * `A`, `B` and the candidate are all achromatic, and what stands in for it.
+ *
+ * Colinearity works for colour because a real edge's overshoot is a
+ * continuation of that SPECIFIC edge's own colour trajectory extrapolated
+ * too far — a candidate belonging to some unrelated feature generically
+ * sits off that line, in the 4-D premultiplied-RGBA space gate 4 tests. But
+ * every achromatic point `(v, v, v, a)` (fixed `a`) sits on the single
+ * straight line `R = G = B` by construction: ANY three grey samples are
+ * exactly colinear regardless of what they mean, so `residSq` is ~0 whether
+ * the candidate is genuine ringing or a wholly independent grey feature.
+ * Measured directly: a synthetic grey triple (20, 250, 70) — a 1-3px grey
+ * sliver sitting as a local brightness extremum between two distinct grey
+ * plateaus, real content, not ringing — clears gates 1-5 exactly as cleanly
+ * as the real `yoyokd14` defect does (`residSq` ~2.4e-27, i.e. floating-point
+ * zero) and was fully erased to the plateau colour before this gate existed.
+ *
+ * What stands in for colinearity here is the RATIO of the overshoot
+ * (`excessSq`, gate 5) to the A-B step it overshoots (`abSq`) rather than
+ * either number alone: a genuine reconstruction/sharpening-kernel ringing
+ * artifact is bounded by a modest fraction of the edge amplitude that
+ * produced it (a few percent for Lanczos-family resamplers, rarely
+ * approaching 100% even under aggressive unsharp masking) — it cannot
+ * plausibly exceed the step itself, because the ripple is a side-lobe of
+ * that same step's reconstruction, not an independent signal. A real grey
+ * feature has no such relationship to the plateaus flanking it; its
+ * brightness is set by whatever content it actually is.
+ *
+ * Measured on both ends: the one diagnosed real overshoot in this codebase
+ * (chromatic, `yoyokd14` at (1148, 697)) has `excessSq` ~1,669-2,171 against
+ * `abSq` ~100,949 — ratio ~0.0165-0.0215. The false positive above measures
+ * `excessSq` ~97,200 against `abSq` 7,500 — ratio ~12.96, over 600x larger.
+ * 0.5 sits at roughly the log-midpoint of those two measurements, ~30x
+ * above the one genuine ratio on record and ~26x below the measured false
+ * positive, with room on both sides.
+ */
+const ACHROMATIC_EXCESS_RATIO_MAX = 0.5;
+
+/** Whether the raw R,G,B at `off` are close enough to call the sample gray. */
+function isAchromatic(data: Uint8ClampedArray, off: number): boolean {
+  const r = data[off]!, g = data[off + 1]!, b = data[off + 2]!;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  return max - min <= ACHROMATIC_CHANNEL_EPS;
+}
+
 const DESPIKE_DIRS: readonly (readonly [number, number])[] = [
   [1, 0], [0, 1], [1, 1], [1, -1],
 ];
@@ -288,6 +349,15 @@ function evalAxis(
   const excessAlong = t < 0 ? -t * Math.sqrt(abSq) : (t - 1) * Math.sqrt(abSq);
   const excessSq = excessAlong * excessAlong;
   if (excessSq < OVERSHOOT_MIN_SQ) return null;
+
+  // Gate 6: see ACHROMATIC_EXCESS_RATIO_MAX's doc comment. Colinearity (gate
+  // 4) cannot discriminate real grey content from ringing when A, B and the
+  // candidate are all achromatic — every grey triple is exactly colinear by
+  // construction — so a grey overshoot must also be small relative to the
+  // step it overshoots, not merely past its endpoint by the ordinary floor.
+  if (isAchromatic(data, offA) && isAchromatic(data, offB) && isAchromatic(data, p)) {
+    if (excessSq > ACHROMATIC_EXCESS_RATIO_MAX * abSq) return null;
+  }
 
   const tc = t < 0 ? 0 : 1;
   const ca = A4[3]! + tc * AB4[3]!;

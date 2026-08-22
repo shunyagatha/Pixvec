@@ -3328,6 +3328,13 @@ var EPS_SQ = 16;
 var MIN_CONTRAST_SQ2 = 3e3;
 var RESID_MAX_SQ = 300;
 var OVERSHOOT_MIN_SQ = 500;
+var ACHROMATIC_CHANNEL_EPS = 2;
+var ACHROMATIC_EXCESS_RATIO_MAX = 0.5;
+function isAchromatic(data, off) {
+  const r = data[off], g = data[off + 1], b = data[off + 2];
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  return max - min <= ACHROMATIC_CHANNEL_EPS;
+}
 var DESPIKE_DIRS = [
   [1, 0],
   [0, 1],
@@ -3387,6 +3394,9 @@ function evalAxis(data, width, height, x, y, dx, dy) {
   const excessAlong = t < 0 ? -t * Math.sqrt(abSq) : (t - 1) * Math.sqrt(abSq);
   const excessSq = excessAlong * excessAlong;
   if (excessSq < OVERSHOOT_MIN_SQ) return null;
+  if (isAchromatic(data, offA) && isAchromatic(data, offB) && isAchromatic(data, p)) {
+    if (excessSq > ACHROMATIC_EXCESS_RATIO_MAX * abSq) return null;
+  }
   const tc = t < 0 ? 0 : 1;
   const ca = A4[3] + tc * AB4[3];
   if (ca <= 0) return { excessSq, r: 0, g: 0, b: 0, a: 0 };
