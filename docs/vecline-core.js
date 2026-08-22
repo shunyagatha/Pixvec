@@ -3269,6 +3269,127 @@ function refineSourceFor(img, labels, opts = {}) {
   return bilateralForMeasurement(img, band, opts);
 }
 
+// src/vectorize/despike.ts
+function pmDeltaSq(data, offA, offB) {
+  const aa = data[offA + 3] / 255, ba = data[offB + 3] / 255;
+  const dr = data[offA] * aa - data[offB] * ba;
+  const dg = data[offA + 1] * aa - data[offB + 1] * ba;
+  const db = data[offA + 2] * aa - data[offB + 2] * ba;
+  const da = data[offA + 3] - data[offB + 3];
+  return dr * dr + dg * dg + db * db + da * da;
+}
+var DESPIKE_MAX_REACH = 6;
+var EPS_SQ = 16;
+var MIN_CONTRAST_SQ2 = 3e3;
+var RESID_MAX_SQ = 300;
+var OVERSHOOT_MIN_SQ = 500;
+var DESPIKE_DIRS = [
+  [1, 0],
+  [0, 1],
+  [1, 1],
+  [1, -1]
+];
+function walkToPlateau(data, width, height, x0, y0, dx, dy) {
+  const offs = [];
+  for (let step = 1; step <= DESPIKE_MAX_REACH + 2; step++) {
+    const x = x0 + dx * step, y = y0 + dy * step;
+    if (x < 0 || y < 0 || x >= width || y >= height) break;
+    offs.push((y * width + x) * 4);
+  }
+  for (let i = 0; i + 2 < offs.length; i++) {
+    if (pmDeltaSq(data, offs[i], offs[i + 1]) <= EPS_SQ && pmDeltaSq(data, offs[i + 1], offs[i + 2]) <= EPS_SQ) {
+      return offs[i];
+    }
+  }
+  return -1;
+}
+var A4 = new Float64Array(4);
+var B4 = new Float64Array(4);
+var P4 = new Float64Array(4);
+var AB4 = new Float64Array(4);
+function premultiply2(data, off, out) {
+  const a = data[off + 3];
+  out[0] = data[off] * a / 255;
+  out[1] = data[off + 1] * a / 255;
+  out[2] = data[off + 2] * a / 255;
+  out[3] = a;
+}
+function evalAxis(data, width, height, x, y, dx, dy) {
+  const offA = walkToPlateau(data, width, height, x, y, -dx, -dy);
+  const offB = walkToPlateau(data, width, height, x, y, dx, dy);
+  if (offA < 0 || offB < 0) return null;
+  if (pmDeltaSq(data, offA, offB) < MIN_CONTRAST_SQ2) return null;
+  premultiply2(data, offA, A4);
+  premultiply2(data, offB, B4);
+  const p = (y * width + x) * 4;
+  premultiply2(data, p, P4);
+  let dot = 0, abSq = 0;
+  for (let c = 0; c < 4; c++) {
+    AB4[c] = B4[c] - A4[c];
+    dot += (P4[c] - A4[c]) * AB4[c];
+    abSq += AB4[c] * AB4[c];
+  }
+  if (abSq === 0) return null;
+  const t = dot / abSq;
+  if (t >= 0 && t <= 1) return null;
+  let residSq = 0;
+  for (let c = 0; c < 4; c++) {
+    const proj = A4[c] + t * AB4[c];
+    const d = P4[c] - proj;
+    residSq += d * d;
+  }
+  if (residSq > RESID_MAX_SQ) return null;
+  const excessAlong = t < 0 ? -t * Math.sqrt(abSq) : (t - 1) * Math.sqrt(abSq);
+  const excessSq = excessAlong * excessAlong;
+  if (excessSq < OVERSHOOT_MIN_SQ) return null;
+  const tc = t < 0 ? 0 : 1;
+  const ca = A4[3] + tc * AB4[3];
+  if (ca <= 0) return { excessSq, r: 0, g: 0, b: 0, a: 0 };
+  const cr = A4[0] + tc * AB4[0];
+  const cg = A4[1] + tc * AB4[1];
+  const cb = A4[2] + tc * AB4[2];
+  return { excessSq, r: cr * 255 / ca, g: cg * 255 / ca, b: cb * 255 / ca, a: ca };
+}
+function matchesWholeNeighbourhood(data, width, height, p, x, y) {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const n2 = (ny * width + nx) * 4;
+      if (data[n2] !== data[p] || data[n2 + 1] !== data[p + 1] || data[n2 + 2] !== data[p + 2] || data[n2 + 3] !== data[p + 3]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+function despikeRinging(img) {
+  const { width, height, data } = img;
+  if (width < 3 || height < 3) return img;
+  let touched = false;
+  const out = new Uint8ClampedArray(data);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = (y * width + x) * 4;
+      if (matchesWholeNeighbourhood(data, width, height, p, x, y)) continue;
+      let best = null;
+      for (const [dx, dy] of DESPIKE_DIRS) {
+        const r = evalAxis(data, width, height, x, y, dx, dy);
+        if (r && (!best || r.excessSq > best.excessSq)) best = r;
+      }
+      if (best) {
+        touched = true;
+        out[p] = best.r;
+        out[p + 1] = best.g;
+        out[p + 2] = best.b;
+        out[p + 3] = best.a;
+      }
+    }
+  }
+  return touched ? { width, height, data: out } : img;
+}
+
 // src/vectorize/merge.ts
 function segmentPixels(img, k = 300, minRegion = 0) {
   const { width: w, height: h, data } = img;
@@ -5496,6 +5617,12 @@ function opacity(a) {
 var TRACE_DEFAULTS = {
   colors: 16,
   alphaLevels: 8,
+  // Opt-in, not on by default: proven to resolve the diagnosed Gibbs-ringing
+  // staircase defect with zero interior-leak/topology regressions on the
+  // 9-subject corpus, but that corpus is not wide enough on its own to make
+  // this the default for every caller. See `despike.ts` and the `despike`
+  // option's own doc comment.
+  despike: false,
   minArea: 0,
   speckleScope: "all",
   // 0.4, not 1.0. A measured diagnosis (scripts/diagnose-photo.mjs) found the
@@ -5708,6 +5835,7 @@ function trace(source, opts = {}) {
   };
   report("Preparing", 2);
   let img = source;
+  if (o.despike) img = despikeRinging(img);
   img = collapseFringeAlpha(img, Math.max(1, o.alphaLevels));
   if (o.blur && o.blur >= 1) {
     img = selectiveBlur(img, { radius: o.blur, delta: o.blurDelta });
