@@ -115,6 +115,20 @@ export {
   type Separation,
 } from './vectorize/trace.js';
 
+// --- Preset resolution, including its noise/size-adaptive overrides --------
+// The same values and gates `vecline`'s CLI/`vectorize()` use for a named
+// preset, so a portable caller (a browser worker, an edge function) can
+// resolve identical trace options instead of a hand-copied approximation.
+export {
+  PRESETS,
+  measureFlatness,
+  refineGateFor,
+  cleanMinArea,
+  REFINE_NOISE_LIMIT,
+  type Preset,
+  type Flatness,
+} from './vectorize/presets.js';
+
 // --- Pre-tracing pixel filters, all pure ------------------------------------
 export { selectiveBlur, type BlurOptions } from './preprocess.js';
 export {

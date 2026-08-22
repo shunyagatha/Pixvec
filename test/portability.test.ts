@@ -61,6 +61,7 @@ const CORE_MODULES = [
   'vectorize/pixel.ts',
   'vectorize/exact.ts',
   'vectorize/trace.ts',
+  'vectorize/presets.ts',
   'vectorize/threshold.ts',
   'vectorize/index.ts',
   'io/route.ts',
