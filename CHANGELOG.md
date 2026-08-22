@@ -4,6 +4,39 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v2.1.3](https://github.com/shunyagatha/Vecline/releases/tag/v2.1.3)
+
+Six commits closing most, not all, of the gap to a paid rival on a real photograph's staircased
+silhouette edge. `emitDimensions` drops the root `<svg>`'s explicit `width`/`height` on request, so
+a file opened directly fits the viewer the way `viewBox`-only markup does, instead of rendering at
+literal pixel size and needing a manual zoom-out. Three distinct causes of an interior alpha
+"hairline" leak were fixed in the mosaic underpaint mechanism, and `refineOpenArc`/`refineLoop` now
+walk the antialiasing ramp to its true plateau instead of reaching a fixed 1px, closing gap classes
+this project's own measurement had already found but not yet fixed.
+
+The main event is `despike` (opt-in): a hand-drawn illustration's outline had a source-side
+resize/sharpening ringing overshoot — a pixel brighter than either flanking colour, a physical
+impossibility for real antialiasing — that no downstream tolerance or smoothing pass could correct,
+because none of them touch the raster before classification. `despike` detects the overshoot
+geometrically (colinear with, and past the end of, its own flanking plateaus) and clamps it before
+anything else runs; pixel-diff against the rival's render of the same edge dropped from 1.59% to
+0.89%. A separate, real vertex-averaging bug was found and fixed along the way — `refineLoop`/
+`refineOpenArc` divided both axes' displacement by their *combined* hit count at a corner, silently
+halving a valid single-axis measurement — and surfaced that `--preset logo`'s `tolerance` (0.6) had
+been inherited, never swept, and sat at the very edge of a chaotic pass/fail band in an official
+test; moved to 0.65, the middle of a band both old and new geometry pass, and confirmed monotonic
+across 0.60-0.70 on real corpus photos.
+
+Six further investigation rounds after `despike` — junction-arc budget widening, the fitter's own
+sub-pixel displacement cap, a claimed corner-rounding defect (debunked as a measurement artifact),
+monotonicity correction on antialiasing ramps, an exact closed-form tilt correction to the coverage
+math (proven algebraically inert given the shipped displacement cap), and the vertex-averaging fix
+above — were each measured against the original defect and found not to move it further, several
+by mathematical proof rather than only by measurement. That remaining gap ships open and disclosed,
+not papered over: `--preset clean` is measurably closer to the rival than before this release, not
+identical to it. 1084 tests, smoke green, `corpus:report` problems: 0, `check:readme` 8 published
+rows reproduce.
+
 ## [v2.1.2](https://github.com/shunyagatha/Vecline/releases/tag/v2.1.2)
 
 Eleven commits since v2.1.1, all on the flat-art quality of `--preset clean`. It emitted zero curve commands — not a tuning problem: Douglas-Peucker sits in a provable dead zone below `1/sqrt(5)` on lattice-derived boundaries, so the fitter never fired at all. Fixed by decomposing region boundaries into shared arcs at junctions and fitting each arc exactly once — required, since the fitter is not reversal-symmetric and the same points fitted forwards vs backwards can differ by up to 2.94px. Curve share went from 0% to 72%+ on real photographs.
