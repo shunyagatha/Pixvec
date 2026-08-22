@@ -8433,7 +8433,7 @@ function toGcode(polylines, opts) {
 }
 
 // src/core.ts
-var VERSION = "2.1.2";
+var VERSION = "2.1.3";
 export {
   GRADIENT_DEFAULTS,
   GRAD_BASE,
