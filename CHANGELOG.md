@@ -4,6 +4,28 @@ Every release is tagged and carries [full notes on GitHub](https://github.com/sh
 
 Two things hold throughout. Versions follow semver. And nothing listed here is a plan or an intention: each line shipped to npm, and every number quoted in the linked notes was produced by running the code rather than by estimating it — including the ones that were unflattering.
 
+## [v2.1.4](https://github.com/shunyagatha/Vecline/releases/tag/v2.1.4)
+
+Two commits, neither changing `--preset clean`'s output on the corpus this project measures against.
+
+`despike` (shipped opt-in in v2.1.3) had a false-positive class: its colinearity gate is a structural
+no-op for grey-on-grey overshoot, because any three achromatic points are always exactly colinear —
+so a thin achromatic sliver could get clamped away as if it were the Gibbs-ringing overshoot the
+corrector exists to fix. Closed with an excess-relative-to-step-amplitude gate, threshold chosen at
+the log-midpoint between the one genuine chromatic overshoot ratio measured (~0.02) and the measured
+achromatic false-positive ratio (~13). Dormant on every subject in the existing corpus; real on
+grey-on-grey art the corpus doesn't happen to contain.
+
+The other half is not a fix but a plumbing change: `PRESETS`, `measureFlatness`, `refineGateFor`, and
+`clean`'s size-adaptive despeckle floor (now a named `cleanMinArea`) moved out of the Node-only `api.ts`
+into a new portable `src/vectorize/presets.ts`, and are now exported from `vecline/core`. They were
+always pure computation on a `RasterImage` — they were just sitting in the file that pulls in
+libvips/resvg for file I/O, unreachable from a browser worker. A portable consumer can now resolve the
+exact preset values and noise/size-adaptive overrides the CLI uses, instead of a hand-copied
+approximation that drifts the moment one of these tuned numbers is retuned. Zero behavior change:
+1087 tests pass (was 1085 — two new portability-contract assertions cover the moved file), `smoke` and
+`corpus:report problems: 0` unaffected, `check:readme` 8/8.
+
 ## [v2.1.3](https://github.com/shunyagatha/Vecline/releases/tag/v2.1.3)
 
 Six commits closing most, not all, of the gap to a paid rival on a real photograph's staircased
