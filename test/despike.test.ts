@@ -273,4 +273,76 @@ describe('despikeRinging', () => {
     expect(out.data[o]).toBeLessThanOrEqual(240);
     expect(out.data[o + 1]).toBeLessThanOrEqual(225);
   });
+
+  /**
+   * The achromatic false-positive class `ACHROMATIC_EXCESS_RATIO_MAX` exists
+   * for: gate 4 (colinearity, `RESID_MAX_SQ`) is a no-op whenever the two
+   * flanking plateaus AND the candidate are all grey, because any three grey
+   * samples are exactly colinear by construction (they all sit on the single
+   * `R = G = B` line) regardless of whether the candidate is genuine ringing
+   * or a wholly unrelated grey feature. A thin (here 1px) grey sliver sitting
+   * as a local brightness extremum between two distinct grey plateaus —
+   * `rgb(20,20,20)`, `rgb(250,250,250)`, `rgb(70,70,70)`, matching this
+   * module's own doc comment — clears every other gate exactly as cleanly as
+   * a real overshoot does and, before this gate existed, was erased to the
+   * nearer plateau's colour.
+   *
+   * MUTATION CHECK (performed by hand against this exact fixture, not
+   * shipped): every other test in this file passes unchanged when the
+   * `ACHROMATIC_EXCESS_RATIO_MAX` check is deleted — none of them plants an
+   * achromatic candidate with achromatic flanking plateaus. This fixture
+   * does, and its `excessSq`/`abSq` ratio (~12.96) is far above the cap
+   * (0.5): deleting the gate makes this test fail (the 250 sliver gets
+   * snapped to 70 instead of staying untouched). Restored afterward.
+   */
+  it('does not touch a thin achromatic sliver at a local brightness extremum between two distinct grey plateaus', () => {
+    const w = 20, h = 3;
+    const img = flat(w, h, 20, 20, 20); // dark grey plateau
+    for (let y = 0; y < h; y++) for (let x = 10; x < w; x++) setPixel(img, x, y, 70, 70, 70); // lighter grey plateau
+    for (let y = 0; y < h; y++) setPixel(img, 9, y, 250, 250, 250); // 1px grey sliver, brighter than both
+    const out = despikeRinging(img);
+    expect(diffCount(img, out)).toBe(0);
+  });
+
+  /**
+   * The same false-positive shape, swept across sliver width, matching the
+   * width boundary measured directly on this codebase: an achromatic sliver
+   * up to 3px wide is exactly the shape gate 6 exists for (a run this narrow
+   * has no chance to form its own plateau, so the walk finds the TRUE far
+   * plateaus flanking it, not its own colour) — the existing pre-check and
+   * plateau-search machinery only start self-protecting an EDGE column of
+   * the run at width 4, which this test does not depend on.
+   */
+  it('does not touch an achromatic sliver at any width from 1 to 3px', () => {
+    for (const width of [1, 2, 3]) {
+      const w = 20, h = 3;
+      const img = flat(w, h, 20, 20, 20);
+      for (let y = 0; y < h; y++) for (let x = 10; x < w; x++) setPixel(img, x, y, 70, 70, 70);
+      for (let y = 0; y < h; y++) {
+        for (let i = 0; i < width; i++) setPixel(img, 10 - width + i, y, 250, 250, 250);
+      }
+      const out = despikeRinging(img);
+      expect(diffCount(img, out)).toBe(0);
+    }
+  });
+
+  /**
+   * Gate 6 must not touch chromatic content: it only applies when A, B AND
+   * the candidate are all achromatic. Reuses this module's own load-bearing
+   * positive fixture (black/yellow plateaus, a `rgb(255,250,34)` overshoot)
+   * to confirm the real diagnosed defect this file was built to fix is still
+   * corrected exactly as before.
+   */
+  it('still corrects a genuine chromatic overshoot — gate 6 does not apply to colour', () => {
+    const w = 20, h = 3;
+    const img = flat(w, h, 232, 215, 30);
+    for (let y = 0; y < h; y++) for (let x = 10; x < w; x++) setPixel(img, x, y, 0, 0, 0);
+    for (let y = 0; y < h; y++) setPixel(img, 9, y, 255, 250, 34);
+    const out = despikeRinging(img);
+    for (let y = 0; y < h; y++) {
+      const o = (y * w + 9) * 4;
+      expect(out.data[o]).toBeLessThanOrEqual(240);
+      expect(out.data[o + 1]).toBeLessThanOrEqual(225);
+    }
+  });
 });
